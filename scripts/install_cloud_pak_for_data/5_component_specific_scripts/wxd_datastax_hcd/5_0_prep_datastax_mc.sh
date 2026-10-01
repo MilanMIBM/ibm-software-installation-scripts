@@ -26,7 +26,7 @@ eval "${OC_LOGIN}"
 
 # When PREPARE_TLS=true, after the HCD DataAPI route is created this script also
 # exports the certificates needed to securely connect to the HCD services from
-# outside the cluster, saving them to cp4d_config/certs/<dc_name>/:
+# outside the cluster, saving them to configs/cp4d_config/certs/<dc_name>/:
 #   - dataapi-route-ca.crt : CA that verifies the edge-terminated DataAPI HTTPS route
 #   - cql-ca.crt           : CassandraDatacenter server CA for native CQL (9042) TLS
 PREPARE_TLS="${PREPARE_TLS:-false}"
@@ -144,8 +144,8 @@ oc get cassandradatacenters.cassandra.datastax.com -n "${PROJECT_CPD_INST_OPERAN
 
 # --- write DataStax MC credentials to cpd_instance_details.sh ---
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/cpd_instance_details.sh"
-CERTS_ROOT="${REPO_ROOT}/cp4d_config/certs"
+VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
+CERTS_ROOT="${REPO_ROOT}/configs/cp4d_config/certs"
 
 DATASTAX_URL="https://$(oc get route datastax-mc-ui -n ${PROJECT_CPD_INST_OPERATORS} -o jsonpath='{.spec.host}')"
 

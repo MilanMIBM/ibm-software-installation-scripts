@@ -28,7 +28,7 @@ CPD_USERNAME="$(echo "${CPD_INSTANCE_DETAILS}"  | grep 'CPD Username:' | grep -o
 CPD_PASSWORD="$(echo "${CPD_INSTANCE_DETAILS}"  | grep 'CPD Password:' | grep -oE '[^ ]+$' | tr -d '[:space:]')"
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/cpd_instance_details.sh"
+VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
 
 cat > "${VARS_FILE}" <<EOF
 # Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")

@@ -14,9 +14,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# This script lives in src/scripts/x_full_quick_install_script/, so the numbered
-# step folders are one level up, in src/scripts/.
-SCRIPTS_ROOT="$(cd "${CURRENT_DIR}/.." && pwd)"
+# This script lives in scripts/install_cloud_pak_for_data/5_component_specific_scripts/wxo_adk_and_custom_model_import/,
+# so the numbered step folders are a couple of levels up, in scripts/install_cloud_pak_for_data/.
+SCRIPTS_ROOT="$(cd "${CURRENT_DIR}/../.." && pwd)"
 
 # --- Activate the watsonx Orchestrate environment before any orchestrate calls ---
 # Use CURRENT_DIR (re-derived after env load): sourcing cpd_vars.sh clobbers SCRIPT_DIR.
@@ -44,7 +44,7 @@ echo "[CONN] scope: -t ${CONN_TYPE}"
 
 # A team connection with no api_key would leave ICA with an "Invalid icaKey".
 if [[ "${CONN_TYPE}" == team && -z "${APIKEY}" ]]; then
-  echo "[ERROR] TEAM_CONNECTION=true but ICA_APIKEY is empty - check cp4d_config/cpd_vars.sh." >&2
+  echo "[ERROR] TEAM_CONNECTION=true but ICA_APIKEY is empty - check configs/cp4d_config/cpd_vars.sh." >&2
   exit 1
 fi
 

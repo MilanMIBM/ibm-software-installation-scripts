@@ -65,9 +65,9 @@ for _arg in "$@"; do
 done
 
 UNINSTALL="${SCRIPT_DIR}/x.0_confluent_uninstall.sh"
-PREP="${SCRIPT_DIR}/1.0_confluent_prep.sh"
-INSTALL="${SCRIPT_DIR}/1.1_confluent_install.sh"
-STATUS="${SCRIPT_DIR}/1.2_confluent_status.sh"
+PREP="${SCRIPT_DIR}/../1.0_confluent_prep.sh"
+INSTALL="${SCRIPT_DIR}/../1.1_confluent_install.sh"
+STATUS="${SCRIPT_DIR}/../1.2_confluent_status.sh"
 
 for _s in "${UNINSTALL}" "${PREP}" "${INSTALL}"; do
     if [[ ! -f "${_s}" ]]; then
@@ -79,7 +79,7 @@ done
 # Fail before tearing anything down if the config is unusable. Otherwise a bad
 # variable leaves the platform deleted and the reinstall unable to proceed.
 if [[ -z "${PROJECT_CONFLUENT_SERVER:-}" ]]; then
-    echo "[ERROR] PROJECT_CONFLUENT_SERVER is not set - check cp4d_config/confluent_vars.sh." >&2
+    echo "[ERROR] PROJECT_CONFLUENT_SERVER is not set - check configs/confluent_platform_config/confluent_vars.sh." >&2
     exit 1
 fi
 

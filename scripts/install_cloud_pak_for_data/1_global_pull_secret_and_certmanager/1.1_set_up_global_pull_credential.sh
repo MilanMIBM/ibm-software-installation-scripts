@@ -54,7 +54,7 @@ fi
 # exists, copy its auth to the other.
 # ------------------------------------------------------------------------------
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-PULL_SECRET_FILE="${REPO_ROOT}/cp4d_config/pull-secret.dockerconfigjson"
+PULL_SECRET_FILE="${REPO_ROOT}/configs/cp4d_config/pull-secret.dockerconfigjson"
 
 _raw_secret="$(oc get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 --decode)" || true
 

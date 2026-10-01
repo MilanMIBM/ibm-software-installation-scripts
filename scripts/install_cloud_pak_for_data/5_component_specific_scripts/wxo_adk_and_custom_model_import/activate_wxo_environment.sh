@@ -14,15 +14,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# This script lives in src/scripts/5_component_specific_scripts/wxo_custom_model_import/,
-# so the numbered step folders are a couple of levels up, in src/scripts/.
+# This script lives in scripts/install_cloud_pak_for_data/5_component_specific_scripts/wxo_adk_and_custom_model_import/,
+# so the numbered step folders are a couple of levels up, in scripts/install_cloud_pak_for_data/.
 SCRIPTS_ROOT="$(cd "${CURRENT_DIR}/../.." && pwd)"
 
 # =============================================================================
 # activate_wxo_environment.sh
 # -----------------------------------------------------------------------------
 # Activates the watsonx Orchestrate ADK environment named by WXO_ENV_NAME
-# (persisted in cp4d_config/cpd_instance_details.sh by add_wxo_onprem_environment.sh).
+# (persisted in configs/cp4d_config/cpd_instance_details.sh by add_wxo_onprem_environment.sh).
 #
 # On-prem (CPD) activation is non-interactive using:
 #   - Username : CPD_USERNAME
@@ -54,11 +54,11 @@ WXO_KEY="${WXO_APIKEY:-${CPD_APIKEY:-}}"
 WXO_USER="${CPD_USERNAME:-}"
 
 if [[ -z "${WXO_KEY}" ]]; then
-  echo "[ERROR] No api key available (WXO_APIKEY / CPD_APIKEY). Check cp4d_config/cpd_instance_details.sh." >&2
+  echo "[ERROR] No api key available (WXO_APIKEY / CPD_APIKEY). Check configs/cp4d_config/cpd_instance_details.sh." >&2
   exit 1
 fi
 if [[ -z "${WXO_USER}" ]]; then
-  echo "[ERROR] CPD_USERNAME is not set. Check cp4d_config/cpd_instance_details.sh." >&2
+  echo "[ERROR] CPD_USERNAME is not set. Check configs/cp4d_config/cpd_instance_details.sh." >&2
   exit 1
 fi
 

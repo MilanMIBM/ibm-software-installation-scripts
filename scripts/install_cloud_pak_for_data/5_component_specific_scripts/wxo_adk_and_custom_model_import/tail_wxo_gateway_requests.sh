@@ -24,7 +24,7 @@ CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 #
 # Auto-detection:
 #   - Namespace  : NAMESPACE env / --namespace, else PROJECT_CPD_INST_OPERANDS
-#                  (sourced from cp4d_config), else the current `oc` project.
+#                  (sourced from configs/cp4d_config), else the current `oc` project.
 #   - Pod(s)     : pods whose name matches a gateway/llm/inference pattern.
 #
 # Optional flags:

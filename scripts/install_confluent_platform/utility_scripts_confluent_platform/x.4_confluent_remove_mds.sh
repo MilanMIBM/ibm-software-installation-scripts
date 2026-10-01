@@ -50,8 +50,8 @@ while (( $# > 0 )); do
     esac
 done
 
-INSTALL="${SCRIPT_DIR}/1.1_confluent_install.sh"
-STATUS="${SCRIPT_DIR}/1.2_confluent_status.sh"
+INSTALL="${SCRIPT_DIR}/../1.1_confluent_install.sh"
+STATUS="${SCRIPT_DIR}/../1.2_confluent_status.sh"
 USER_STORE="${SCRIPT_DIR}/x.4_confluent_user_store.sh"
 [[ -f "${INSTALL}" ]] || { echo "[ERROR] Not found: ${INSTALL}" >&2; exit 1; }
 
@@ -139,7 +139,7 @@ if $PURGE; then
     # It is no longer generated (confluent_instance_details.sh carries these
     # now), so remove any leftover rather than leave stale credentials behind.
     REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-    rm -f "${REPO_ROOT}/cp4d_config/confluent_cli_login.sh"
+    rm -f "${REPO_ROOT}/configs/confluent_platform_config/confluent_cli_login.sh"
 else
     echo "[INFO] Identity provider and secrets kept."
     echo "[INFO] Re-enable with: x.4_confluent_add_mds.sh"
@@ -147,10 +147,10 @@ else
 fi
 
 # Refresh the details file so CONFLUENT_MDS_URL/USER/PASS go back to empty.
-DETAILS_SCRIPT="${SCRIPT_DIR}/1.3_confluent_get_instance_details.sh"
+DETAILS_SCRIPT="${SCRIPT_DIR}/../1.3_confluent_get_instance_details.sh"
 if [[ -x "${DETAILS_SCRIPT}" ]]; then
     echo ""
-    echo "[INFO] Refreshing cp4d_config/confluent_instance_details.sh..."
+    echo "[INFO] Refreshing configs/confluent_platform_config/confluent_instance_details.sh..."
     "${DETAILS_SCRIPT}" >/dev/null 2>&1 || echo "[WARN] Could not refresh the details file."
 fi
 

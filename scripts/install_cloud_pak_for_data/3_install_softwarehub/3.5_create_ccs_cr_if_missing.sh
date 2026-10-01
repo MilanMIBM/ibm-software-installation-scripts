@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
-# --- Inputs (env vars from cp4d_config/, with presets as fallback) ---
+# --- Inputs (env vars from configs/cp4d_config/, with presets as fallback) ---
 CCS_NAMESPACE="${PROJECT_CPD_INST_OPERANDS:-cpd-operands}"
 CCS_OPERATOR_NAMESPACE="${PROJECT_CPD_INST_OPERATORS:-cpd-operators}"
 CCS_BLOCK_SC="${STG_CLASS_BLOCK:-ocs-storagecluster-ceph-rbd}"

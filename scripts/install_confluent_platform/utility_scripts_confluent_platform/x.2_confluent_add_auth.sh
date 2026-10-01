@@ -89,9 +89,9 @@ if $ROTATE && [[ -n "${PW_OVERRIDE}" ]]; then
     exit 1
 fi
 
-PREP="${SCRIPT_DIR}/1.0_confluent_prep.sh"
-INSTALL="${SCRIPT_DIR}/1.1_confluent_install.sh"
-STATUS="${SCRIPT_DIR}/1.2_confluent_status.sh"
+PREP="${SCRIPT_DIR}/../1.0_confluent_prep.sh"
+INSTALL="${SCRIPT_DIR}/../1.1_confluent_install.sh"
+STATUS="${SCRIPT_DIR}/../1.2_confluent_status.sh"
 for _s in "${PREP}" "${INSTALL}"; do
     [[ -f "${_s}" ]] || { echo "[ERROR] Required script not found: ${_s}" >&2; exit 1; }
 done
@@ -268,7 +268,7 @@ else
     echo "[INFO] Password:"
     echo "[INFO]   oc get secret ${CONFLUENT_AUTH_SECRET} -n ${NS} -o jsonpath='{.data.password}' | base64 --decode"
     echo ""
-    echo "[INFO] Refresh cp4d_config/confluent_instance_details.sh with the new"
+    echo "[INFO] Refresh configs/confluent_platform_config/confluent_instance_details.sh with the new"
     echo "[INFO] credentials by running 1.3_confluent_get_instance_details.sh."
 fi
 echo "=============================================================================="

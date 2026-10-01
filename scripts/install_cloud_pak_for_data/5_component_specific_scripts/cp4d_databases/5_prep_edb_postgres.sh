@@ -20,7 +20,7 @@ eval "${OC_LOGIN}"
 # ---
 # When PREPARE_TLS=true, this script also creates the passthrough route (if not
 # already requested elsewhere), extracts the instance server CA certificate, and
-# saves it to cp4d_config/certs/<edb_instance_name>/ so the database can be
+# saves it to configs/cp4d_config/certs/<edb_instance_name>/ so the database can be
 # reached securely from outside the cluster.
 PREPARE_TLS="${PREPARE_TLS:-false}"
 
@@ -87,8 +87,8 @@ fi
 # Extract credentials from each instance's -app secret and write to cpd_instance_details.sh
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/cpd_instance_details.sh"
-CERTS_ROOT="${REPO_ROOT}/cp4d_config/certs"
+VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
+CERTS_ROOT="${REPO_ROOT}/configs/cp4d_config/certs"
 
 echo "=== Extracting EDB Postgres credentials ==="
 echo ""
@@ -137,7 +137,7 @@ for INSTANCE in "${EDB_INSTANCES[@]}"; do
     VAR_PREFIX="${VAR_PREFIX//-/_}"
 
     # When TLS prep is requested, extract the instance server CA certificate and
-    # save it to cp4d_config/certs/<instance>/ for secure external connections.
+    # save it to configs/cp4d_config/certs/<instance>/ for secure external connections.
     EDB_CERT_PATH=""
     if [[ "${PREPARE_TLS}" == "true" ]]; then
         CERT_DIR="${CERTS_ROOT}/${INSTANCE}"

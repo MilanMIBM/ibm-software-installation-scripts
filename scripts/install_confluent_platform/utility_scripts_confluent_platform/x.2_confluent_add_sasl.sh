@@ -79,8 +79,8 @@ if $DISABLE && { $ROTATE || [[ -n "${CLIENTS_OVERRIDE}" ]]; }; then
     exit 1
 fi
 
-INSTALL="${SCRIPT_DIR}/1.1_confluent_install.sh"
-STATUS="${SCRIPT_DIR}/1.2_confluent_status.sh"
+INSTALL="${SCRIPT_DIR}/../1.1_confluent_install.sh"
+STATUS="${SCRIPT_DIR}/../1.2_confluent_status.sh"
 [[ -f "${INSTALL}" ]] || { echo "[ERROR] Not found: ${INSTALL}" >&2; exit 1; }
 
 eval "${OC_LOGIN}"
@@ -209,7 +209,8 @@ if $DISABLE; then
     echo "[WARN] Kafka now accepts unauthenticated connections."
 else
     REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-    OUT="${REPO_ROOT}/cp4d_config/confluent_sasl_clients.properties"
+    OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_sasl_clients.properties"
+    mkdir -p "$(dirname "${OUT}")"
     _admin_pw="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" -o jsonpath="{.data.${CONFLUENT_SASL_ADMIN_USER}}" | base64 --decode)"
 
     {

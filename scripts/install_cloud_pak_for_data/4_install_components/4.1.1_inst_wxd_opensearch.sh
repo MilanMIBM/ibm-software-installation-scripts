@@ -102,7 +102,7 @@ else
 fi
 
 # --- mark opensearch as prepared in cpd_vars.sh
-CPD_VARS_FILE="${SCRIPT_DIR}/../../cp4d_config/cpd_vars.sh"
+CPD_VARS_FILE="${SCRIPT_DIR}/../../../configs/cp4d_config/cpd_vars.sh"
 if [[ -f "${CPD_VARS_FILE}" ]] && ! grep -q 'export PREP_OPENSEARCH=' "${CPD_VARS_FILE}"; then
     echo '' >> "${CPD_VARS_FILE}"
     echo 'export PREP_OPENSEARCH="true"' >> "${CPD_VARS_FILE}"

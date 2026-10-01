@@ -14,22 +14,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# This script lives in src/scripts/5_component_specific_scripts/wxo_custom_model_import/,
-# so the numbered step folders are a couple of levels up, in src/scripts/.
+# This script lives in scripts/install_cloud_pak_for_data/5_component_specific_scripts/wxo_adk_and_custom_model_import/,
+# so the numbered step folders are a couple of levels up, in scripts/install_cloud_pak_for_data/.
 SCRIPTS_ROOT="$(cd "${CURRENT_DIR}/../.." && pwd)"
 
 # =============================================================================
 # add_wxo_onprem_environment.sh
 # -----------------------------------------------------------------------------
 # Creates (and activates) a watsonx Orchestrate ADK environment pointing at the
-# on-prem (Cloud Pak for Data) instance defined in cp4d_config/cpd_instance_details.sh.
+# on-prem (Cloud Pak for Data) instance defined in configs/cp4d_config/cpd_instance_details.sh.
 #
 #   - Endpoint (URL) : WXO_URL
 #   - API key        : WXO_APIKEY (falls back to CPD_APIKEY)
 #   - Username       : CPD_USERNAME
 #
 # Both WXO_URL and the api key are sourced automatically via env_bootstrap.sh,
-# which sources cp4d_config/cpd_instance_details.sh.
+# which sources configs/cp4d_config/cpd_instance_details.sh.
 #
 # Optional overrides via environment / flags:
 #   ENV_NAME            name to register the environment under (default: cpd-onprem)
@@ -62,15 +62,15 @@ WXO_KEY="${WXO_APIKEY:-${CPD_APIKEY:-}}"
 WXO_USER="${CPD_USERNAME:-}"
 
 if [[ -z "${WXO_ENDPOINT}" ]]; then
-  echo "[ERROR] WXO_URL is not set. Check cp4d_config/cpd_instance_details.sh." >&2
+  echo "[ERROR] WXO_URL is not set. Check configs/cp4d_config/cpd_instance_details.sh." >&2
   exit 1
 fi
 if [[ -z "${WXO_KEY}" ]]; then
-  echo "[ERROR] No api key available (WXO_APIKEY / CPD_APIKEY). Check cp4d_config/cpd_instance_details.sh." >&2
+  echo "[ERROR] No api key available (WXO_APIKEY / CPD_APIKEY). Check configs/cp4d_config/cpd_instance_details.sh." >&2
   exit 1
 fi
 if [[ -z "${WXO_USER}" ]]; then
-  echo "[ERROR] CPD_USERNAME is not set. Check cp4d_config/cpd_instance_details.sh." >&2
+  echo "[ERROR] CPD_USERNAME is not set. Check configs/cp4d_config/cpd_instance_details.sh." >&2
   exit 1
 fi
 
@@ -97,7 +97,7 @@ orchestrate "${add_args[@]}"
 # --- Persist the env name to cpd_instance_details.sh so later scripts can
 #     activate the same environment (e.g. before importing models). ---
 REPO_ROOT="$(cd "${CURRENT_DIR}" && while [[ "${PWD}" != "/" && ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/cpd_instance_details.sh"
+VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
 
 if [[ -f "${VARS_FILE}" ]]; then
   # Drop any previous WXO_ENV_NAME export so re-runs don't pile up duplicates.

@@ -1,12 +1,16 @@
 #!/bin/zsh
-# Sourceable env setup - use from any script in src/scripts/*/: source "$(dirname $0)/../source_env_setup.sh"
+# Sourceable env setup - use from any script in scripts/*/: source "$(dirname $0)/../source_env_setup.sh"
 # Guard against double-sourcing
 [[ -n "${_CP4D_ENV_LOADED:-}" ]] && return 0
 _CP4D_ENV_LOADED=1
 
 _ENV_SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-export CONFIG_DIR="${_ENV_SETUP_DIR}/../../cp4d_config"
-export SERVICE_INSTANCE_FILE_DIR="${_ENV_SETUP_DIR}/../../service_instances"
+# All configs live in per-product subfolders of configs/ (cp4d_config/,
+# confluent_platform_config/, ...). CONFIG_DIR stays the CP4D folder.
+export CONFIGS_ROOT="$(cd "${_ENV_SETUP_DIR}/.." && pwd)/configs"
+export CONFIG_DIR="${CONFIGS_ROOT}/cp4d_config"
+export CONFLUENT_CONFIG_DIR="${CONFIGS_ROOT}/confluent_platform_config"
+export SERVICE_INSTANCE_FILE_DIR="${_ENV_SETUP_DIR}/../service_instances"
 # Ensure payload output dir exists so provisioning scripts can write into it
 mkdir -p "${SERVICE_INSTANCE_FILE_DIR}"
 unset _ENV_SETUP_DIR
@@ -24,7 +28,7 @@ _source_if_exists() {
 # ------------------------------------------------------------------------------
 # Config loading
 # ------------------------------------------------------------------------------
-# Default (ENV_TARGET unset): source every cp4d_config/*.sh, CP4D first. Names
+# Default (ENV_TARGET unset): source every configs/*/*.sh, CP4D first. Names
 # defined in more than one file (OCP_URL, OC_LOGIN, STG_CLASS_BLOCK, ...) then
 # resolve to whichever file sorted last.
 #
@@ -34,15 +38,19 @@ _source_if_exists() {
 #
 # so a script targeting a different cluster gets exactly the values in its own
 # config, with nothing from cpd_vars.sh able to override them. ENV_TARGET may be
-# a bare name (confluent -> confluent_vars.sh) or a path to a config file.
+# a bare name (confluent -> confluent_vars.sh, looked up in every configs/*/
+# subfolder) or a path to a config file.
 if [[ -n "${ENV_TARGET:-}" ]]; then
     _target_file="${ENV_TARGET}"
-    [[ -f "${_target_file}" ]] || _target_file="${CONFIG_DIR}/${ENV_TARGET}_vars.sh"
-    [[ -f "${_target_file}" ]] || _target_file="${CONFIG_DIR}/${ENV_TARGET}"
+    for _d in "${CONFIGS_ROOT}"/*(N/); do
+        [[ -f "${_target_file}" ]] && break
+        _target_file="${_d}/${ENV_TARGET}_vars.sh"
+        [[ -f "${_target_file}" ]] || _target_file="${_d}/${ENV_TARGET}"
+    done
 
     if [[ ! -f "${_target_file}" ]]; then
         echo "[ERROR] ENV_TARGET='${ENV_TARGET}' does not resolve to a config file." >&2
-        echo "[ERROR] Tried: ${ENV_TARGET}, ${CONFIG_DIR}/${ENV_TARGET}_vars.sh, ${CONFIG_DIR}/${ENV_TARGET}" >&2
+        echo "[ERROR] Tried: ${ENV_TARGET}, ${CONFIGS_ROOT}/*/${ENV_TARGET}_vars.sh, ${CONFIGS_ROOT}/*/${ENV_TARGET}" >&2
         return 1 2>/dev/null || exit 1
     fi
 
@@ -55,11 +63,11 @@ if [[ -n "${ENV_TARGET:-}" ]]; then
     _target_details="${ENV_TARGET_FILE%_vars.sh}_instance_details.sh"
     [[ "${_target_details}" != "${ENV_TARGET_FILE}" ]] && _source_if_exists "${_target_details}"
 
-    unset _target_file _target_details
+    unset _target_file _target_details _d
 else
     _source_if_exists "${CONFIG_DIR}/cpd_vars.sh"
     _source_if_exists "${CONFIG_DIR}/cpd_instance_details.sh"
-    for _f in "${CONFIG_DIR}"/*.sh; do
+    for _f in "${CONFIG_DIR}"/*.sh(N) "${CONFIGS_ROOT}"/*/*.sh(N); do
         _source_if_exists "$_f"
     done
 fi

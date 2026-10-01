@@ -72,8 +72,8 @@ for _var in PROJECT_CONFLUENT_FLINK FLINK_HELM_REPO_NAME FLINK_HELM_REPO_URL \
     [[ -z "${(P)_var:-}" ]] && _missing+=("${_var}")
 done
 if (( ${#_missing[@]} > 0 )); then
-    echo "[ERROR] Missing required variables in cp4d_config/confluent_vars.sh: ${_missing[*]}" >&2
-    echo "[ERROR] Run flink_install/0_flink_prepare_template_config.sh first." >&2
+    echo "[ERROR] Missing required variables in configs/confluent_platform_config/confluent_vars.sh: ${_missing[*]}" >&2
+    echo "[ERROR] Run install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh first." >&2
     exit 1
 fi
 
@@ -377,11 +377,11 @@ fi
 echo ""
 if oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
     echo "[INFO] Confluent cluster found in '${PROJECT_CONFLUENT_SERVER}'."
-    echo "[INFO] After the install, attach it with:  ./x.4_flink_connect_kafka.sh"
+    echo "[INFO] After the install, attach it with:  ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh"
 else
     echo "[INFO] No Confluent cluster found in '${PROJECT_CONFLUENT_SERVER}'."
     echo "[INFO] Flink will install standalone. Attach a Kafka cluster later with"
-    echo "[INFO] ./x.4_flink_connect_kafka.sh, which also accepts an external one"
+    echo "[INFO] ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh, which also accepts an external one"
     echo "[INFO] via --bootstrap."
 fi
 
@@ -390,5 +390,5 @@ if [[ "${DRY_RUN}" == "true" ]]; then
     echo "[INFO] --dry-run complete. Nothing was changed."
 else
     echo "[INFO] Preparation complete."
-    echo "[INFO] Next: flink_install/1.1_flink_install.sh"
+    echo "[INFO] Next: install_confluent_platform_flink_addon/1.1_flink_install.sh"
 fi

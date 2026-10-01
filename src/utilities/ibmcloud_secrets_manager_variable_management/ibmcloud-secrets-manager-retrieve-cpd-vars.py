@@ -3,14 +3,14 @@
 
 Reads the key/value (``kv``) secrets written by
 ibmcloud-secrets-manager-upload-update-cpd-vars.py and writes the files back out,
-comments and quoting included, ready for src/scripts/source_env_setup.sh to source.
+comments and quoting included, ready for scripts/source_env_setup.sh to source.
 
 Examples
 --------
     # See what a bundle holds before writing anything
     ./ibmcloud-secrets-manager-retrieve-cpd-vars.py --instance-id 1a2b... --region eu-de --list
 
-    # Restore into cp4d_config/ (existing files are backed up first)
+    # Restore into configs/cp4d_config/ (existing files are backed up first)
     ./ibmcloud-secrets-manager-retrieve-cpd-vars.py --instance-id 1a2b... --region eu-de
 
     # A named bundle from its own group, into a scratch directory
@@ -42,11 +42,11 @@ import os
 import sys
 from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "helpers"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "helpers"))
 
 import ibmcloud_secrets_manager_helpers as smh
 
-DEFAULT_CONFIG_DIR = "cp4d_config"
+DEFAULT_CONFIG_DIR = os.path.join("configs", "cp4d_config")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -302,7 +302,7 @@ def main(argv: list[str]) -> int:
     if not args.stdout:
         print(
             f"\nRestored {written} file(s) into {output_dir}.\n"
-            "Source them with: source src/scripts/source_env_setup.sh"
+            "Source them with: source scripts/source_env_setup.sh"
         )
     return 0
 

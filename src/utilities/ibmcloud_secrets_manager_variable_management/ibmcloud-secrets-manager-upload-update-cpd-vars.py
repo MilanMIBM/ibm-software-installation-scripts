@@ -22,7 +22,7 @@ previous|<id>``, or ``--iteration N`` for a bundle built with iterations.
 
 Examples
 --------
-    # Defaults: cp4d_config/cpd_vars.sh + its install-options file, group 'default'
+    # Defaults: configs/cp4d_config/cpd_vars.sh + its install-options file, group 'default'
     ./ibmcloud-secrets-manager-upload-update-cpd-vars.py \
         --instance-id 1a2b3c4d-... --region eu-de
 
@@ -34,7 +34,7 @@ Examples
 
     # Also stash the credentials the install scripts write out
     ./ibmcloud-secrets-manager-upload-update-cpd-vars.py \
-        --extra-file cp4d_config/cpd_instance_details.sh --dry-run
+        --extra-file configs/cp4d_config/cpd_instance_details.sh --dry-run
 
 Credentials come from --apikey or SECRETS_MANAGER_APIKEY / IBM_CLOUD_API_KEY /
 IBMCLOUD_API_KEY, and a repo-root .env is loaded automatically when present.
@@ -49,13 +49,13 @@ import sys
 sys.path.insert(
     0,
     os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "helpers"
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "helpers"
     ),
 )
 
 import ibmcloud_secrets_manager_helpers as smh
 
-DEFAULT_CONFIG_DIR = "cp4d_config"
+DEFAULT_CONFIG_DIR = os.path.join("configs", "cp4d_config")
 DEFAULT_CPD_VARS = "cpd_vars.sh"
 DEFAULT_INSTALL_OPTIONS = "install-options.yml"
 
@@ -348,7 +348,7 @@ def main(argv: list[str]) -> int:
 
     print(
         "\nDone. Retrieve the current config with:\n"
-        f"  src/utils/ibmcloud-secrets-manager-retrieve-cpd-vars.sh --prefix {prefix} "
+        f"  src/utilities/ibmcloud_secrets_manager_variable_management/ibmcloud-secrets-manager-retrieve-cpd-vars.sh --prefix {prefix} "
         f"--secret-group {group_name}"
     )
     if iterated:

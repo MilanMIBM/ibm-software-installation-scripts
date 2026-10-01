@@ -22,7 +22,7 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 #   suffix (5.4.0.6.amd64). The standard image does not support that suffix.
 #
 # How the setting persists:
-#   The choice is written to cp4d_config/.env as OLM_UTILS_VARIANT.
+#   The choice is written to configs/cp4d_config/.env as OLM_UTILS_VARIANT.
 #   cpd_vars.sh sources that .env on line 6, before it computes
 #   OLM_UTILS_IMAGE, so the setting survives regenerating cpd_vars.sh from
 #   the config generator.
@@ -101,7 +101,7 @@ fi
 # -----------------------------------------------------------------------------
 for var in VERSION CONFIG_DIR; do
     if [[ -z "${(P)var:-}" ]]; then
-        echo "[ERROR] ${var} is not set. Generate cp4d_config/cpd_vars.sh first."
+        echo "[ERROR] ${var} is not set. Generate configs/cp4d_config/cpd_vars.sh first."
         exit 1
     fi
 done
@@ -132,7 +132,7 @@ if [[ "${TARGET}" == "premium" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Persist the choice to cp4d_config/.env
+# Persist the choice to configs/cp4d_config/.env
 # -----------------------------------------------------------------------------
 mkdir -p "${CONFIG_DIR}"
 touch "${ENV_FILE}"
@@ -150,7 +150,7 @@ export OLM_UTILS_VARIANT="${TARGET}"
 export OLM_UTILS_IMAGE="${TARGET_IMAGE}"
 
 # Keep the copy the container reads in sync (source_env_setup.sh copies
-# cp4d_config/* into the work dir on every load).
+# configs/cp4d_config/* into the work dir on every load).
 if [[ -n "${CPD_CLI_WORK_PATH:-}" && -d "${CPD_CLI_WORK_PATH}/cp4d_config" ]]; then
     cp "${ENV_FILE}" "${CPD_CLI_WORK_PATH}/cp4d_config/.env" 2>/dev/null || true
 fi

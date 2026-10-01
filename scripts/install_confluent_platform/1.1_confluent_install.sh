@@ -25,7 +25,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # Image tags, ports and environment variable names mirror the upstream
 # docker-compose file at https://github.com/confluentinc/cp-all-in-one so the
 # mapping between the two stays legible. Component selection and sizing come
-# from cp4d_config/confluent_vars.sh.
+# from configs/confluent_platform_config/confluent_vars.sh.
 #
 # Run 1.0_confluent_prep.sh first.
 # ==============================================================================
@@ -408,7 +408,7 @@ if [[ "${CONFLUENT_MDS_ENABLED}" == "true" ]]; then
     # install one step short of the MDS it was asked for. Hand off to the script
     # that owns the keypair instead, the same way external access does below.
     if ! oc get secret "${CONFLUENT_MDS_SECRET}" -n "${NS}" &>/dev/null; then
-        _mds_script="${SCRIPT_DIR}/x.4_confluent_add_mds.sh"
+        _mds_script="${SCRIPT_DIR}/utility_scripts_confluent_platform/x.4_confluent_add_mds.sh"
         if [[ "${_CONFLUENT_MDS_PENDING:-false}" != "true" && -x "${_mds_script}" ]]; then
             echo "[INFO] MDS requested but no token keypair yet; handing off to ${_mds_script##*/}."
             # The flag stops the hand-off recursing: that script re-invokes this
@@ -2091,7 +2091,7 @@ fi
 # ------------------------------------------------------------------------------
 if [[ "${_external_deferred:-false}" == "true" || "${_CONFLUENT_EXTERNAL_PENDING:-false}" == "true" ]]; then
     unset _CONFLUENT_EXTERNAL_PENDING
-    _ext_script="${SCRIPT_DIR}/x.4_confluent_add_external_access.sh"
+    _ext_script="${SCRIPT_DIR}/utility_scripts_confluent_platform/x.4_confluent_add_external_access.sh"
     if [[ -x "${_ext_script}" ]]; then
         echo ""
         echo "[INFO] Enabling external Kafka access (deferred until the cluster was up)..."

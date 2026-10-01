@@ -19,11 +19,11 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # Confluent Platform - collect instance details
 # ------------------------------------------------------------------------------
 # Discovers the live endpoints of the installed cp-all-in-one stack and writes
-# them to cp4d_config/confluent_instance_details.sh, mirroring how
+# them to configs/confluent_platform_config/confluent_instance_details.sh, mirroring how
 # 3.3.1_get_instance_creds.sh writes cpd_instance_details.sh.
 #
 # The generated file is picked up automatically on the next run of any script in
-# this repo, because source_env_setup.sh sources every *.sh in cp4d_config/.
+# this repo, because source_env_setup.sh sources every *.sh in configs/*/.
 # ==============================================================================
 
 eval "${OC_LOGIN}"
@@ -137,12 +137,13 @@ if oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" &>/dev/null; then
 fi
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/confluent_instance_details.sh"
+VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_instance_details.sh"
+mkdir -p "$(dirname "${VARS_FILE}")"
 
 cat > "${VARS_FILE}" <<EOF
 # Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # Live endpoints of the Confluent Platform stack in project '${NS}'.
-# Regenerate with: src/scripts/confluent_install/$(basename $0)
+# Regenerate with: scripts/install_confluent_platform/$(basename $0)
 
 export CONFLUENT_NAMESPACE="${NS}"
 export CONFLUENT_DEPLOYED_VERSION="${CONFLUENT_DEPLOYED_VERSION}"
@@ -183,7 +184,7 @@ export CONFLUENT_PLATFORM_PASSWORD="${CONFLUENT_MDS_PASS}"
 
 # --- External Kafka bootstrap ------------------------------------------------
 # Empty unless x.4_confluent_add_external_access.sh has been run. Use with
-# cp4d_config/confluent_external_client.properties (SASL_SSL).
+# configs/confluent_platform_config/confluent_external_client.properties (SASL_SSL).
 export CONFLUENT_BOOTSTRAP_EXTERNAL="${CONFLUENT_BOOTSTRAP_EXTERNAL}"
 
 # --- Kafka SASL/SCRAM client credentials -------------------------------------
@@ -218,7 +219,7 @@ if [[ "${CONFLUENT_WRITE_SASL_PROPERTIES}" != "true" ]]; then
 elif (( ${#_sasl_users[@]} == 0 )); then
     echo "[INFO] No SASL credentials in '${CONFLUENT_SASL_SECRET}'; skipping the client properties file."
 else
-    SASL_FILE="${REPO_ROOT}/cp4d_config/confluent_sasl_clients.properties"
+    SASL_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_sasl_clients.properties"
 
     # The admin user is the default the file is configured for; every other
     # client is listed underneath as a ready-to-paste jaas line.
@@ -240,9 +241,9 @@ else
         echo "#"
         echo "# Configured for '${_default_user}'. Use with the Kafka CLI tools:"
         echo "#   kafka-topics --bootstrap-server ${CONFLUENT_BOOTSTRAP_INTERNAL} \\"
-        echo "#     --command-config cp4d_config/${SASL_FILE##*/} --list"
+        echo "#     --command-config configs/confluent_platform_config/${SASL_FILE##*/} --list"
         echo "#"
-        echo "# Regenerate with: src/scripts/confluent_install/$(basename $0)"
+        echo "# Regenerate with: scripts/install_confluent_platform/$(basename $0)"
         echo "# Suppress with:   CONFLUENT_WRITE_SASL_PROPERTIES=false"
         echo ""
         echo "bootstrap.servers=${CONFLUENT_BOOTSTRAP_INTERNAL}"
@@ -285,7 +286,7 @@ else
             echo "# Username         - ${_default_user}"
             echo "# API key/Password - ${_default_pw}"
             echo "#"
-            echo "# Upload certificate - cp4d_config/confluent_kafka_ca.crt"
+            echo "# Upload certificate - configs/confluent_platform_config/confluent_kafka_ca.crt"
             echo "#                      (the private CA; the brokers' certificate is not"
             echo "#                       signed by a public authority)"
         fi

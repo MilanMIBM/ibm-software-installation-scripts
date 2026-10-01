@@ -3,8 +3,8 @@
 # resolve_cpd_cli_release.sh - map an IBM Software Hub version to a cpd-cli release
 # -----------------------------------------------------------------------------
 # Sourceable helper shared by:
-#   - src/scripts/0_initial_setup/0.2_install_cpd_cli-MAC-ONLY.sh  (fresh install)
-#   - src/utils/cpd-cli_upgrade_to_version.sh                      (upgrade in place)
+#   - scripts/install_cloud_pak_for_data/0_initial_setup/0.2_install_cpd_cli-MAC-ONLY.sh  (fresh install)
+#   - src/utilities/cpd-cli_utils/cpd-cli_upgrade_to_version.sh                           (upgrade in place)
 #
 # Why this exists:
 #   The cpd-cli binary is version-locked to an IBM Software Hub release and

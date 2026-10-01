@@ -26,7 +26,7 @@ def _():
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
 
-    from src.helpers.id_options_templates import (
+    from src.helpers.cp4d_id_options_templates import (
         cp4d_component_id_records,
         cp4d_license_entitlement_id_records,
         default_project_naming_conventions,
@@ -778,7 +778,7 @@ def _():
 @app.cell
 def _():
     save_to_config_dir_button = mo.ui.run_button(
-        label="**Save directly to ./cp4d_config/**", kind="neutral"
+        label="**Save directly to ./configs/cp4d_config/**", kind="neutral"
     )
     return (save_to_config_dir_button,)
 
@@ -787,7 +787,7 @@ def _():
 def _(render_template_from_environment, run_button, save_to_config_dir_button):
     rendered_variables_file_cpd = (
         render_template_from_environment(
-            template_path="src/helpers/cpd_variable_template.sh.j2"
+            template_path="src/helpers/config_file_jinja2_templates/cpd_variable_template.sh.j2"
         )
         if run_button.value or save_to_config_dir_button.value
         else ""
@@ -945,7 +945,7 @@ def _(
 ):
     rendered_variables_file_inst_options = (
         render_template_from_environment(
-            template_path="src/helpers/install_options_template.sh.j2"
+            template_path="src/helpers/config_file_jinja2_templates/install_options_template.sh.j2"
         )
         if (run_button.value or save_to_config_dir_button.value)
         and install_options_addon.value
@@ -979,7 +979,7 @@ def _(
 ):
     _save_result = None
     if save_to_config_dir_button.value and cpd_vars_template_editor.value:
-        _config_dir = os.path.join(os.path.dirname(__file__), "cp4d_config")
+        _config_dir = os.path.join(os.path.dirname(__file__), "configs", "cp4d_config")
         os.makedirs(_config_dir, exist_ok=True)
 
         _cpd_vars_path = os.path.join(_config_dir, cpd_vars_filename)
@@ -996,7 +996,7 @@ def _(
 
         _save_result = mo.callout(
             mo.md(
-                "**Saved to `./cp4d_config/`:**\n"
+                "**Saved to `./configs/cp4d_config/`:**\n"
                 + "\n".join(f"- `{p}`" for p in _saved)
             ),
             kind="success",

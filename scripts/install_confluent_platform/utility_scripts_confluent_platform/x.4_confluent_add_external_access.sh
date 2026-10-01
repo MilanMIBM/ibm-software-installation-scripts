@@ -94,8 +94,8 @@ if [[ -n "${CERT_PATH}" && -z "${KEY_PATH}" ]] || [[ -z "${CERT_PATH}" && -n "${
     exit 1
 fi
 
-INSTALL="${SCRIPT_DIR}/1.1_confluent_install.sh"
-STATUS="${SCRIPT_DIR}/1.2_confluent_status.sh"
+INSTALL="${SCRIPT_DIR}/../1.1_confluent_install.sh"
+STATUS="${SCRIPT_DIR}/../1.2_confluent_status.sh"
 [[ -f "${INSTALL}" ]] || { echo "[ERROR] Not found: ${INSTALL}" >&2; exit 1; }
 
 eval "${OC_LOGIN}"
@@ -308,8 +308,9 @@ CA
 
     # Keep the CA next to the client properties so clients can trust it.
     REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-    cp "${_tmp}/ca.crt" "${REPO_ROOT}/cp4d_config/confluent_kafka_ca.crt"
-    chmod 644 "${REPO_ROOT}/cp4d_config/confluent_kafka_ca.crt"
+    mkdir -p "${REPO_ROOT}/configs/confluent_platform_config"
+    cp "${_tmp}/ca.crt" "${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
+    chmod 644 "${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
 
     rm -rf "${_tmp}"; trap - EXIT
     echo "[INFO] Certificates stored in secret '${CONFLUENT_EXTERNAL_TLS_SECRET}'."
@@ -386,8 +387,9 @@ echo " Step 4/4: client configuration"
 echo "------------------------------------------------------------------------------"
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-OUT="${REPO_ROOT}/cp4d_config/confluent_external_client.properties"
-CA_OUT="${REPO_ROOT}/cp4d_config/confluent_kafka_ca.crt"
+OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_external_client.properties"
+CA_OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
+mkdir -p "$(dirname "${OUT}")"
 
 _bootstrap=""
 for _h in "${_hosts[@]}"; do _bootstrap+="${_h}:443,"; done
@@ -402,7 +404,7 @@ _first_pw="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
     echo "# Kafka client properties for EXTERNAL access to the cluster in '${NS}'."
     echo "#"
     echo "#   kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
-    echo "#     --command-config cp4d_config/confluent_external_client.properties --list"
+    echo "#     --command-config configs/confluent_platform_config/confluent_external_client.properties --list"
     echo ""
     echo "bootstrap.servers=${_bootstrap}"
     echo "security.protocol=SASL_SSL"

@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # SOURCE IT to keep the environment in your shell:
 #
-#     source src/scripts/confluent_install/confluent_cli_login.sh
+#     source scripts/install_confluent_platform/confluent_cli_login.sh
 #     confluent kafka topic list
 #
 # Running it directly (./confluent_cli_login.sh) still installs the CLI and
@@ -28,7 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # outlives this process - but the CONFLUENT_* environment variables are lost
 # when it exits.
 #
-# Everything comes from cp4d_config/confluent_instance_details.sh, regenerated
+# Everything comes from configs/confluent_platform_config/confluent_instance_details.sh, regenerated
 # by 1.3_confluent_get_instance_details.sh. This script reads that file; it
 # never writes credentials of its own.
 #
@@ -84,7 +84,7 @@ while [[ "${REPO_ROOT}" != "/" && ! -f "${REPO_ROOT}/pyproject.toml" ]]; do
 done
 [[ -f "${REPO_ROOT}/pyproject.toml" ]] || _fail "Could not locate the repo root from ${SCRIPT_DIR}."
 
-DETAILS="${REPO_ROOT}/cp4d_config/confluent_instance_details.sh"
+DETAILS="${REPO_ROOT}/configs/confluent_platform_config/confluent_instance_details.sh"
 
 if $REFRESH; then
     echo "[INFO] Refreshing instance details..."
@@ -94,7 +94,7 @@ if $REFRESH; then
 fi
 
 [[ -f "${DETAILS}" ]] || _fail "Not found: ${DETAILS##*/}
-        Run: src/scripts/confluent_install/1.3_confluent_get_instance_details.sh"
+        Run: scripts/install_confluent_platform/1.3_confluent_get_instance_details.sh"
 
 source "${DETAILS}"
 
@@ -156,7 +156,7 @@ export CONFLUENT_PLATFORM_PASSWORD="${CONFLUENT_PLATFORM_PASSWORD:-${CONFLUENT_M
 # external routes when they exist, since this shell is usually off-cluster.
 export CONFLUENT_BOOTSTRAP="${CONFLUENT_BOOTSTRAP_EXTERNAL:-${CONFLUENT_BOOTSTRAP_INTERNAL:-}}"
 
-_ca="${REPO_ROOT}/cp4d_config/confluent_kafka_ca.crt"
+_ca="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
 [[ -f "${_ca}" ]] && export CONFLUENT_PLATFORM_CERTIFICATE_AUTHORITY_PATH="${_ca}"
 
 # ------------------------------------------------------------------------------
@@ -184,7 +184,7 @@ fi
 if [[ -z "${CONFLUENT_PLATFORM_MDS_URL}" ]]; then
     echo "[WARN] No MDS endpoint, so there is nothing to log in to."
     echo "[WARN] MDS is what makes 'confluent login' work. Enable it with:"
-    echo "[WARN]   ${SCRIPT_DIR}/x.4_confluent_add_mds.sh"
+    echo "[WARN]   ${SCRIPT_DIR}/utility_scripts_confluent_platform/x.4_confluent_add_mds.sh"
     echo ""
     echo "[INFO] The CLI is installed and on PATH, but every confluent subcommand"
     echo "[INFO] requires an active login - even ones given an explicit --endpoint."

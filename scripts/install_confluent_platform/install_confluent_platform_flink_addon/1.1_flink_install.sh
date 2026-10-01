@@ -257,7 +257,7 @@ fi
 if [[ "${DRY_RUN}" != "true" ]] \
         && oc get secret "${FLINK_AUTH_SECRET:-cmf-oauth}" -n "${NS}" &>/dev/null; then
     echo "[INFO] OpenShift auth is enabled for the CMF route - re-applying it."
-    "${SCRIPT_DIR}/x.2_flink_add_auth_openshift.sh" --no-status
+    "${SCRIPT_DIR}/utility_scripts_confluent_flink/x.2_flink_add_auth_openshift.sh" --no-status
 elif [[ "${FLINK_CREATE_ROUTES}" == "true" && "${DRY_RUN}" != "true" ]]; then
     _host_line=""
     [[ -n "${CONFLUENT_ROUTE_DOMAIN:-}" ]] && _host_line="  host: cmf-${NS}.${CONFLUENT_ROUTE_DOMAIN}"
@@ -282,7 +282,7 @@ ${_host_line}
 EOF
     echo "[WARN] Route 'cmf' created. The CMF REST API is UNAUTHENTICATED - anyone"
     echo "[WARN] who can reach this URL can create and delete Flink jobs. Run"
-    echo "[WARN] ./x.2_flink_add_auth_openshift.sh to put it behind the OpenShift"
+    echo "[WARN] ./utility_scripts_confluent_flink/x.2_flink_add_auth_openshift.sh to put it behind the OpenShift"
     echo "[WARN] login, or set FLINK_CREATE_ROUTES=false and use the port-forward"
     echo "[WARN] the x.* scripts open automatically."
 elif [[ "${FLINK_CREATE_ROUTES}" != "true" ]]; then
@@ -590,9 +590,9 @@ echo ""
 echo "[INFO] Install complete."
 echo ""
 if oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
-    echo "[INFO] Next: ./x.4_flink_connect_kafka.sh   attach the Confluent cluster"
-    echo "[INFO]       ./x.3_flink_sample_job.sh      run a sample job end to end"
+    echo "[INFO] Next: ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh   attach the Confluent cluster"
+    echo "[INFO]       ./utility_scripts_confluent_flink/x.3_flink_sample_job.sh      run a sample job end to end"
 else
-    echo "[INFO] Next: ./x.4_flink_connect_kafka.sh --bootstrap <host:port>"
+    echo "[INFO] Next: ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh --bootstrap <host:port>"
     echo "[INFO]       attaches a Kafka cluster so Flink SQL can read and write topics."
 fi

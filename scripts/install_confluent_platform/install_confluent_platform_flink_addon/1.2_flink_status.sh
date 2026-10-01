@@ -169,7 +169,7 @@ if [[ "${NO_CMF}" != "true" ]] && command -v confluent &>/dev/null \
         echo "  Catalogs:"
         _cat="$(confluent flink catalog list --url "${CMF_URL}" 2>/dev/null || true)"
         if [[ -z "${_cat}" || "${_cat}" == *"None found"* ]]; then
-            echo "    (none - run ./x.4_flink_connect_kafka.sh to attach a Kafka cluster)"
+            echo "    (none - run ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh to attach a Kafka cluster)"
         else
             echo "${_cat}" | sed 's/^/    /'
         fi

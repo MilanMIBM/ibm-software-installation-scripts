@@ -84,11 +84,11 @@ if ! oc get namespace "${NS}" &>/dev/null; then
     echo "[WARN] Project '${NS}' does not exist - rendering anyway (--dry-run)."
 fi
 
-RESOURCE_DIR="${SCRIPT_DIR}/flink_vars/rendered"
+RESOURCE_DIR="${SCRIPT_DIR}/../flink_vars/rendered"
 mkdir -p "${RESOURCE_DIR}"
 
 if [[ "${DRY_RUN}" != "true" ]]; then
-    source "${SCRIPT_DIR}/flink_cmf_connect.sh"
+    source "${SCRIPT_DIR}/../flink_cmf_connect.sh"
     cmf_connect
 fi
 

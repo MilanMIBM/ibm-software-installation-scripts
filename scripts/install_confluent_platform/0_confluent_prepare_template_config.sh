@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # ==============================================================================
 # Confluent Platform - template the sizing block in confluent_vars.sh
 # ------------------------------------------------------------------------------
-# Applies a t-shirt size to cp4d_config/confluent_vars.sh, adding the sizing
+# Applies a t-shirt size to configs/confluent_platform_config/confluent_vars.sh, adding the sizing
 # variables if absent and overwriting them if already present. Individual values
 # can be overridden with flags, which always win over the size preset.
 #
@@ -26,7 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # ==============================================================================
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/confluent_vars.sh"
+VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_vars.sh"
 
 usage() {
     cat <<'USAGE'
@@ -160,7 +160,7 @@ done
 # ------------------------------------------------------------------------------
 # Create the config if it does not exist yet.
 #
-# cp4d_config/ is gitignored, so a fresh clone has no confluent_vars.sh at all.
+# configs/confluent_platform_config/ is gitignored, so a fresh clone has no confluent_vars.sh at all.
 # Nothing here needs to be seeded by hand: the backfill sections below add every
 # cluster, platform and sizing variable the install scripts require, so an empty
 # stub is enough to turn the first run into a complete config. Only the shebang
@@ -208,7 +208,7 @@ fi
 #
 # Anything already present is left untouched - a value edited here survives.
 # ------------------------------------------------------------------------------
-CPD_VARS_FILE="${REPO_ROOT}/cp4d_config/cpd_vars.sh"
+CPD_VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_vars.sh"
 
 # Pull a literal value out of cpd_vars.sh without sourcing it (it has side
 # effects: it sources .env and shells out for IMAGE_PULL_CREDENTIALS).
@@ -727,4 +727,4 @@ printf '  %-34s %s\n' \
     "broker cpu/mem limit" "${B_CPU_LIM} / ${B_MEM_LIM}" \
     "cluster id"           "${CLUSTER_ID} (${CLUSTER_ID_ORIGIN})"
 echo ""
-echo "[INFO] Next: src/scripts/confluent_install/1.0_confluent_prep.sh"
+echo "[INFO] Next: scripts/install_confluent_platform/1.0_confluent_prep.sh"

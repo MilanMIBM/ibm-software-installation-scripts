@@ -186,3 +186,4 @@ cython_debug/
 # Repo specific
 service_instances/*
 /scripts/install_confluent_platform/confluent_platform_vars
+configs/*

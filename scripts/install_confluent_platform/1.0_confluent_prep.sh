@@ -60,7 +60,7 @@ for _var in PROJECT_CONFLUENT_SERVER CONFLUENT_VERSION CONFLUENT_REGISTRY \
     [[ -z "${(P)_var:-}" ]] && _missing+=("${_var}")
 done
 if (( ${#_missing[@]} > 0 )); then
-    echo "[ERROR] Missing required variables in cp4d_config/confluent_vars.sh: ${_missing[*]}" >&2
+    echo "[ERROR] Missing required variables in configs/confluent_platform_config/confluent_vars.sh: ${_missing[*]}" >&2
     exit 1
 fi
 

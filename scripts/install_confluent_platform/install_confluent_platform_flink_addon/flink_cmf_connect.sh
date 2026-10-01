@@ -92,7 +92,7 @@ cmf_connect() {
 
     if ! oc get deployment confluent-manager-for-apache-flink -n "${ns}" &>/dev/null; then
         echo "[ERROR] CMF is not installed in project '${ns}'." >&2
-        echo "[ERROR] Run flink_install/1.1_flink_install.sh first." >&2
+        echo "[ERROR] Run install_confluent_platform_flink_addon/1.1_flink_install.sh first." >&2
         return 1
     fi
 

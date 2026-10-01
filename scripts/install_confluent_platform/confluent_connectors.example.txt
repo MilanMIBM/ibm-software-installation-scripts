@@ -3,7 +3,7 @@
 # ------------------------------------------------------------------------------
 # Install everything listed here in one run, with a SINGLE Connect restart:
 #
-#   ./x.3_confluent_add_connector.sh --file confluent_connectors.example.txt
+#   ./utility_scripts_confluent_platform/x.3_confluent_add_connector.sh --file confluent_connectors.example.txt
 #
 # One source per line. Blank lines and everything after a '#' are ignored.
 # Per-line options: --name <dir>   install under a specific directory name

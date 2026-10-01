@@ -123,7 +123,7 @@ if ! oc get namespace "${NS}" &>/dev/null; then
     echo "[WARN] Flink project '${NS}' does not exist - rendering anyway (--dry-run)."
 fi
 
-RESOURCE_DIR="${SCRIPT_DIR}/flink_vars/rendered"
+RESOURCE_DIR="${SCRIPT_DIR}/../flink_vars/rendered"
 mkdir -p "${RESOURCE_DIR}"
 
 # ==============================================================================
@@ -323,7 +323,7 @@ if [[ "${_discovered}" == "true" && "${DRY_RUN}" != "true" ]]; then
         echo "[WARN] Reading topics is unaffected. To fix, redeploy the brokers with"
         echo "[WARN] KAFKA_TRANSACTION_MAX_TIMEOUT_MS=3600000 (already set in the current"
         echo "[WARN] 1.1_confluent_install.sh):"
-        echo "[WARN]   ../1.1_confluent_install.sh"
+        echo "[WARN]   ../../1.1_confluent_install.sh"
         echo ""
     fi
 fi
@@ -332,7 +332,7 @@ fi
 # CMF connection
 # ==============================================================================
 if [[ "${DRY_RUN}" != "true" ]]; then
-    source "${SCRIPT_DIR}/flink_cmf_connect.sh"
+    source "${SCRIPT_DIR}/../flink_cmf_connect.sh"
     cmf_connect
 fi
 

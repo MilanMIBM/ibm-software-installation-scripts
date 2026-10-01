@@ -15,7 +15,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # Confluent Platform for Apache Flink - OpenShift-backed authentication for CMF
 # ------------------------------------------------------------------------------
 # Puts the same openshift/oauth-proxy sidecar that guards Control Center (see
-# ../x.2_confluent_add_auth_openshift.sh) in front of the 'cmf' route, so the
+# ../../utility_scripts_confluent_platform/x.2_confluent_add_auth_openshift.sh) in front of the 'cmf' route, so the
 # CMF REST API is no longer open to anyone who can reach the cluster's ingress.
 #
 # What changes:
@@ -70,7 +70,7 @@ while (( $# > 0 )); do
     esac
 done
 
-STATUS="${SCRIPT_DIR}/1.2_flink_status.sh"
+STATUS="${SCRIPT_DIR}/../1.2_flink_status.sh"
 
 eval "${OC_LOGIN}"
 

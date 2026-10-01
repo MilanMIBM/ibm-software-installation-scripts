@@ -12,7 +12,7 @@
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 PY_SCRIPT="${SCRIPT_DIR}/ibmcloud-secrets-manager-retrieve-cpd-vars.py"
 
 if [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then

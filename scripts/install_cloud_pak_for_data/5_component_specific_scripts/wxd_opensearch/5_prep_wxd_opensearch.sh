@@ -321,7 +321,7 @@ fi
 
 # --- write OpenSearch credentials to cpd_instance_details.sh ---
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/cpd_instance_details.sh"
+VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
 
 
 if [[ ${#SERVICE_IDS[@]} -gt 0 ]]; then

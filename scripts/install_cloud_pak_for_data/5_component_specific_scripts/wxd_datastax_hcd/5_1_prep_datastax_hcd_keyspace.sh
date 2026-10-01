@@ -19,7 +19,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   db     = client.get_database(endpoint, token=token, keyspace=<name>)
 #   db.get_database_admin().create_keyspace(<name>, update_db_keyspace=True)
 #
-# Connection details are read from cp4d_config/cpd_instance_details.sh (written
+# Connection details are read from configs/cp4d_config/cpd_instance_details.sh (written
 # by 5_prep_datastax_mc.sh):
 #   DATASTAX_HCD_ENDPOINT, DATASTAX_HCD_API_USER, DATASTAX_HCD_API_PASSWORD
 #
@@ -54,7 +54,7 @@ _is_true() {
 
 # Locate the repo root (marker: pyproject.toml).
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/cpd_instance_details.sh"
+VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
 
 # --- Source the HCD connection details if the instance details file exists.
 if [[ -f "${VARS_FILE}" ]]; then

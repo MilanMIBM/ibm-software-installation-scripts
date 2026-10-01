@@ -1,4 +1,4 @@
-"""Helpers for talking to the IBM License Service that cp4d_config/ points at.
+"""Helpers for talking to the IBM License Service that configs/cp4d_config/ points at.
 
 The License Service exposes two authentication methods, both of which this
 module supports and neither of which excludes the other by default:
@@ -13,7 +13,7 @@ module supports and neither of which excludes the other by default:
                     a ClusterRole over ``nonResourceURLs``. Gated on the CR by
                     ``spec.features.kubeRBACAuthEnabled``.
 
-Everything defaults from the environment that ``cp4d_config/`` exports
+Everything defaults from the environment that ``configs/cp4d_config/`` exports
 (``IBM_LICENSING_SERVICE_INSTANCE``, ``IBM_LICENSING_TOKEN``,
 ``PROJECT_LICENSE_SERVICE``), so in a shell that has sourced the repo env this
 is enough::
@@ -735,7 +735,7 @@ class LicensingTokenManager:
 class IBMLicensingClient:
     """Calls the IBM License Service APIs with either authentication method.
 
-    Defaults come from the environment ``cp4d_config/`` exports, so the
+    Defaults come from the environment ``configs/cp4d_config/`` exports, so the
     zero-argument form works in any shell that sourced the repo env::
 
         IBMLicensingClient().products()
@@ -792,7 +792,7 @@ class IBMLicensingClient:
         if not self.url:
             raise IBMLicensingConfigError(
                 f"No License Service URL. Pass url=… or set ${self.ENV_URL} "
-                "(cp4d_config/cpd_instance_details.sh exports it), or build the "
+                "(configs/cp4d_config/cpd_instance_details.sh exports it), or build the "
                 "client with IBMLicensingClient.from_cluster()."
             )
 
@@ -841,7 +841,7 @@ class IBMLicensingClient:
         """Build a client by reading the URL and tokens off the cluster.
 
         Use this before ``3.3.1_get_instance_creds.sh`` has populated
-        ``cp4d_config/cpd_instance_details.sh``, or against a cluster whose
+        ``configs/cp4d_config/cpd_instance_details.sh``, or against a cluster whose
         env you have not sourced. Only the credential the chosen ``auth`` mode
         needs is fetched, except in ``auto`` where a missing URL token falls
         back to a service account token.
@@ -1238,7 +1238,7 @@ def _iter_env_files(config_dir: Path) -> Iterable[Path]:
 
 
 def load_config_env(config_dir: str | Path | None = None) -> dict[str, str]:
-    """Read the ``export NAME="value"`` lines out of ``cp4d_config/``.
+    """Read the ``export NAME="value"`` lines out of ``configs/cp4d_config/``.
 
     For Python entry points that were not launched from a shell which sourced
     the repo env. Only plain literal exports are picked up; anything with
@@ -1246,7 +1246,7 @@ def load_config_env(config_dir: str | Path | None = None) -> dict[str, str]:
     evaluating it would mean running the shell.
     """
     if config_dir is None:
-        config_dir = Path(__file__).resolve().parents[2] / "cp4d_config"
+        config_dir = Path(__file__).resolve().parents[2] / "configs" / "cp4d_config"
     config_dir = Path(config_dir).expanduser()
     if not config_dir.is_dir():
         raise IBMLicensingConfigError(f"No such config directory: {config_dir}")

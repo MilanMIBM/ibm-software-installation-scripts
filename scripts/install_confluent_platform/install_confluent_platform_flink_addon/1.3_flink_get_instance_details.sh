@@ -15,11 +15,11 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # Confluent Platform for Apache Flink - collect instance details
 # ------------------------------------------------------------------------------
 # Discovers the live Flink endpoints and writes them to
-# cp4d_config/confluent_flink_instance_details.sh, mirroring how
+# configs/confluent_platform_config/confluent_flink_instance_details.sh, mirroring how
 # 1.3_confluent_get_instance_details.sh writes confluent_instance_details.sh.
 #
 # The generated file is picked up automatically on the next run of any script in
-# this repo, because source_env_setup.sh sources every *.sh in cp4d_config/.
+# this repo, because source_env_setup.sh sources every *.sh in configs/*/.
 # ==============================================================================
 
 eval "${OC_LOGIN}"
@@ -89,12 +89,13 @@ if command -v confluent &>/dev/null && oc get deployment confluent-manager-for-a
 fi
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/confluent_flink_instance_details.sh"
+VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_flink_instance_details.sh"
+mkdir -p "$(dirname "${VARS_FILE}")"
 
 cat > "${VARS_FILE}" <<EOF
 # Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # Live endpoints of the Confluent Platform for Apache Flink stack in '${NS}'.
-# Regenerate with: src/scripts/confluent_install/flink_install/$(basename $0)
+# Regenerate with: scripts/install_confluent_platform/install_confluent_platform_flink_addon/$(basename $0)
 
 export FLINK_NAMESPACE="${NS}"
 export FLINK_CMF_DEPLOYED_VERSION="${FLINK_CMF_DEPLOYED_VERSION}"

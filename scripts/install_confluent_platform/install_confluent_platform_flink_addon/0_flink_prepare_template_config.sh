@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # ==============================================================================
 # Confluent Platform for Apache Flink - template the sizing block
 # ------------------------------------------------------------------------------
-# Adds (or rewrites) the Flink block in cp4d_config/confluent_vars.sh. Mirrors
+# Adds (or rewrites) the Flink block in configs/confluent_platform_config/confluent_vars.sh. Mirrors
 # 0_confluent_prepare_template_config.sh one directory up: a managed block that
 # is overwritten on every run, with flags that beat the size preset.
 #
@@ -24,13 +24,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # file-rewriting step that runs before 1.0_flink_prep.sh.
 #
 # Why the variables land in confluent_vars.sh rather than a file of their own:
-# source_env_setup.sh sources every cp4d_config/*.sh, and the Flink scripts need
+# source_env_setup.sh sources every configs/*/*.sh, and the Flink scripts need
 # the Kafka values (bootstrap, SASL secret, namespace) from that same file to
 # wire the catalog. Keeping them together means one ENV_TARGET and one backup.
 # ==============================================================================
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/confluent_vars.sh"
+VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_vars.sh"
 
 usage() {
     cat <<'USAGE'
@@ -174,7 +174,7 @@ END_MARKER="# <<< confluent flink (managed by flink_install/0_flink_prepare_temp
 BLOCK="$(cat <<EOF
 ${BEGIN_MARKER}
 # Size: ${SIZE} - written $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-# Re-run flink_install/0_flink_prepare_template_config.sh to change these;
+# Re-run install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh to change these;
 # edits inside this block are overwritten. Everything Flink-related that is NOT
 # sizing (versions, toggles, names) lives outside the block and is preserved.
 
@@ -255,7 +255,7 @@ if ! grep -q '^export FLINK_CMF_CHART_VERSION=' "${VARS_FILE}"; then
     cat >> "${VARS_FILE}" <<'STATIC'
 
 # ------------------------------------------------------------------------------
-# Confluent Platform for Apache Flink - added by flink_install/0_flink_prepare_template_config.sh
+# Confluent Platform for Apache Flink - added by install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh
 # ------------------------------------------------------------------------------
 # NOT managed on re-runs - edit these freely, they will be preserved.
 #
@@ -386,4 +386,4 @@ printf '  %-30s %s\n' \
     "TaskManager cpu/mem"  "${TM_CPU} / ${TM_MEM}" \
     "task slots"           "${SLOTS}"
 echo ""
-echo "[INFO] Next: flink_install/1.0_flink_prep.sh"
+echo "[INFO] Next: install_confluent_platform_flink_addon/1.0_flink_prep.sh"

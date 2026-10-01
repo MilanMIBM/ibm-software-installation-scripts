@@ -1,6 +1,6 @@
 """Store and retrieve IBM Software Hub config files in IBM Cloud Secrets Manager.
 
-The two CLIs in ``src/utils/`` are thin wrappers around this module:
+The two CLIs in ``src/utilities/ibmcloud_secrets_manager_variable_management/`` are thin wrappers around this module:
 
 * ``ibmcloud-secrets-manager-upload-update-cpd-vars.py``  -> upload / update
 * ``ibmcloud-secrets-manager-retrieve-cpd-vars.py``       -> retrieve / rebuild
@@ -516,7 +516,7 @@ def slugify(text: str) -> str:
 def secret_name_for(prefix: str, file_path: str) -> str:
     """Build the secret name used for a given config file.
 
-    ``cp4d_config/cpd_vars.sh`` with prefix ``cpd-config`` becomes
+    ``configs/cp4d_config/cpd_vars.sh`` with prefix ``cpd-config`` becomes
     ``cpd-config-cpd-vars-sh``, which keeps every file of a bundle under a
     single, greppable prefix.
     """
@@ -565,7 +565,7 @@ def load_env_file(env_file: str | None = None, repo_root: str | None = None) -> 
     """Load a ``.env`` file so credentials can live outside the command line.
 
     Looks at ``env_file`` when given, otherwise ``<repo_root>/.env`` and
-    ``<repo_root>/cp4d_config/.env``. Returns the file that was loaded.
+    ``<repo_root>/configs/cp4d_config/.env``. Returns the file that was loaded.
     """
     try:
         from dotenv import load_dotenv
@@ -577,7 +577,7 @@ def load_env_file(env_file: str | None = None, repo_root: str | None = None) -> 
         candidates.append(env_file)
     elif repo_root:
         candidates.append(os.path.join(repo_root, ".env"))
-        candidates.append(os.path.join(repo_root, "cp4d_config", ".env"))
+        candidates.append(os.path.join(repo_root, "configs", "cp4d_config", ".env"))
 
     for candidate in candidates:
         if candidate and os.path.isfile(candidate):
@@ -965,8 +965,8 @@ def group_iterations(secrets: list[dict]) -> dict[str, dict[int, dict]]:
 
 
 def repo_root_from(script_path: str) -> str:
-    """Repo root for a script living in ``src/utils/``."""
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(script_path))))
+    """Repo root for a script living in ``src/utilities/ibmcloud_secrets_manager_variable_management/``."""
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(script_path)))))
 
 
 def add_connection_args(parser) -> None:

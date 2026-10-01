@@ -1,5 +1,5 @@
-source cp4d_config/cpd_vars.sh
-source cp4d_config/cpd_instance_details.sh
+source configs/cp4d_config/cpd_vars.sh
+source configs/cp4d_config/cpd_instance_details.sh
 
 TOKEN=$(curl -k -s -X POST "${CPD_URL}/icp4d-api/v1/authorize" \
   -H "Content-Type: application/json" \

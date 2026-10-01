@@ -147,7 +147,7 @@ fi
 # Write credentials to cpd_instance_details.sh
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/cp4d_config/cpd_instance_details.sh"
+VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
 
 INFORMIX_BLOCK="
 # Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")

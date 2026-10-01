@@ -29,24 +29,24 @@ so it can be added and removed without touching the Kafka cluster.
 ## Quick start
 
 ```bash
-cd src/scripts/confluent_install/flink_install
+cd scripts/install_confluent_platform/install_confluent_platform_flink_addon
 
 ./0_flink_prepare_template_config.sh --size small   # write config into confluent_vars.sh
 ./1.0_flink_prep.sh                                 # cert-manager, project, SCC, storage
 ./1.1_flink_install.sh                              # both charts + environment + compute pool
-./x.4_flink_connect_kafka.sh --test                 # attach the Kafka cluster and verify
-./x.3_flink_sample_job.sh --sql                     # run a job end to end
+./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh --test                 # attach the Kafka cluster and verify
+./utility_scripts_confluent_flink/x.3_flink_sample_job.sh --sql                     # run a job end to end
 ```
 
 ## Scripts
 
 | Script                               | Purpose                                                                                                                                                                                                        |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0_flink_prepare_template_config.sh` | Writes the Flink block into `cp4d_config/confluent_vars.sh`. `--size xsmall\|small\|medium\|large`, plus per-value overrides. Re-runnable; the managed block is replaced, hand edits outside it are preserved. |
+| `0_flink_prepare_template_config.sh` | Writes the Flink block into `configs/confluent_platform_config/confluent_vars.sh`. `--size xsmall\|small\|medium\|large`, plus per-value overrides. Re-runnable; the managed block is replaced, hand edits outside it are preserved. |
 | `1.0_flink_prep.sh`                  | cert-manager, project, service accounts + `anyuid` SCC, checkpoint storage, licence secret, Helm repo. `--skip-cert-manager`, `--dry-run`.                                                                     |
 | `1.1_flink_install.sh`               | Installs both charts, then creates the CMF environment and default compute pool. `--skip-operator`, `--skip-cmf`, `--skip-resources`, `--dry-run`.                                                             |
 | `1.2_flink_status.sh`                | Read-only report: workloads, Helm releases, PVCs, CMF resources, jobs. `--jobs`, `--no-cmf`.                                                                                                                   |
-| `1.3_flink_get_instance_details.sh`  | Writes live endpoints to `cp4d_config/confluent_flink_instance_details.sh`.                                                                                                                                    |
+| `1.3_flink_get_instance_details.sh`  | Writes live endpoints to `configs/confluent_platform_config/confluent_flink_instance_details.sh`.                                                                                                                                    |
 | `x.0_flink_uninstall.sh`             | Removes everything, in the order that avoids stuck finalizers. `--keep-data`, `--keep-project`, `--dry-run`.                                                                                                   |
 | `x.2_flink_add_auth_openshift.sh`    | Puts the `cmf` route behind the OpenShift login with an oauth-proxy sidecar, as Control Center is. Browser login or `Authorization: Bearer $(oc whoami -t)`. `--disable`, `--dry-run`.                         |
 | `x.3_flink_sample_job.sh`            | Runs a sample job. `--application` (JAR, no Kafka needed) or `--sql` (needs a catalog). `--delete`, `--logs`, `--dry-run`.                                                                                     |
@@ -83,7 +83,7 @@ SELECT * FROM `cp-kafka`.`cp-cluster`.`my-topic`;
 For a Kafka cluster this repo did not install:
 
 ```bash
-./x.4_flink_connect_kafka.sh --bootstrap kafka.example.com:9093 \
+./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh --bootstrap kafka.example.com:9093 \
     --sasl-user app --sasl-password secret \
     --schema-registry https://sr.example.com
 ```
@@ -133,7 +133,7 @@ missing. Clusters installed before this change need a redeploy:
 
 ## Configuration
 
-All variables live in `cp4d_config/confluent_vars.sh` alongside the Kafka ones,
+All variables live in `configs/confluent_platform_config/confluent_vars.sh` alongside the Kafka ones,
 so a single `ENV_TARGET=confluent` covers both. Notable settings:
 
 | Variable                  | Default                             | Notes                                                                                                                                                                  |
@@ -152,8 +152,8 @@ silently upgrades the control plane.
 ## Uninstall
 
 ```bash
-./x.0_flink_uninstall.sh              # removes Flink; Kafka untouched
-./x.0_flink_uninstall.sh --keep-data  # keep CMF metadata and checkpoints
+./utility_scripts_confluent_flink/x.0_flink_uninstall.sh              # removes Flink; Kafka untouched
+./utility_scripts_confluent_flink/x.0_flink_uninstall.sh --keep-data  # keep CMF metadata and checkpoints
 ```
 
 Jobs are deleted before the operator - the operator has to be alive to clear

@@ -9,7 +9,7 @@
 #   a 5.3.1 olm-utils container no matter what cpd_vars.sh says, and the only
 #   fix is to replace the binary itself.
 #
-#   This script reads ${VERSION} from cp4d_config/cpd_vars.sh, finds the
+#   This script reads ${VERSION} from configs/cp4d_config/cpd_vars.sh, finds the
 #   matching cpd-cli release on GitHub, and installs it over ${INSTALL_DIR}.
 #
 # Patch numbers:
@@ -42,7 +42,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; REPO_ROOT="${_b}"; unset _b
 
 # Shared SWH-version -> cpd-cli-release resolver (also used by
-# src/scripts/0_initial_setup/0.2_install_cpd_cli-MAC-ONLY.sh).
+# scripts/install_cloud_pak_for_data/0_initial_setup/0.2_install_cpd_cli-MAC-ONLY.sh).
 source "${REPO_ROOT}/src/helpers/resolve_cpd_cli_release.sh"
 
 #---
@@ -71,7 +71,7 @@ if [[ "${EDITION}" != "SE" && "${EDITION}" != "EE" ]]; then
 fi
 
 if [[ -z "${VERSION:-}" ]]; then
-    echo "[ERROR] VERSION is not set. Set it in cp4d_config/cpd_vars.sh before running this script."
+    echo "[ERROR] VERSION is not set. Set it in configs/cp4d_config/cpd_vars.sh before running this script."
     exit 1
 fi
 
@@ -227,7 +227,7 @@ echo "  Workspace:   ${CPD_CLI_WORK_PATH:-${INSTALL_DIR}/work} (kept)"
 if [[ -n "${NEW_SWH}" && "${NEW_SWH}" != "${VERSION}" ]]; then
     echo ""
     echo "[WARN] The new binary reports SWH ${NEW_SWH} but VERSION is ${VERSION}."
-    echo "[WARN] Check that VERSION in cp4d_config/cpd_vars.sh is a published SWH release."
+    echo "[WARN] Check that VERSION in configs/cp4d_config/cpd_vars.sh is a published SWH release."
     exit 1
 fi
 

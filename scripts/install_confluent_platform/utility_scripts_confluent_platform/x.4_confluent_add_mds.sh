@@ -78,8 +78,8 @@ while (( $# > 0 )); do
     esac
 done
 
-INSTALL="${SCRIPT_DIR}/1.1_confluent_install.sh"
-STATUS="${SCRIPT_DIR}/1.2_confluent_status.sh"
+INSTALL="${SCRIPT_DIR}/../1.1_confluent_install.sh"
+STATUS="${SCRIPT_DIR}/../1.2_confluent_status.sh"
 USER_STORE="${SCRIPT_DIR}/x.4_confluent_user_store.sh"
 [[ -f "${INSTALL}" ]] || { echo "[ERROR] Not found: ${INSTALL}" >&2; exit 1; }
 
@@ -174,7 +174,7 @@ if [[ -z "${CONFLUENT_LICENSE_KEY}" ]]; then
     echo "[WARN] stop honouring MDS and logins begin to fail."
     echo "[WARN]"
     echo "[WARN] For anything beyond evaluation, set CONFLUENT_LICENSE_KEY in"
-    echo "[WARN] cp4d_config/confluent_vars.sh and re-run this script."
+    echo "[WARN] configs/confluent_platform_config/confluent_vars.sh and re-run this script."
     echo "------------------------------------------------------------------------------"
     echo ""
 else
@@ -418,10 +418,10 @@ fi
 # Refresh the instance details so the CLI helper can pick everything up
 # ------------------------------------------------------------------------------
 # Credentials are NOT written here. 1.3_confluent_get_instance_details.sh reads
-# them back from the cluster into cp4d_config/confluent_instance_details.sh,
+# them back from the cluster into configs/confluent_platform_config/confluent_instance_details.sh,
 # which is the single source the confluent_cli_login.sh helper consumes. That
 # keeps one generated file rather than two that can disagree.
-DETAILS_SCRIPT="${SCRIPT_DIR}/1.3_confluent_get_instance_details.sh"
+DETAILS_SCRIPT="${SCRIPT_DIR}/../1.3_confluent_get_instance_details.sh"
 MDS_HOST=""
 if [[ "${CONFLUENT_CREATE_ROUTES}" == "true" ]]; then
     MDS_HOST="$(oc get route mds -n "${NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
@@ -429,14 +429,14 @@ fi
 MDS_URL="${MDS_HOST:+https://${MDS_HOST}}"
 
 if [[ -x "${DETAILS_SCRIPT}" ]]; then
-    echo "[INFO] Refreshing cp4d_config/confluent_instance_details.sh..."
+    echo "[INFO] Refreshing configs/confluent_platform_config/confluent_instance_details.sh..."
     "${DETAILS_SCRIPT}" >/dev/null 2>&1 || echo "[WARN] Could not refresh the details file."
 fi
 
 echo ""
 echo "  Connect the CLI from any machine (installs it if missing):"
 echo ""
-echo "    source src/scripts/confluent_install/confluent_cli_login.sh"
+echo "    source scripts/install_confluent_platform/confluent_cli_login.sh"
 echo ""
 if [[ -z "${MDS_URL}" ]]; then
     echo "  No MDS route (CONFLUENT_CREATE_ROUTES=false), so port-forward first:"
