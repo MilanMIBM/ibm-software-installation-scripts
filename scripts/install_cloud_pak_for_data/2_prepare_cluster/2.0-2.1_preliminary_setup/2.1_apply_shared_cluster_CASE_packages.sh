@@ -1,4 +1,3 @@
-
 #!/bin/zsh
 # Make this script executable if it isn't already, then re-run it
 if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
@@ -68,7 +67,7 @@ HAS_LICENSING=false
 HAS_SCHEDULER=false
 INSTANCE_COMPONENTS=()
 
-IFS=',' read -ra _all_components <<< "${SOFTWARE_HUB}"
+IFS=',' read -rA _all_components <<< "${SOFTWARE_HUB}"
 for _c in "${_all_components[@]}"; do
     case "${_c}" in
         ibm-licensing) HAS_LICENSING=true ;;

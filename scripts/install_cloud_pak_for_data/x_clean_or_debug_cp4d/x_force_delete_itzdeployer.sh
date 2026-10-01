@@ -374,7 +374,7 @@ echo ""
 echo "=== Phase 8: Delete Subscription and InstallPlans (all namespaces) ==="
 
 # Match by resource name OR spec.name (package name) to catch any naming variant
-SUB_ALL=(${(f)"$(oc get subscription --all-namespaces \
+SUB_ALL=(${(f)"$(oc get subscriptions.operators.coreos.com --all-namespaces \
     -o json 2>/dev/null \
     | jq -r '.items[] | select(
         (.metadata.name | test("itz-deployer"; "i"))
@@ -387,38 +387,38 @@ for ENTRY in "${SUB_ALL[@]}"; do
     SUB_NS="${ENTRY%%/*}"
     SUB="${ENTRY##*/}"
     # Collect InstallPlan names referenced by this subscription before deleting it
-    IP_NAMES=(${(f)"$(oc get subscription "${SUB}" -n "${SUB_NS}" \
+    IP_NAMES=(${(f)"$(oc get subscriptions.operators.coreos.com "${SUB}" -n "${SUB_NS}" \
         -o jsonpath='{.status.installplan.name}' 2>/dev/null || true)"})
     # Remove ArgoCD tracking annotation before deleting
-    oc annotate subscription "${SUB}" -n "${SUB_NS}" \
+    oc annotate subscriptions.operators.coreos.com "${SUB}" -n "${SUB_NS}" \
         "argocd.argoproj.io/tracking-id-" 2>/dev/null || true
     echo "[DELETE] subscription/${SUB} (ns: ${SUB_NS})"
-    oc patch subscription "${SUB}" -n "${SUB_NS}" \
+    oc patch subscriptions.operators.coreos.com "${SUB}" -n "${SUB_NS}" \
         --type='json' -p='[{"op":"replace","path":"/metadata/finalizers","value":[]}]' \
         2>/dev/null || true
-    oc delete subscription "${SUB}" -n "${SUB_NS}" \
+    oc delete subscriptions.operators.coreos.com "${SUB}" -n "${SUB_NS}" \
         --grace-period=0 --force --ignore-not-found 2>/dev/null || true
     # Delete the referenced InstallPlan
     for IP in "${IP_NAMES[@]}"; do
         [[ -z "${IP:-}" ]] && continue
         echo "[DELETE] installplan/${IP} (ns: ${SUB_NS})"
-        oc delete installplan "${IP}" -n "${SUB_NS}" --ignore-not-found 2>/dev/null || true
+        oc delete installplans.operators.coreos.com "${IP}" -n "${SUB_NS}" --ignore-not-found 2>/dev/null || true
     done
 done
 
 # Also delete any InstallPlans in any namespace that reference the itz-deployer CSV directly
-IP_ALL=(${(f)"$(oc get installplan --all-namespaces \
+IP_ALL=(${(f)"$(oc get installplans.operators.coreos.com --all-namespaces \
     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"})
 for ENTRY in "${IP_ALL[@]}"; do
     [[ -z "${ENTRY:-}" ]] && continue
     IP_NS="${ENTRY%%/*}"
     IP="${ENTRY##*/}"
-    REFERENCES_ITZ=$(oc get installplan "${IP}" -n "${IP_NS}" \
+    REFERENCES_ITZ=$(oc get installplans.operators.coreos.com "${IP}" -n "${IP_NS}" \
         -o jsonpath='{.spec.clusterServiceVersionNames}' 2>/dev/null \
         | grep -c "${ITZ_CSV_PATTERN}" || true)
     if [[ "${REFERENCES_ITZ}" -gt 0 ]]; then
         echo "[DELETE] installplan/${IP} (ns: ${IP_NS}, references itz-deployer CSV)"
-        oc delete installplan "${IP}" -n "${IP_NS}" --ignore-not-found 2>/dev/null || true
+        oc delete installplans.operators.coreos.com "${IP}" -n "${IP_NS}" --ignore-not-found 2>/dev/null || true
     fi
 done
 
@@ -456,29 +456,29 @@ _wipe_csv() {
     local csv_ns="$1" csv_name="$2"
     echo "[DELETE] csv/${csv_name} (ns: ${csv_ns})"
     # Clear alm-examples annotation unconditionally (prevents console from showing stale CRs)
-    oc patch csv "${csv_name}" -n "${csv_ns}" \
+    oc patch clusterserviceversions.operators.coreos.com "${csv_name}" -n "${csv_ns}" \
         --type='json' \
         -p='[{"op":"replace","path":"/metadata/annotations/alm-examples","value":"[]"}]' \
         2>/dev/null || true
     # Strip OLM finalizer so the API server won't block the delete
-    oc patch csv "${csv_name}" -n "${csv_ns}" \
+    oc patch clusterserviceversions.operators.coreos.com "${csv_name}" -n "${csv_ns}" \
         --type='json' -p='[{"op":"replace","path":"/metadata/finalizers","value":[]}]' \
         2>/dev/null || true
-    oc delete csv "${csv_name}" -n "${csv_ns}" \
+    oc delete clusterserviceversions.operators.coreos.com "${csv_name}" -n "${csv_ns}" \
         --grace-period=0 --force --ignore-not-found 2>/dev/null || true
 }
 
 # Wait for Subscription to be confirmed gone (OLM reconcile race protection)
 echo "[INFO] Waiting for Subscription to be fully removed..."
 for _i in 1 2 3 4 5 6; do
-    REMAINING=$(oc get subscription --all-namespaces 2>/dev/null \
+    REMAINING=$(oc get subscriptions.operators.coreos.com --all-namespaces 2>/dev/null \
         | grep "${ITZ_CSV_PATTERN}" || true)
     [[ -z "${REMAINING}" ]] && break
     echo "[INFO] Subscription still present, waiting 5s..."
     sleep 5
 done
 
-CSV_ALL=(${(f)"$(oc get csv --all-namespaces \
+CSV_ALL=(${(f)"$(oc get clusterserviceversions.operators.coreos.com --all-namespaces \
     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null \
     | grep "${ITZ_CSV_PATTERN}" || true)"})
 
@@ -494,7 +494,7 @@ fi
 # Wait up to 30s and verify CSV is actually gone, re-delete if it reappears
 echo "[INFO] Verifying CSV removal..."
 for _i in 1 2 3 4 5 6; do
-    REMAINING=$(oc get csv --all-namespaces 2>/dev/null \
+    REMAINING=$(oc get clusterserviceversions.operators.coreos.com --all-namespaces 2>/dev/null \
         | grep "${ITZ_CSV_PATTERN}" || true)
     [[ -z "${REMAINING}" ]] && break
     echo "[INFO] CSV still present, force-deleting again..."

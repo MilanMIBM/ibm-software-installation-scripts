@@ -1,5 +1,6 @@
 #!/bin/zsh
-find "$(dirname "$0")" -name "*.sh" -exec chmod +x {} +
+# chmod every .sh in the repo (scripts/ and src/), not just this folder.
+find "$(cd "$(dirname "$0")/.." && pwd)" -name "*.sh" -not -path "*/.venv/*" -exec chmod +x {} +
 
 # Prefer any podman already on PATH; otherwise look in common install locations.
 if ! command -v podman >/dev/null 2>&1; then

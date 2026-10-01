@@ -11,15 +11,15 @@ The workflow has two stages:
 
 ## Repository overview
 
-| Path                    | What's in it                                                                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `*_vars_generation*.py` | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options. |
-| `configs/`              | Your generated configs live here, one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts |
-| `example_config/`       | Reference `cpd_vars.sh` and `install-options.yml` to look at if you'd rather hand-write them                                               |
-| `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 4), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/`                                 |
-| `src/helpers/`          | Jinja2 templates and marimo widgets backing the notebooks                                                                                  |
-| `src/utilities/`        | Extras: cpd-cli maintenance, config storage helpers, Terraform variant of the cluster prep                                                 |
-| `env_bootstrap.sh`      | Sourced by every script to find the repo root and load `configs/`                                                                      |
+| Path                                  | What's in it                                                                                                                                                                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `*_vars_generation*.py`               | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options.                                               |
+| `configs/`                            | Your generated configs live here, one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts |
+| `example_config/`                     | Reference `cpd_vars.sh` and `install-options.yml` to look at if you'd rather hand-write them                                                                                             |
+| `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 4), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/`                                                                                            |
+| `src/helpers/`                        | Jinja2 templates and marimo widgets backing the notebooks                                                                                                                                |
+| `src/utilities/`                      | Extras: cpd-cli maintenance, config storage helpers, Terraform variant of the cluster prep                                                                                               |
+| `env_bootstrap.sh`                    | Sourced by every script to find the repo root and load `configs/`                                                                                                                        |
 
 ---
 
@@ -68,7 +68,7 @@ The two **Save your … file** buttons next to it download the files to your bro
 ### Everything at once
 
 ```bash
-./scripts/install_cloud_pak_for_data/x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh
+./scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh
 ```
 
 This chains the steps below in order, timing each one and stopping on the first failure. The `DO_*` toggles at the top of the script let you skip stages you've already completed.

@@ -43,7 +43,7 @@ _CP4D_OPERATOR_HELPERS_LOADED=1
 # turns a literal-dot anchor back into a wildcard.
 cp4d_csv_phase() {
     local namespace="$1" csv_prefix="$2"
-    oc get csv -n "${namespace}" --no-headers 2>/dev/null \
+    oc get clusterserviceversions.operators.coreos.com -n "${namespace}" --no-headers 2>/dev/null \
         | CP4D_CSV_PREFIX="${csv_prefix}" awk '$1 ~ ("^" ENVIRON["CP4D_CSV_PREFIX"]) {print $NF; exit}' || true
 }
 
@@ -69,7 +69,7 @@ cp4d_ensure_operatorgroup() {
     local targets=("$@")
 
     local existing
-    existing=$(oc get operatorgroup -n "${namespace}" -o name 2>/dev/null | head -1 || true)
+    existing=$(oc get operatorgroups.operators.coreos.com -n "${namespace}" -o name 2>/dev/null | head -1 || true)
     if [[ -n "${existing}" ]]; then
         echo "[INFO] OperatorGroup ${existing#*/} already present in ${namespace}, leaving it as-is."
         return 0
@@ -142,7 +142,7 @@ cp4d_reconcile_subscription_channel() {
     local namespace="$1" subscription="$2" target_channel="$3"
 
     local current
-    current=$(oc get subscription "${subscription}" -n "${namespace}" \
+    current=$(oc get subscriptions.operators.coreos.com "${subscription}" -n "${namespace}" \
         -o jsonpath='{.spec.channel}' 2>/dev/null || true)
 
     if [[ -z "${current}" ]]; then
@@ -163,7 +163,7 @@ cp4d_reconcile_subscription_channel() {
         return 1
     fi
 
-    oc patch subscription "${subscription}" -n "${namespace}" \
+    oc patch subscriptions.operators.coreos.com "${subscription}" -n "${namespace}" \
         --type=merge -p "{\"spec\":{\"channel\":\"${target_channel}\"}}" >/dev/null
     echo "patched"
     return 0
@@ -184,14 +184,14 @@ cp4d_wait_for_csv() {
 
         if [[ "${phase}" == "Failed" ]]; then
             echo "[ERROR] CSV ${csv_prefix}* in ${namespace} entered phase Failed." >&2
-            oc get csv -n "${namespace}" --no-headers 2>/dev/null \
+            oc get clusterserviceversions.operators.coreos.com -n "${namespace}" --no-headers 2>/dev/null \
                 | CP4D_CSV_PREFIX="${csv_prefix}" awk '$1 ~ ("^" ENVIRON["CP4D_CSV_PREFIX"])' >&2 || true
             return 1
         fi
 
         if (( elapsed >= timeout )); then
             echo "[ERROR] CSV ${csv_prefix}* in ${namespace} did not reach Succeeded after ${timeout}s (phase: ${phase:-pending})." >&2
-            oc get subscription,installplan,csv -n "${namespace}" >&2 || true
+            oc get subscriptions.operators.coreos.com,installplans.operators.coreos.com,clusterserviceversions.operators.coreos.com -n "${namespace}" >&2 || true
             return 1
         fi
 

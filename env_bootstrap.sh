@@ -28,6 +28,28 @@
 # by absolute path. Set before the loaded-guard so it is always defined.
 export _CP4D_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
+# Auto-prep: run scripts/0.0_make_executable.sh (chmod all .sh + start the
+# podman machine) when it is actually needed, i.e. some .sh is not executable
+# or the podman machine is not running. Done once per process tree: the
+# exported _CP4D_PREP_DONE stops nested scripts from repeating the check.
+if [[ -z "${_CP4D_PREP_DONE:-}" ]]; then
+    export _CP4D_PREP_DONE=1
+    _prep_needed=""
+    if [[ -n "$(find "${_CP4D_REPO_ROOT}" -name '*.sh' -not -path '*/.venv/*' ! -perm -u+x -print -quit 2>/dev/null)" ]]; then
+        _prep_needed=1
+    elif [[ "$(uname -s)" == "Darwin" ]]; then
+        _pm_state="$(podman machine inspect --format '{{.State}}' 2>/dev/null || true)"
+        [[ "${_pm_state}" != "running" ]] && _prep_needed=1
+        unset _pm_state
+    fi
+    if [[ -n "${_prep_needed}" ]]; then
+        echo "[INFO] Running scripts/0.0_make_executable.sh (scripts not executable or podman machine not running)"
+        zsh "${_CP4D_REPO_ROOT}/scripts/0.0_make_executable.sh" \
+            || echo "[WARN] 0.0_make_executable.sh failed; continuing" >&2
+    fi
+    unset _prep_needed
+fi
+
 # Already loaded? Nothing to do.
 [[ -n "${_CP4D_ENV_LOADED:-}" ]] && return 0
 

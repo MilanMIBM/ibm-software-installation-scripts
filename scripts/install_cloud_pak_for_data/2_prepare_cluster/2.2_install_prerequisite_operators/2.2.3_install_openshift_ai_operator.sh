@@ -268,7 +268,7 @@ echo "Verifying pods in redhat-ods-applications..."
 KSERVE_STATE=$(oc get datasciencecluster default-dsc \
   -o jsonpath='{.spec.components.kserve.managementState}' 2>/dev/null || true)
 
-SELECTORS=("app=kubeflow-training-operator" "app=odh-model-controller")
+SELECTORS=("control-plane=kubeflow-training-operator" "app=odh-model-controller")
 [[ "${KSERVE_STATE}" != "Removed" ]] && SELECTORS+=("control-plane=kserve-controller-manager")
 
 for selector in "${SELECTORS[@]}"; do

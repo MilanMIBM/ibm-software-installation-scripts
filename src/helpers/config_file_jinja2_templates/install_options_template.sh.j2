@@ -2,7 +2,7 @@
 # IBM Software Hub install-options.yml
 # Generated based on selected components
 ################################################################################
-{% if "analyticsengine" in components_to_install or "watsonx_data" in components_to_install or "watsonx_data_premium" in components_to_install %}
+{% if "analyticsengine" in components_to_install or "dp" in components_to_install or "dataproduct" in components_to_install or "wkc" in components_to_install or "ikc_premium" in components_to_install or "ikc_standard" in components_to_install or "datalineage" in components_to_install or "watsonx_bi_assistant" in components_to_install or "watsonx_data" in components_to_install or "watsonx_data_premium" in components_to_install or "watsonx_dataintelligence" in components_to_install or "watsonx_orchestrate" in components_to_install %}
 ---
 # ............................................................................
 # Analytics Engine powered by Apache Spark parameters
@@ -52,16 +52,19 @@ non_olm:
 non_olm:
   replication:
     licenseType: IDRC
-{% endif %}{% if "wkc" in components_to_install %}
+{% endif %}{% if "wkc" in components_to_install or ("datalineage" in components_to_install and not ("ikc_premium" in components_to_install or "ikc_standard" in components_to_install or "watsonx_dataintelligence" in components_to_install or "watsonx_data_premium" in components_to_install)) %}
 ---
 # ............................................................................
 # IBM Knowledge Catalog parameters
+# Note: IBM Manta Data Lineage (datalineage) requires the catalog edition (wkc, ikcPremium or ikcStandard)
+#       to have enableKnowledgeGraph: true and useFDB: false
+# Note: enableDataQuality: true automatically installs DataStage Enterprise (datastage_ent)
 # ............................................................................
 non_olm:
   wkc:
-    enableDataQuality: False
-    enableKnowledgeGraph: True
-    useFDB: False
+    enableDataQuality: false
+    enableKnowledgeGraph: true
+    useFDB: false
 {% endif %}{% if "ikc_premium" in components_to_install %}
 ---
 # ............................................................................
@@ -70,14 +73,14 @@ non_olm:
 # ............................................................................
 non_olm:
   ikcPremium:
-    enableDataQuality: False
-    enableKnowledgeGraph: True
-    useFDB: False
-    enableAISearch: False
-    enableSemanticAutomation: False
-    enableSemanticEnrichment: True
-    enableSemanticEmbedding: False
-    enableTextToSql: False
+    enableDataQuality: false
+    enableKnowledgeGraph: true
+    useFDB: false
+    enableAISearch: false
+    enableSemanticAutomation: false
+    enableSemanticEnrichment: true
+    enableSemanticEmbedding: false
+    enableTextToSql: false
     enableModelsOn: 'remote'
 #    customModelTextToSQL: granite-3-8b-instruct # leave commented out if enableModelsOn is set to 'remote'.
 {% endif %}{% if "ikc_standard" in components_to_install %}
@@ -87,26 +90,15 @@ non_olm:
 # ............................................................................
 non_olm:
   ikcStandard:
-    enableKnowledgeGraph: True
-    useFDB: False
-    enableAISearch: False
-    enableSemanticAutomation: False
-    enableSemanticEnrichment: True
-    enableSemanticEmbedding: False
-    enableTextToSql: False
+    enableKnowledgeGraph: true
+    useFDB: false
+    enableAISearch: false
+    enableSemanticAutomation: false
+    enableSemanticEnrichment: true
+    enableSemanticEmbedding: false
+    enableTextToSql: false
     enableModelsOn: 'remote'
 #    customModelTextToSQL: granite-3-8b-instruct
-{% endif %}{% if "datalineage" in components_to_install %}
----
-# ............................................................................
-# IBM Manta Data Lineage parameters 
-# Note: requires wkc with enableKnowledgeGraph: True and useFDB: False
-# ............................................................................
-non_olm:
-  wkc:
-    enableDataQuality: False
-    enableKnowledgeGraph: True
-    useFDB: false
 {% endif %}{% if "match360" in components_to_install %}
 ---
 # ............................................................................
@@ -299,7 +291,7 @@ non_olm:
     kinds:
 #      - ibm-cpd-ws-runtime-251-pygpu
 #      - ibm-cpd-ws-runtime-251-r
-{% endif %}{% if "watsonx_ai" in components_to_install %}
+{% endif %}{% if "watsonx_ai" in components_to_install or "wca_ansible" in components_to_install %}
 ---
 # ............................................................................
 # watsonx.ai parameters
@@ -330,11 +322,13 @@ non_olm:
 #   Premium - Specify this option if you purchased IBM watsonx BI Premium.
 #   Premium_NonProd - Specify this option if you purchased IBM watsonx BI Premium Non-Production.
 #   Premium_AddOn_CA - Specify this option if you purchased IBM watsonx BI Premium Add-On for Cognos® Analytics.
+# enableFlatFile (required, 5.4.0 Patch 5+) - valid values: True, False
 # ............................................................................
 non_olm:
   watsonxBiAssistant:
     licenseType: Premium
-{% endif %}{% if "watsonx_data" in components_to_install %}
+    enableFlatFile: False
+{% endif %}{% if "watsonx_data" in components_to_install or "watsonx_orchestrate" in components_to_install %}
 ---
 # ............................................................................
 # watsonx.data parameters 
@@ -368,7 +362,7 @@ non_olm: # for 5.4.0+ versions
     enableDataObservability: true # databand
     enableUnstructuredDataIntegration: false # udc
     enableReplication: false
-{% endif %}{% if "watsonx_dataintelligence" in components_to_install %}
+{% endif %}{% if "watsonx_dataintelligence" in components_to_install or "watsonx_data_premium" in components_to_install %}
 ---
 # ............................................................................
 # watsonx.data intelligence parameters

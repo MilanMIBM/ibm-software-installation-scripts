@@ -75,6 +75,26 @@ fi
 unset _f _sourced
 unset -f _source_if_exists
 
+# ------------------------------------------------------------------------------
+# Login only when needed
+# ------------------------------------------------------------------------------
+# Scripts run eval "${OC_LOGIN}" / eval "${CPDM_OC_LOGIN}" before touching the
+# cluster. Wrap both so they skip the login when the existing session is still
+# valid (token accepted by the API) and points at ${OCP_URL}; otherwise log in
+# as before. The unconditional commands stay available as *_FORCE.
+# The wrapped strings are self-contained so they also work in child shells.
+export OLM_UTILS_CONTAINER="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
+_oc_url="${OCP_URL%/}"
+if [[ -n "${OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
+    export OC_LOGIN_FORCE="${OC_LOGIN}"
+    export OC_LOGIN="if oc whoami >/dev/null 2>&1 && [ \"\$(oc whoami --show-server 2>/dev/null)\" = \"${_oc_url}\" ]; then echo \"[INFO] oc already logged in to ${_oc_url} as \$(oc whoami) - skipping login\"; else ${OC_LOGIN_FORCE}; fi"
+fi
+if [[ -n "${CPDM_OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
+    export CPDM_OC_LOGIN_FORCE="${CPDM_OC_LOGIN}"
+    export CPDM_OC_LOGIN="if podman exec ${OLM_UTILS_CONTAINER} oc whoami >/dev/null 2>&1 && [ \"\$(podman exec ${OLM_UTILS_CONTAINER} oc whoami --show-server 2>/dev/null)\" = \"${_oc_url}\" ]; then echo \"[INFO] cpd-cli (${OLM_UTILS_CONTAINER}) already logged in to ${_oc_url} - skipping login-to-ocp\"; else ${CPDM_OC_LOGIN_FORCE}; fi"
+fi
+unset _oc_url
+
 export CPD_CLI_MANAGE_WORKSPACE="$HOME/cpd-cli"
 export PATH="$HOME/cpd-cli:$PATH"
 export CPD_CLI_WORK_PATH="$HOME/cpd-cli/work"

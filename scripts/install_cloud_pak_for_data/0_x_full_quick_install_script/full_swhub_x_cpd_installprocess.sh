@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# This script lives in scripts/install_cloud_pak_for_data/x_full_quick_install_script/,
+# This script lives in scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/,
 # so the numbered step folders are one level up, in scripts/install_cloud_pak_for_data/.
 SCRIPTS_ROOT="$(cd "${CURRENT_DIR}/.." && pwd)"
 
