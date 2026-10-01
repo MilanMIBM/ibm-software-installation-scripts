@@ -23,6 +23,29 @@
 [[ -n "${_CP4D_OPERATOR_HELPERS_LOADED:-}" ]] && return 0
 _CP4D_OPERATOR_HELPERS_LOADED=1
 
+autoload -Uz is-at-least
+
+# -----------------------------------------------------------------------------
+# cp4d_default_service_mesh_version
+# -----------------------------------------------------------------------------
+# Echo the Red Hat OpenShift Service Mesh major version (2 or 3) to install for
+# the CP4D release in ${VERSION}: 3 from 5.4.0 onwards, 2 for earlier releases.
+# Callers let an explicit SERVICE_MESH_VERSION override this, e.g.
+#
+#     SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-$(cp4d_default_service_mesh_version)}"
+#
+# An unset VERSION falls back to 3 (the current default) with a warning on stderr.
+cp4d_default_service_mesh_version() {
+    if [[ -z "${VERSION:-}" ]]; then
+        echo "[WARN] VERSION is not set; defaulting to Service Mesh 3." >&2
+        echo "3"
+    elif is-at-least 5.4.0 "${VERSION}"; then
+        echo "3"
+    else
+        echo "2"
+    fi
+}
+
 # -----------------------------------------------------------------------------
 # cp4d_csv_phase <namespace> <csv-name-prefix>
 # -----------------------------------------------------------------------------

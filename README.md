@@ -1,8 +1,8 @@
-# cp4d-installation-scripts
+# ibm-software-installation-scripts
 
-Scripts and config generators for installing **IBM Software Hub / Cloud Pak for Data (and various components)** into a Redhat OpenShift cluster.
+Scripts and config generators for installing **IBM Software Hub / Cloud Pak for Data (and various components)** into a Redhat OpenShift cluster, plus scripts for **Confluent Platform** (with an optional Flink add-on).
 
-The workflow has two stages:
+The Cloud Pak for Data workflow has two stages:
 
 1. **Generating a config** - running marimo notebooks to fill in cluster URL, credentials, entitlement key, storage classes and the components you want. Thereby creating configs used in the installation `cpd_vars.sh` and `install-options.yml` into the subfolder `./configs/cp4d_config/`.
 2. **Running the install** - either the full chained script, or the numbered step scripts one at a time. Every script sources the variables from the configs in `./configs/` automatically.
@@ -15,18 +15,20 @@ The workflow has two stages:
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `*_vars_generation*.py`               | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options.                                               |
 | `configs/`                            | Your generated configs live here, one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts |
-| `example_config/`                     | Reference `cpd_vars.sh` and `install-options.yml` to look at if you'd rather hand-write them                                                                                             |
-| `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 4), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/`                                                                                            |
+| `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/`                                                                                            |
+| `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README)                                                   |
 | `src/helpers/`                        | Jinja2 templates and marimo widgets backing the notebooks                                                                                                                                |
-| `src/utilities/`                      | Extras: cpd-cli maintenance, config storage helpers, Terraform variant of the cluster prep                                                                                               |
-| `env_bootstrap.sh`                    | Sourced by every script to find the repo root and load `configs/`                                                                                                                        |
+| `src/utilities/`                      | Extras: cpd-cli maintenance, IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group helpers, Software Hub checks                                                   |
+| `env_bootstrap.sh`                    | Sourced by every script to find the repo root and load `configs/` (via `scripts/source_env_setup.sh`)                                                                                    |
+| `service_instances/`                  | Output folder for payloads written by the `4.5_service_instance_setups/` provisioning scripts (gitignored)                                                                               |
 
 ---
 
 ## Prerequisites
 
 - OpenShift cluster + `oc` and `cpd-cli` (installers for both under [scripts/install_cloud_pak_for_data/0_initial_setup/](scripts/install_cloud_pak_for_data/0_initial_setup/), macOS only)
-- Python 3.12+
+- `podman` (macOS: scripts start the podman machine automatically when needed)
+- Python 3.14+ and [uv](https://docs.astral.sh/uv/)
 - An IBM entitlement key
 
 ```bash
@@ -99,7 +101,7 @@ Run these in order - each one is standalone and loads the config itself:
 
 Steps 0.1-0.2 and 1.0 are only needed once per workstation/cluster. Steps 3 and 4 are themselves wrappers - the individual sub-steps (`3.2`, `3.3`, `4.1`, `4.2`, …) sit next to them and can be run on their own when you need to redo just one part.
 
-If a script isn't executable, run `./scripts/0.0_make_executable.sh` once.
+Scripts run `./scripts/0.0_make_executable.sh` on their own if any `.sh` isn't executable or the podman machine isn't running; you can also run it manually.
 
 ---
 
@@ -113,6 +115,26 @@ If a script isn't executable, run `./scripts/0.0_make_executable.sh` once.
 ls scripts/install_cloud_pak_for_data/x_clean_or_debug_cp4d/
 ```
 
-`scripts/install_cloud_pak_for_data/5_component_specific_scripts/` and `4.5_service_instance_setups/` hold per-service follow-ups (Db2, service routes, SCC prep) for after the base install is up. Which of these exist varies by branch.
+`scripts/install_cloud_pak_for_data/5_component_specific_scripts/` and `4.5_service_instance_setups/` hold per-service follow-ups (Db2, EDB Postgres, Informix, OpenSearch, DataStax HCD, watsonx Orchestrate, service routes, SCC prep) for after the base install is up.
+
+`src/utilities/ibmcloud_secrets_manager_variable_management/` can upload your generated configs to IBM Cloud Secrets Manager and rebuild them from there later (run either script with `--help`).
+
+---
+
+## Confluent Platform
+
+Config lives in `configs/confluent_platform_config/confluent_vars.sh`. Then run in order:
+
+```bash
+./scripts/install_confluent_platform/0_confluent_prepare_template_config.sh --size small   # apply sizing preset
+./scripts/install_confluent_platform/1.0_confluent_prep.sh
+./scripts/install_confluent_platform/1.1_confluent_install.sh
+./scripts/install_confluent_platform/1.2_confluent_status.sh
+./scripts/install_confluent_platform/1.3_confluent_get_instance_details.sh
+```
+
+Auth, connectors, external access and uninstall live under `utility_scripts_confluent_platform/`. For Flink, see [install_confluent_platform_flink_addon/README.md](scripts/install_confluent_platform/install_confluent_platform_flink_addon/README.md).
+
+When both configs exist, Confluent values override CP4D ones; set `ENV_TARGET=<name|path>` to load only a single config.
 
 ---

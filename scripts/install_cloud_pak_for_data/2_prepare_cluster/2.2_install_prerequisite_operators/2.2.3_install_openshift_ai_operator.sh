@@ -17,8 +17,9 @@ source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
 eval "${OC_LOGIN}"
 
 NAMESPACE="redhat-ods-operator"
-# Service Mesh version to install: 2 or 3
-SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-2}"
+# Service Mesh version to install: 2 or 3. Defaults to 3 for CP4D 5.4.0+ and 2 for
+# earlier releases; export SERVICE_MESH_VERSION to override.
+SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-$(cp4d_default_service_mesh_version)}"
 TIMEOUT=60
 
 # Map CP4D VERSION to the corresponding RHOAI channel.

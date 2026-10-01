@@ -18,8 +18,9 @@ eval "${OC_LOGIN}"
 
 # Installs cluster-wide into openshift-operators; the global OperatorGroup already exists.
 NAMESPACE="openshift-operators"
-# Service Mesh version to install: 2 or 3
-SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-3}"
+# Service Mesh version to install: 2 or 3. Defaults to 3 for CP4D 5.4.0+ and 2 for
+# earlier releases; export SERVICE_MESH_VERSION to override.
+SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-$(cp4d_default_service_mesh_version)}"
 CHANNEL="stable"
 TIMEOUT=60
 
