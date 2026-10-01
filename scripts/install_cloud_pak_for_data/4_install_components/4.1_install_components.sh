@@ -51,18 +51,53 @@ for component in ${(s:,:)COMPONENTS}; do
     fi
 done
 
-cpd-cli manage install-components \
-    --license_acceptance=true \
-    --components=${COMPONENTS} \
-    --release=${VERSION} \
-    --operator_ns=${PROJECT_CPD_INST_OPERATORS} \
-    --instance_ns=${PROJECT_CPD_INST_OPERANDS} \
-    --block_storage_class=${STG_CLASS_BLOCK} \
-    --file_storage_class=${STG_CLASS_FILE} \
-    --image_pull_prefix=${IMAGE_PULL_PREFIX} \
-    --image_pull_secret=${IMAGE_PULL_SECRET} \
-    --upgrade=${UPDATE} \
-    ${PARAM_FILE_FLAG[@]+"${PARAM_FILE_FLAG[@]}"} \
-    ${SKIP_COMPONENTS_FLAG[@]+"${SKIP_COMPONENTS_FLAG[@]}"} \
-    ${PATCH_FLAG[@]+"${PATCH_FLAG[@]}"} 
-    
+install_components() {
+    cpd-cli manage install-components \
+        --license_acceptance=true \
+        --components="$1" \
+        --release=${VERSION} \
+        --operator_ns=${PROJECT_CPD_INST_OPERATORS} \
+        --instance_ns=${PROJECT_CPD_INST_OPERANDS} \
+        --block_storage_class=${STG_CLASS_BLOCK} \
+        --file_storage_class=${STG_CLASS_FILE} \
+        --image_pull_prefix=${IMAGE_PULL_PREFIX} \
+        --image_pull_secret=${IMAGE_PULL_SECRET} \
+        --upgrade=${UPDATE} \
+        ${PARAM_FILE_FLAG[@]+"${PARAM_FILE_FLAG[@]}"} \
+        ${SKIP_COMPONENTS_FLAG[@]+"${SKIP_COMPONENTS_FLAG[@]}"} \
+        ${PATCH_FLAG[@]+"${PATCH_FLAG[@]}"}
+}
+
+manta_secrets_exist() {
+    oc get secret manta-credentials manta-keys -n ${PROJECT_CPD_INST_OPERANDS} >/dev/null 2>&1
+}
+
+# --- mantaflow prevalidation requires the manta-credentials/manta-keys secrets that wkc creates ---
+# If mantaflow is requested and those secrets don't exist yet, strip it from the main install
+# and install it on its own afterwards. A mantaflow failure only warns, so later steps still run.
+DEFER_MANTAFLOW=false
+if (( ${${(s:,:)COMPONENTS}[(Ie)mantaflow]} )) && ! manta_secrets_exist; then
+    DEFER_MANTAFLOW=true
+    COMPONENTS=${(j:,:)${(@)${(s:,:)COMPONENTS}:#mantaflow}}
+    echo "[INFO] mantaflow requested but manta secrets not present yet - installing it after the other components"
+fi
+
+if [[ -n "${COMPONENTS}" ]]; then
+    install_components "${COMPONENTS}"
+fi
+
+if [[ "${DEFER_MANTAFLOW}" == "true" ]]; then
+    echo "[INFO] Waiting up to 15m for manta-credentials and manta-keys secrets in ${PROJECT_CPD_INST_OPERANDS}..."
+    for _ in {1..90}; do
+        manta_secrets_exist && break
+        sleep 10
+    done
+    if ! manta_secrets_exist; then
+        echo "[WARN] manta-credentials/manta-keys secrets not found (they are created by wkc) - skipping mantaflow."
+        echo "[WARN] Once wkc is installed, re-run this script to install mantaflow."
+    elif install_components mantaflow; then
+        echo "[INFO] mantaflow installed"
+    else
+        echo "[WARN] mantaflow install failed - other components are unaffected. Re-run this script to retry."
+    fi
+fi

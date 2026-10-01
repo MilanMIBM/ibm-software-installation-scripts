@@ -167,16 +167,16 @@ fi
 # ------------------------------------------------------------------------------
 # Recent warnings - the fastest signal when something is wedged
 # ------------------------------------------------------------------------------
-echo ""
-echo "Recent warning events (last 10):"
-_events="$(oc get events -n "${NS}" --field-selector type=Warning \
-    --sort-by=.lastTimestamp -o custom-columns='TIME:.lastTimestamp,OBJECT:.involvedObject.name,REASON:.reason,MESSAGE:.message' \
-    --no-headers 2>/dev/null | tail -10)"
-if [[ -z "${_events}" ]]; then
-    echo "  (none)"
-else
-    echo "${_events}" | while IFS= read -r _line; do echo "  ${_line}"; done
-fi
+# echo ""
+# echo "Recent warning events (last 10):"
+# _events="$(oc get events -n "${NS}" --field-selector type=Warning \
+#     --sort-by=.lastTimestamp -o custom-columns='TIME:.lastTimestamp,OBJECT:.involvedObject.name,REASON:.reason,MESSAGE:.message' \
+#     --no-headers 2>/dev/null | tail -10)"
+# if [[ -z "${_events}" ]]; then
+#     echo "  (none)"
+# else
+#     echo "${_events}" | while IFS= read -r _line; do echo "  ${_line}"; done
+# fi
 
 # ------------------------------------------------------------------------------
 # Verdict

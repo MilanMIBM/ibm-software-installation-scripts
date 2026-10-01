@@ -78,7 +78,10 @@ fi
 # --- Pick the provisioning mode ---
 case "${DBND_PG_MODE}" in
     auto)
-        if oc get crd "${EDB_CLUSTER_RESOURCE}" >/dev/null 2>&1; then
+        # Stick with a plain deployment from an earlier run rather than adding an EDB cluster beside it
+        if oc get deployment "${DBND_CLUSTER_NAME:-databand-postgres-db}" -n "${DBND_NAMESPACE}" >/dev/null 2>&1; then
+            DBND_PG_MODE="plain"
+        elif oc get crd "${EDB_CLUSTER_RESOURCE}" >/dev/null 2>&1; then
             DBND_PG_MODE="edb"
         else
             echo "[INFO] CRD ${EDB_CLUSTER_RESOURCE} not found - provisioning a plain PostgreSQL deployment."
@@ -102,23 +105,15 @@ echo "[INFO] Provisioning mode: ${DBND_PG_MODE}"
 if [[ "${DBND_PG_MODE}" == "edb" ]]; then
     DBND_CLUSTER_NAME="${DBND_CLUSTER_NAME:-databand-postgres-edb}"
     DBND_PG_IMAGE_DEFAULT=""
+    DBND_DB_RESOURCE="${EDB_CLUSTER_RESOURCE}"
+    DBND_DB_HOST="${DBND_CLUSTER_NAME}-rw.${DBND_NAMESPACE}.svc"
 else
     DBND_CLUSTER_NAME="${DBND_CLUSTER_NAME:-databand-postgres-db}"
     DBND_PG_IMAGE_DEFAULT="registry.redhat.io/rhel9/postgresql-${DBND_PG_MAJOR}:latest"
+    DBND_DB_RESOURCE="deployment"
+    DBND_DB_HOST="${DBND_CLUSTER_NAME}.${DBND_NAMESPACE}.svc"
 fi
 DBND_CREDS_SECRET_NAME="${DBND_CLUSTER_NAME}-app-credentials"
-
-# --- App user credentials (reuse on re-run so the database and secret stay in sync) ---
-if oc get secret "${DBND_CREDS_SECRET_NAME}" -n "${DBND_NAMESPACE}" >/dev/null 2>&1; then
-    echo "[INFO] Reusing credentials from secret ${DBND_CREDS_SECRET_NAME}"
-    DBND_DB_PASSWORD="$(oc get secret "${DBND_CREDS_SECRET_NAME}" -n "${DBND_NAMESPACE}" -o jsonpath='{.data.password}' | base64 -d)"
-else
-    DBND_DB_PASSWORD="$(openssl rand -hex 16)"
-    oc create secret generic "${DBND_CREDS_SECRET_NAME}" -n "${DBND_NAMESPACE}" \
-        --type=kubernetes.io/basic-auth \
-        --from-literal=username="${DBND_DB_USER}" \
-        --from-literal=password="${DBND_DB_PASSWORD}"
-fi
 
 # --- Connection secret in the format the databand chart expects ---
 create_connection_secret() {
@@ -184,7 +179,7 @@ ${image_line}
     storageClass: ${DBND_STORAGE_CLASS}
 EOF
 
-    create_connection_secret "${DBND_CLUSTER_NAME}-rw.${DBND_NAMESPACE}.svc"
+    create_connection_secret "${DBND_DB_HOST}"
 
     echo "[INFO] Waiting up to ${DBND_WAIT_TIMEOUT} for ${DBND_CLUSTER_NAME} to become Ready..."
     oc wait "${EDB_CLUSTER_RESOURCE}/${DBND_CLUSTER_NAME}" -n "${DBND_NAMESPACE}" \
@@ -308,14 +303,38 @@ spec:
     targetPort: 5432
 EOF
 
-    create_connection_secret "${DBND_CLUSTER_NAME}.${DBND_NAMESPACE}.svc"
+    create_connection_secret "${DBND_DB_HOST}"
 
     echo "[INFO] Waiting up to ${DBND_WAIT_TIMEOUT} for ${DBND_CLUSTER_NAME} to become Ready..."
     oc rollout status "deployment/${DBND_CLUSTER_NAME}" -n "${DBND_NAMESPACE}" --timeout="${DBND_WAIT_TIMEOUT}"
     oc get deployment "${DBND_CLUSTER_NAME}" -n "${DBND_NAMESPACE}"
 }
 
-"provision_${DBND_PG_MODE}"
+# --- Never re-provision an existing database: only restore its connection secret ---
+if oc get "${DBND_DB_RESOURCE}" "${DBND_CLUSTER_NAME}" -n "${DBND_NAMESPACE}" >/dev/null 2>&1; then
+    echo "[INFO] ${DBND_DB_RESOURCE}/${DBND_CLUSTER_NAME} already exists - not re-provisioning."
+    if ! oc get secret "${DBND_CREDS_SECRET_NAME}" -n "${DBND_NAMESPACE}" >/dev/null 2>&1; then
+        echo "[ERROR] Credentials secret ${DBND_CREDS_SECRET_NAME} is missing, so the existing database password is unknown."
+        echo "[ERROR] Recreate ${DBND_CREDS_SECRET_NAME} with the database's password, or delete ${DBND_DB_RESOURCE}/${DBND_CLUSTER_NAME} to start fresh."
+        exit 1
+    fi
+    DBND_DB_PASSWORD="$(oc get secret "${DBND_CREDS_SECRET_NAME}" -n "${DBND_NAMESPACE}" -o jsonpath='{.data.password}' | base64 -d)"
+    create_connection_secret "${DBND_DB_HOST}"
+else
+    # --- App user credentials (reuse on re-run so the database and secret stay in sync) ---
+    if oc get secret "${DBND_CREDS_SECRET_NAME}" -n "${DBND_NAMESPACE}" >/dev/null 2>&1; then
+        echo "[INFO] Reusing credentials from secret ${DBND_CREDS_SECRET_NAME}"
+        DBND_DB_PASSWORD="$(oc get secret "${DBND_CREDS_SECRET_NAME}" -n "${DBND_NAMESPACE}" -o jsonpath='{.data.password}' | base64 -d)"
+    else
+        DBND_DB_PASSWORD="$(openssl rand -hex 16)"
+        oc create secret generic "${DBND_CREDS_SECRET_NAME}" -n "${DBND_NAMESPACE}" \
+            --type=kubernetes.io/basic-auth \
+            --from-literal=username="${DBND_DB_USER}" \
+            --from-literal=password="${DBND_DB_PASSWORD}"
+    fi
+
+    "provision_${DBND_PG_MODE}"
+fi
 
 # --- A migration pod that already gave up waiting will not retry on its own ---
 if oc get pods -n "${DBND_NAMESPACE}" -l job-name=databand-dbnd-web-migration-1 --no-headers 2>/dev/null | grep -q -E 'Error|Init:Error|Failed'; then

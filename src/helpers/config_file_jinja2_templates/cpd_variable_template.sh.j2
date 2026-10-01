@@ -2,8 +2,9 @@
 # IBM Software Hub installation variables
 #===============================================================================
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-[ -f "${SCRIPT_DIR}/.env" ] && source "${SCRIPT_DIR}/.env"
+_CPD_VARS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "${_CPD_VARS_DIR}/.env" ] && source "${_CPD_VARS_DIR}/.env"
+unset _CPD_VARS_DIR
 
 # ------------------------------------------------------------------------------
 # Client workstation 
