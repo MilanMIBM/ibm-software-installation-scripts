@@ -1,0 +1,35 @@
+# watsonx.ai model gateway - model import spec
+# Consumed by 5_wxai_model_gateway_model_import.sh (pass with: --spec <this-file>).
+#
+# A spec describes ONE provider + ONE model to register on that provider.
+# The provider is created (or reused if a provider with the same `provider.name`
+# already exists) and then the model is added to it.
+#
+# `provider.type` selects which /ml/gateway/v1/providers/<type> endpoint is used
+# and therefore which credential fields are valid. Supported types:
+#   openai | watsonxai | azure_openai | anthropic | bedrock | cerebras | nim | gemini
+#
+# Credentials (provider.data.*): you may either put the literal value here, or -
+# preferably - reference an environment variable as ${VAR_NAME}. Env refs are
+# expanded at runtime so secrets never need to live in the spec file. Any value
+# left empty/omitted falls back to the matching inline default in the script.
+
+provider:
+  # Custom display name for the provider instance (alphanumerics, spaces,
+  # hyphens, parentheses, square brackets). Used for idempotency: re-running with
+  # the same name reuses the existing provider instead of creating a duplicate.
+  name: my-openai-provider
+  type: openai
+  description: OpenAI provider configured via the model gateway import script
+  data:
+    # OpenAI required: apiKey ; optional: base_url
+    apiKey: ${OPENAI_APIKEY}
+    base_url: https://api.openai.com/v1
+
+model:
+  # `id` is the official provider-side model identifier (required).
+  id: gpt-4o
+  # `alias` is the friendly name clients use to call the model (optional;
+  # defaults to `id` if omitted).
+  alias: gpt-4o
+  description: OpenAI GPT-4o accessed through the watsonx.ai model gateway

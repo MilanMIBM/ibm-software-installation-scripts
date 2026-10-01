@@ -1,0 +1,441 @@
+################################################################################
+# IBM Software Hub install-options.yml
+# Generated based on selected components
+################################################################################
+{% if "analyticsengine" in components_to_install or "watsonx_data" in components_to_install or "watsonx_data_premium" in components_to_install %}
+---
+# ............................................................................
+# Analytics Engine powered by Apache Spark parameters
+# ............................................................................
+non_olm:
+  analyticsengine:
+
+# ------------------------------------------------------------------------------
+# Analytics Engine powered by Apache Spark service configuration parameters
+# ------------------------------------------------------------------------------
+# This preset is meant to not over-commit nodes on the cluster which is very easy with larger configs of analyticsengine.
+    serviceConfig:
+      pullWxdImagesOnly: false
+      enableImagePrepull: true
+      sparkAdvEnabled: true
+      jobAutoDeleteEnabled: true
+      kernelCullTime: 30
+      imagePullParallelism: "8"
+      imagePullCompletions: "6"
+      kernelCleanupSchedule: "*/30 * * * *"
+      jobCleanupSchedule: "*/30 * * * *"
+      skipSelinuxRelabeling: false
+      mountCustomizationsFromCchome: false
+
+# ------------------------------------------------------------------------------
+# Spark runtime configuration parameters
+# ------------------------------------------------------------------------------
+    sparkRuntimeConfig:
+      maxDriverCpuCores: 2
+      maxExecutorCpuCores: 3
+      maxDriverMemory: "4g"
+      maxExecutorMemory: "4g"
+      maxNumWorkers: 6
+      localDirScaleFactor: 5
+{% endif %}{% if "replication" in components_to_install %}
+---
+# ............................................................................
+# Data Replication parameters 
+# Valid licenseType values:
+#   IDRC - Specify this option if you purchased the IBM Data Replication Cartridge for IBM Software Hub.
+#   IIDRC - Specify this option if you purchased the IBM InfoSphere® Data Replication Cartridge for IBM Software Hub.
+#   IDRM - Specify this option if you purchased IBM Data Replication Modernization.
+#   IIDRM - Specify this option if you purchased IBM InfoSphere Data Replication Modernization.
+#   IDRZOS - Specify this option if you purchased IBM Data Replication for Db2® z/OS® Cartridge.
+#   IIDRWXTO - Specify this option if you purchased IBM InfoSphere Data Replication for watsonx.data Cartridge.
+# ............................................................................
+non_olm:
+  replication:
+    licenseType: IDRC
+{% endif %}{% if "wkc" in components_to_install %}
+---
+# ............................................................................
+# IBM Knowledge Catalog parameters
+# ............................................................................
+non_olm:
+  wkc:
+    enableDataQuality: False
+    enableKnowledgeGraph: True
+    useFDB: False
+{% endif %}{% if "ikc_premium" in components_to_install %}
+---
+# ............................................................................
+# IBM Knowledge Catalog Premium parameters
+# enableModelsOn - valid options: 'cpu','gpu','remote' (remote = watsonx.ai)
+# ............................................................................
+non_olm:
+  ikcPremium:
+    enableDataQuality: False
+    enableKnowledgeGraph: True
+    useFDB: False
+    enableAISearch: False
+    enableSemanticAutomation: False
+    enableSemanticEnrichment: True
+    enableSemanticEmbedding: False
+    enableTextToSql: False
+    enableModelsOn: 'remote'
+#    customModelTextToSQL: granite-3-8b-instruct # leave commented out if enableModelsOn is set to 'remote'.
+{% endif %}{% if "ikc_standard" in components_to_install %}
+---
+# ............................................................................
+# IBM Knowledge Catalog Standard parameters
+# ............................................................................
+non_olm:
+  ikcStandard:
+    enableKnowledgeGraph: True
+    useFDB: False
+    enableAISearch: False
+    enableSemanticAutomation: False
+    enableSemanticEnrichment: True
+    enableSemanticEmbedding: False
+    enableTextToSql: False
+    enableModelsOn: 'remote'
+#    customModelTextToSQL: granite-3-8b-instruct
+{% endif %}{% if "datalineage" in components_to_install %}
+---
+# ............................................................................
+# IBM Manta Data Lineage parameters 
+# Note: requires wkc with enableKnowledgeGraph: True and useFDB: False
+# ............................................................................
+non_olm:
+  wkc:
+    enableDataQuality: False
+    enableKnowledgeGraph: True
+    useFDB: false
+{% endif %}{% if "match360" in components_to_install %}
+---
+# ............................................................................
+# IBM Master Data Management parameters
+# Valid scaleConfig values: x-small (PoC only), small_mincpureq, small, medium, large
+# ............................................................................
+non_olm:
+  match360:
+    scaleConfig: small
+{% endif %}{% if "informix_cp4d" in components_to_install %}
+---
+# ............................................................................
+# Informix parameters
+# Valid licenseType values:
+#   AEE - Specify this option if you purchased Advanced Enterprise Edition.
+#   EE - Specify this option if you purchased Enterprise Edition.
+#   WE - Specify this option if you purchased Workgroup Edition.
+# ............................................................................
+non_olm:
+  ibmInformixCp4dOperator:
+    licenseType: AEE
+{% endif %}{% if "ws_pipelines" in components_to_install %}
+---
+# ............................................................................
+# Orchestration Pipelines parameters
+# Valid rbsimage values: rbs-ext (includes OpenSSH + Db2), run-bash-script (without)
+# ............................................................................
+non_olm:
+  wsPipelines:
+    rbsimage: rbs-ext
+{% endif %}{% if "voice_gateway" in components_to_install %}
+---
+# ............................................................................
+# Voice Gateway parameters
+# More details here: https://www.ibm.com/docs/en/software-hub/5.3.x?topic=services-specifying-installation-options#install-platform-param-file__voice-parms__title__1
+# ............................................................................
+override_components_meta:
+  voice_gateway:
+    # ------------------------------------------------------------------------------
+    # Number of replicas
+    # ------------------------------------------------------------------------------
+    replicas: 1
+    # ------------------------------------------------------------------------------
+    # Node selector parameters (optional, uncomment to use)
+    # ------------------------------------------------------------------------------
+    # nodeSelector:
+    #   key1: value
+    #   key2: value
+    # ------------------------------------------------------------------------------
+    # Toleration parameters (optional, uncomment to use)
+    # ------------------------------------------------------------------------------
+    # tolerations:
+    # - key: "key-name"
+    #   operator: "operator"
+    #   value: "value"
+    #   effect: "effect"
+    # ------------------------------------------------------------------------------
+    # SSL configuration parameters
+    # ------------------------------------------------------------------------------
+    sslConfig:
+      disableSslCertValidation: false
+      mediaRelay:
+        enableSsl: false
+        sslClientCACertSecret: client-ca-cert-secret
+        enableMutualAuth: false
+        sslClientPkcs12FileSecret: ssl-client-pkcs12-file-secret
+        sslClientPassphraseSecret: ssl-client-passphrase-secret
+      sipOrchestrator:
+        enableSslorMutualAuth: false
+        sslKeyTrustStoreSecret: trust-store-file-secret
+        sslFileType: "JKS"
+        sslPassphraseSecret: ssl-passphrase-secret
+    # ------------------------------------------------------------------------------
+    # Port parameters
+    # ------------------------------------------------------------------------------
+    ports:
+      sipSignalingPortUdp: 5060
+      sipSignalingPortTcp: 5060
+      sipSignalingPortTls: 5061
+      sipOrchestratorHttpPort: 9086
+      sipOrchestratorHttpsPort: 9446
+      mediaRelayWsPort: 8080
+      rtpUdpPortRange: "16384-16394"
+    # ------------------------------------------------------------------------------
+    # Environment variable parameters (optional, uncomment to use)
+    # ------------------------------------------------------------------------------
+    # env:
+    #   sipOrchestrator:
+    #     - name: variable-name
+    #       value: "value"
+    #   mediaRelay:
+    #     - name: variable-name
+    #       value: "value"
+    # ------------------------------------------------------------------------------
+    # Storage parameters
+    # ------------------------------------------------------------------------------
+    storage:
+      recordings:
+        enablePersistentRecordings: false
+        storageClassName: ""
+        size: 15Gi
+      logs:
+        enablePersistentLogs: false
+        storageClassName: ""
+        size: 10Gi
+    # ------------------------------------------------------------------------------
+    # Container resource parameters
+    # ------------------------------------------------------------------------------
+    resources:
+      sipOrchestrator:
+        requests:
+          cpu: "1.0"
+          memory: 1Gi
+        limits:
+          cpu: "2.0"
+          memory: 2Gi
+      mediaRelay:
+        requests:
+          cpu: "1"
+          memory: 1Gi
+        limits:
+          cpu: "4"
+          memory: 4Gi
+      g729Codec:
+        requests:
+          cpu: "0.5"
+          memory: 0.5Gi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+    # ------------------------------------------------------------------------------
+    # G729 Codec Service parameters
+    # ------------------------------------------------------------------------------
+    g729Codec:
+      enabled: false
+      logLevel: "INFO"
+      webSocketServerPort: 9001
+    # ------------------------------------------------------------------------------
+    # Media Resource Control Protocol parameters
+    # ------------------------------------------------------------------------------
+    mrcp:
+      enableMrcp: false
+      unimrcpConfigSecretName: unimrcp-config-secret
+      mrcpv2SipPort: 5555
+{% endif %}{% if "watson_discovery" in components_to_install %}
+---
+# ............................................................................
+# Watson Discovery parameters
+# Valid deploymentType values: Starter, Production
+# ............................................................................
+non_olm:
+  watsonDiscovery:
+    discovery_deployment_type: Production
+{% endif %}{% if "watson_speech" in components_to_install %}
+---
+# ............................................................................
+# Watson Speech services parameters (STT & TTS)
+# scaleConfig options - xsmall,small,medium,large,custom
+# ............................................................................
+non_olm:
+  watsonSpeech:
+    tags:
+      sttRuntime: true # Installs Watson Speech to Text service.
+      sttAsync: false
+      sttCustomization: false # When you set this property to true, it enables the following interfaces: /v1/customizations for language model customization. /v1/acoustic_customizations for acoustic model customization.
+      ttsRuntime: true # Installs Watson Text to Speech service.
+      ttsCustomization: false # When you set this property to true, it enables the /v1/customizations interface for customization.
+    scaleConfig:
+      stt:
+        size: xsmall
+      tts:
+        size: xsmall
+    sttModels:
+      - enUsBroadbandModel
+      - enUsNarrowbandModel
+      - enUsShortFormNarrowbandModel
+      - enUsTelephony
+      - enUsMultimedia
+    ttsVoices:
+      - enUSAllisonV3Voice
+      - enUSLisaV3Voice
+      - enUSMichaelV3Voice
+{% endif %}{% if "ws_runtimes" in components_to_install %}
+---
+# ............................................................................
+# Watson Studio Runtimes parameters
+# ............................................................................
+non_olm:
+  wsRuntimes:
+    kinds:
+#      - ibm-cpd-ws-runtime-251-pygpu
+#      - ibm-cpd-ws-runtime-251-r
+{% endif %}{% if "watsonx_ai" in components_to_install %}
+---
+# ............................................................................
+# watsonx.ai parameters
+# ............................................................................
+non_olm:
+  watsonxAi:
+    liteInstall: false # Lightweight engine only
+    tuning_disabled: true # Tuning studio is disabled by default, set to false to enable it.
+{% endif %}{% if "watson_assistant" in components_to_install %}
+---
+# ............................................................................
+# watsonx Assistant parameters 
+# Valid deploymentType values: Starter (Small), Production (Medium), Large (Large)
+# ............................................................................
+non_olm:
+  watsonAssistant:
+    size: Starter
+    bigpv: false
+    analytics: true # store chatlogs
+    watsonxAiType: none # 'embedded' will install watsonx_ai_ifm and requires GPUs, 'none' disables gpu features
+#   syomModels: []
+#   ootbModels: []
+{% endif %}{% if "watsonx_bi_assistant" in components_to_install %}
+---
+# ............................................................................
+# watsonx BI parameters
+# Valid licenseType values:
+#   Premium - Specify this option if you purchased IBM watsonx BI Premium.
+#   Premium_NonProd - Specify this option if you purchased IBM watsonx BI Premium Non-Production.
+#   Premium_AddOn_CA - Specify this option if you purchased IBM watsonx BI Premium Add-On for Cognos® Analytics.
+# ............................................................................
+non_olm:
+  watsonxBiAssistant:
+    licenseType: Premium
+{% endif %}{% if "watsonx_data" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data parameters 
+# Valid scaleConfig values: small, medium, large
+# ............................................................................
+non_olm:
+  watsonxData:
+    enable_lite_milvus: false
+    scaleConfig: small
+    enable_watsonx_platform: true # Set to true if you want to have the watsonx.data premium UI Context even if you don't install all components.
+{% endif %}{% if "watsonx_data_premium" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data Premium parameters 
+# Valid wxd_premium_enable_models_on values: gpu, cpu
+# ............................................................................
+non_olm:
+  watsonxDataPremium:
+    wxd_premium_enable_models_on: gpu
+    licenseType: premium
+{% endif %}{% if "watsonx_dataintegration" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data integration parameters
+# ............................................................................
+# It can't use 'non_olm:' for 5.3.1 and previous, there you have to use "custom_spec:"
+non_olm: # for 5.4.0+ versions
+  watsonx_dataintegration:
+    enableBatchBulkETL: true # datastage
+    enableRealtimeStreaming: true # streamsets
+    enableDataObservability: true # databand
+    enableUnstructuredDataIntegration: false # udc
+    enableReplication: false
+{% endif %}{% if "watsonx_dataintelligence" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data intelligence parameters
+# Valid enableModelsOn values: cpu, gpu, remote (watsonx.ai)
+# ............................................................................
+non_olm:
+  watsonxDataintelligence:
+    enableAISearch: false
+    enableDataGovernanceCatalog: true
+    enableKnowledgeGraph: true
+    enableDataQuality: false
+    enableDataLineage: true # manta data lineage
+    enableDataProduct: true # data product hub
+    enableGenerativeAICapabilities: true
+    enableSemanticEnrichment: true
+    enableSemanticEmbedding: false
+    enableTextToSql: false
+    enableModelsOn: remote
+#    customModelTextToSQL: granite-3-8b-instruct
+{% endif %}{% if "watsonx_governance" in components_to_install %}
+---
+# ............................................................................
+# watsonx.governance parameters 
+# installType Valid values:
+#   all - Specify this option if you purchased both Model Management and Risk and Compliance Foundation entitlement.
+#   mm - Specify this option if you purchased Model Management entitlement.
+#   rcf - Specify this option if you purchased Risk and Compliance Foundation entitlement.
+# ............................................................................
+non_olm:
+  watsonxGovernance:
+    installType: all
+    enableFactsheet: true
+    enableOpenscale: true
+    enableOpenpages: true
+#   openpagesInstanceCR: "op-wxgov-instance"
+#   openPages:
+#     databaseType: internal
+#     database: Db2
+#     dbSecretName: <secret-name>
+{% endif %}
+{% if "watsonx_orchestrate" in components_to_install %}
+---
+# ............................................................................
+# watsonx Orchestrate parameters 
+# installMode Valid values
+#   agentic - Install only the agentic AI features. (default)
+#   agentic_assistant - Install the agentic AI features and Assistant Builder features.
+# ............................................................................
+non_olm:
+  watsonxOrchestrate:
+    # Valid size values: small, medium, large
+    # Must be set explicitly - leaving it unset makes the operator default to an unresolved 'medium' which will make the installation get stuck.
+    size: small
+    installMode: "agentic"
+    watsonxAI:
+      watsonxaiifm: false # Use remote models, if true requires GPUs for on-prem deployment.
+      syomModels: []
+      # ootbModels: [ibm-slate-30m-english-rtrvr] this model is required if you set watsonxaiifm to true.
+{% endif %}
+{% if "dv" in components_to_install or "dmc" in components_to_install %}
+---
+# ............................................................................
+# Db2 Managmenet Console
+# Verison and Storage Size Controls
+# ............................................................................
+non_olm:
+  Dmcaddon:
+    version: 5.4.0
+    storageSize: 20Gi
+{% endif %}

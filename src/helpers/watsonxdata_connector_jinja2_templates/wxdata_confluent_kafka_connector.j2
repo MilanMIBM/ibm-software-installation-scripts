@@ -1,0 +1,53 @@
+{
+    "display_name": {{ display_name | tojson }},
+    "type": "kafka",
+    "description": {{ description | default("Confluent Kafka Connector") | truncate(50, true, "") | tojson }},
+    "tags": {{ tags | default([]) | tojson }},
+
+    "associated_catalog": {
+        "catalog_name": {{ catalog_name | tojson }},
+        "catalog_type": {{ catalog_type | default("iceberg") | tojson }}
+    },
+
+    "connection": {
+        "hostname": {{ broker_host | tojson }},
+        "port": {{ broker_port | int }},
+        "certificate": {{ certificate | default("") | tojson }},
+        "certificate_extension": {{ certificate_extension | default("crt") | tojson }},
+        "connection_method": {{ connection_method | default("basic") | tojson }},
+        "sasl_mechanism": {{ sasl_mechanism  | default("scram_sha_512") | tojson }},
+        "password": {{ broker_authentication_password |  default("") | tojson }},
+        "username":  {{ broker_authentication_user | default("") | tojson }},
+        "validate_server_certificate": {{ validate_server_certificate | default(true) | tojson }},
+        "verify_host_name": {{ verify_host_name | default(true) | tojson }},
+        "sasl": {{ sasl | default(true) | tojson }}
+    },
+
+    "properties": [
+        {
+        "encrypt":false,
+        "key":"connector.name",
+        "value":"kafka"
+        },
+        {
+        "encrypt": false,
+        "key": "kafka.nodes",
+        "value": {{ hosts | tojson }}
+        },
+        {
+        "encrypt": false,
+        "key":"kafka.hide-internal-columns",
+        "value":"false"
+        },
+        {
+        "encrypt": false,
+        "key": "kafka.security-protocol",
+        "value": {{ sasl_mechanism  | default("SASL_SSL") | tojson }}
+        },
+        {
+        "encrypt": false,
+        "key": "kafka.sasl.mechanism",
+        "value": {{ sasl_mechanism  | default("SCRAM-SHA-512") | tojson }}
+        }
+    ]
+}

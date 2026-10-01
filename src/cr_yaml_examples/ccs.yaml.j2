@@ -1,0 +1,16 @@
+apiVersion: ccs.cpd.ibm.com/v1beta1
+kind: CCS
+metadata:
+  name: ccs-cr
+  namespace: {{ PROJECT_CPD_INST_OPERANDS }}
+spec:
+  license:
+    accept: true
+  non_olm_deploy: true
+  blockStorageClass: {{ STG_CLASS_BLOCK }}
+  scaleConfig: {{ SCALE_CONFIG | default('small', true) }}
+  imagePullSecret: {{ IMAGE_PULL_SECRET }}
+  docker_registry_prefix: cp.icr.io
+  version: {{ CCS_VERSION | default('13.0.6', true) }}
+  fileStorageClass: {{ STG_CLASS_FILE }}
+  storageClass: {{ STG_CLASS_FILE }}

@@ -1,0 +1,151 @@
+#===============================================================================
+# IBM Software Hub installation variables
+#===============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "${SCRIPT_DIR}/.env" ] && source "${SCRIPT_DIR}/.env"
+
+# ------------------------------------------------------------------------------
+# Client workstation 
+# ------------------------------------------------------------------------------
+# Set the following variables if you want to override the default behavior of the IBM Software Hub CLI.
+#
+# To export these variables, you must uncomment each command in this section.
+
+# export CPD_CLI_MANAGE_WORKSPACE=<enter a fully qualified directory>
+# export OLM_UTILS_LAUNCH_ARGS=<enter launch arguments>
+
+# ------------------------------------------------------------------------------
+# Cluster
+# ------------------------------------------------------------------------------
+
+export OCP_URL="{{ cluster_url_input.value }}"
+export OPENSHIFT_TYPE="{{ cluster_type_select.value }}"
+export IMAGE_ARCH="{{ cluster_arch_select.value }}"
+{% if login_argument_select.selected_key == "Username/Password" -%}
+export OCP_USERNAME="{{ cluster_username_input.value }}"
+export OCP_PASSWORD="{{ cluster_password_input.value }}"
+export LOGIN_ARGUMENTS="--username=${OCP_USERNAME} --password=${OCP_PASSWORD}"
+{% elif login_argument_select.selected_key == "Token" -%}
+export OCP_TOKEN="{{ cluster_token_input.value }}"
+export LOGIN_ARGUMENTS="--token=${OCP_TOKEN}"
+{% endif -%}
+
+export SERVER_ARGUMENTS="--server=${OCP_URL}"
+export OC_LOGIN="oc login ${SERVER_ARGUMENTS} ${LOGIN_ARGUMENTS}"
+export CPDM_OC_LOGIN="cpd-cli manage login-to-ocp ${SERVER_ARGUMENTS} ${LOGIN_ARGUMENTS}"
+
+# ------------------------------------------------------------------------------
+# Projects
+# ------------------------------------------------------------------------------
+
+export PROJECT_LICENSE_SERVICE="{{ cp4d_install_project_naming.get("PROJECT_LICENSE_SERVICE") }}"
+export PROJECT_SCHEDULING_SERVICE="{{ cp4d_install_project_naming.get("PROJECT_SCHEDULING_SERVICE") }}"
+{% if cp4d_install_project_naming.get("PROJECT_IBM_EVENTS") -%}
+export PROJECT_IBM_EVENTS="{{ cp4d_install_project_naming.get("PROJECT_IBM_EVENTS") }}"
+{% endif -%}
+{% if cp4d_install_project_naming.get("PROJECT_PRIVILEGED_MONITORING_SERVICE") -%}
+export PROJECT_PRIVILEGED_MONITORING_SERVICE="{{ cp4d_install_project_naming.get("PROJECT_PRIVILEGED_MONITORING_SERVICE") }}"
+{% endif -%}
+export PROJECT_CPD_INST_OPERATORS="{{ cp4d_install_project_naming.get("PROJECT_CPD_INST_OPERATORS") }}"
+export PROJECT_CPD_INST_OPERANDS="{{ cp4d_install_project_naming.get("PROJECT_CPD_INST_OPERANDS") }}"
+
+# ------------------------------------------------------------------------------
+# Storage
+# ------------------------------------------------------------------------------
+
+export STG_CLASS_BLOCK="{{ block_storage_class_select.value }}"
+export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
+{% if image_pull_creds_select.selected_key == "IBM Entitled Registry" -%}
+# ------------------------------------------------------------------------------
+# IBM Entitled Registry Key
+# ------------------------------------------------------------------------------
+
+export IBM_ENTITLEMENT_KEY="{{ ibm_entitlement_key_input.value }}"
+{% else -%}
+# ------------------------------------------------------------------------------
+# Private container registry
+# ------------------------------------------------------------------------------
+
+export PRIVATE_REGISTRY_LOCATION="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_LOCATION") }}"
+export PRIVATE_REGISTRY_PUSH_USER="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PUSH_USER") }}"
+export PRIVATE_REGISTRY_PUSH_PASSWORD="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PUSH_PASSWORD") }}"
+export PRIVATE_REGISTRY_PULL_USER="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PULL_USER") }}"
+export PRIVATE_REGISTRY_PULL_PASSWORD="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PULL_PASSWORD") }}"
+{% endif -%}
+
+# ------------------------------------------------------------------------------
+# Image pull configuration
+# ------------------------------------------------------------------------------
+
+export IMAGE_PULL_SECRET="{{ pull_secret_name_input.value | default('pull-secret') }}"
+{% if image_pull_creds_select.selected_key == "IBM Entitled Registry" -%}
+export IMAGE_PULL_CREDENTIALS="$(echo -n "cp:$IBM_ENTITLEMENT_KEY" | base64 -w 0)"
+export IMAGE_PULL_PREFIX="icr.io"
+{% else -%}
+export IMAGE_PULL_CREDENTIALS="$(echo -n "$PRIVATE_REGISTRY_PULL_USER:$PRIVATE_REGISTRY_PULL_PASSWORD" | base64 -w 0)"
+export IMAGE_PUSH_CREDENTIALS="$(echo -n "$PRIVATE_REGISTRY_PUSH_USER:$PRIVATE_REGISTRY_PUSH_PASSWORD" | base64 -w 0)"
+export IMAGE_PULL_PREFIX="${PRIVATE_REGISTRY_LOCATION}"
+export IMAGE_PUSH_PREFIX="${PRIVATE_REGISTRY_LOCATION}"
+{% endif -%}
+
+# ------------------------------------------------------------------------------
+# IBM Software Hub version
+# ------------------------------------------------------------------------------
+
+export VERSION="{{ cp4d_version_input.value }}"
+export PATCH_ID="{{ cp4d_patch_input.value }}" # Number like 1, 2, 3 which corresponds to the patch to install. Current patch as of 28.10.2026 is "6"
+export OLM_UTILS_IMAGE="icr.io/cpopen/cpd/olm-utils-v4:${VERSION}${PATCH_ID:+.${PATCH_ID}}" # you could also specify the architecture like ${VERSION}.${PATCH_ID}.${IMAGE_ARCH} (defaults to amd64) if you are using olm-utils-premium-v4 (not supported for olm-utils-v4)
+export CPD_ADMIN_USERNAME="{{ cpd_admin_username_input.value }}"
+
+# ------------------------------------------------------------------------------
+# Components
+# ------------------------------------------------------------------------------
+
+export SOFTWARE_HUB="ibm-licensing,scheduler,cpfs,cpd_platform,ccs,zen"
+export CPD_COMPONENTS="{{ components_to_install_str.split(',') | reject('equalto', 'ibm_wxd_opensearch') | join(',') }}"
+export COMPLETE_COMPONENT_LIST="${SOFTWARE_HUB},${CPD_COMPONENTS}"
+{% if optional_images_str -%}
+export IMAGE_GROUPS="{{ optional_images_str }}"
+{% endif -%}
+export UPDATE="{{ updating_components_checkbox.value | lower }}"
+export INSTALL_OPTIONS="{{ install_options_addon.value | lower }}"
+{% if install_options_addon.value == true -%}
+export INSTALL_OPTIONS_FILE="{{ inst_options_filename }}"
+{% endif -%}
+
+# ------------------------------------------------------------------------------
+# License Entitlements
+# ------------------------------------------------------------------------------
+
+export PROD_LICENSE="{{ licenses_are_prod_checkbox.value | lower }}"
+export LICENSE_ENTITLEMENTS="{{ entitlements_to_apply_str }}"
+
+# ------------------------------------------------------------------------------
+# Product Specific SCC requirements
+# ------------------------------------------------------------------------------
+
+{% if components_to_install_str.split(',') | select('in', ['db2oltp', 'db2wh', 'db2aaservice', 'openpages', 'watsonx_governance']) | list -%}
+export PREP_DB2="true"
+{% endif -%}
+{% if 'ibm_wxd_opensearch' in components_to_install_str.split(',') -%}
+export PREP_OPENSEARCH="true"
+{% endif -%}
+{% if 'informix' in components_to_install_str.split(',') or 'informix_cp4d' in components_to_install_str.split(',') -%}
+export PREP_INFORMIX="true"
+{% endif -%}
+{% if 'edb_cp4d' in components_to_install_str.split(',') -%}
+export PREP_EDB="true"
+{% endif -%}
+{% if 'watsonx_data_premium' in components_to_install_str.split(',') or 'datastax_mc' in components_to_install_str.split(',') -%}
+export PREP_DATASTAX="true"
+{% endif -%}
+{% if 'planning_analytics' in components_to_install_str.split(',') -%}
+export PREP_PA="true"
+{% endif -%}
+{% if 'cognos_analytics' in components_to_install_str.split(',') -%}
+export PREP_CA="true"
+{% endif -%}
+{% if 'watsonx_orchestrate' in components_to_install_str.split(',') -%}
+export PREP_WXO="true"
+{% endif -%}

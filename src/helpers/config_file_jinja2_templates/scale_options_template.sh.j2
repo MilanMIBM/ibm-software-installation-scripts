@@ -1,0 +1,760 @@
+################################################################################
+# IBM Software Hub scale-options.yml
+# Generated based on selected components
+#
+# This file documents the scaling options for each selected service so that a
+# companion script can read it and apply the desired scale config / patch / CR
+# update. It is NOT consumed directly by cpd-cli as a single param-file; instead
+# it serves as a per-component reference of:
+#   - the scaling METHOD (cpd-cli apply-scale-config / apply-cluster-component-
+#     scale-config / update-cr / oc patch / web client / IBM Sales sizing)
+#   - the valid LEVELS or SIZES
+#   - the cpd-cli `--components` (or CR) name to target
+#   - a desired value you can edit, expressed under <component>: { scale: ... }
+#
+# Scale LEVELS (services using `--scale`):
+#   level_1 - Minimal CPU reservation. Low concurrency, frees CPU when idle.
+#             No resiliency (no redundant replicas).
+#   level_2 - Small workloads. Minimum recommended footprint, growth capped.
+#             No resiliency guaranteed.
+#   level_3 - Resiliency + concurrency. Moderate workloads, reasonable redundancy.
+#   level_4 - High availability with large workloads. Better resiliency.
+#   level_5 - HA with large workloads + more concurrency. Max resiliency/redundancy.
+#
+# Scale SIZES (services using a size string instead of a level):
+#   x-small / xsmall      - PoC / smallest footprint (where supported)
+#   small_mincpureq       - Minimal reserved CPU without removing the CPU pod setting
+#   small                 - Default for most size-based services
+#   medium
+#   large
+#
+# General notes:
+#   - Set --wait=false on cpd-cli to patch the CR and return immediately.
+#   - To scale several services to the same level at once:
+#       cpd-cli manage apply-scale-config --components=zen,dp,ws --scale=level_3
+#   - When scaling a service, also scale its related/dependency services.
+#   - To override a non-default CR name, use a --param-file with:
+#       override_components_meta:
+#         <component-name>:
+#           cr_name: <your-cr-name>
+#   - Check current scale: cpd-cli manage get-scale-config --components=<name>
+#     (Scheduling service uses get-cluster-component-scale-config instead.)
+#
+# Per-component keys below:
+#   <component>:
+#     method:     scaling method identifier (for the apply script to branch on)
+#     component:  cpd-cli --components value or CR kind to target
+#     scale:      desired level / size (EDIT THIS)
+################################################################################
+
+# ==============================================================================
+# Method 1: cpd-cli manage apply-scale-config  (uses --scale=level_1..level_5)
+# ==============================================================================
+{% if "cpd_platform" in components_to_install %}
+---
+# ............................................................................
+# IBM Software Hub control plane
+#   cpd-cli manage apply-scale-config \
+#     --cpd_instance_ns=${PROJECT_CPD_INST_OPERANDS} \
+#     --components=zen --scale=${SCALE}
+# ............................................................................
+zen:
+  method: apply-scale-config
+  component: zen
+  scale: level_1
+{% endif %}{% if "canvasbase" in components_to_install or "spss" in components_to_install or "synthetic_data_generator" in components_to_install %}
+---
+# ............................................................................
+# Canvas
+#   Dependency for SPSS Modeler and Synthetic Data Generator. If you scale
+#   either of those, you must scale Canvas as well.
+#   --components=canvasbase --scale=${SCALE}
+# ............................................................................
+canvasbase:
+  method: apply-scale-config
+  component: canvasbase
+  scale: level_1
+{% endif %}{% if "ccs" in components_to_install %}
+---
+# ............................................................................
+# Common core services
+#   --components=ccs --scale=${SCALE}
+#   To scale the Flight service instead, use a --param-file overriding the
+#   scale_config_field:
+#     override_components_meta:
+#       ccs:
+#         scale_config_field: flightScaleConfig
+# ............................................................................
+ccs:
+  method: apply-scale-config
+  component: ccs
+  scale: level_1
+  # scale_config_field: flightScaleConfig   # uncomment to scale Flight service
+{% endif %}{% if "cpfs" in components_to_install %}
+---
+# ............................................................................
+# IBM Cloud Pak foundational services
+#   --components=cpfs --scale=${SCALE}
+# ............................................................................
+cpfs:
+  method: apply-scale-config
+  component: cpfs
+  scale: level_1
+{% endif %}{% if "watsonx_ai_ifm" in components_to_install %}
+---
+# ............................................................................
+# Inference foundation models
+#   --components=watsonx_ai_ifm --scale=${SCALE}
+# ............................................................................
+watsonx_ai_ifm:
+  method: apply-scale-config
+  component: watsonx_ai_ifm
+  scale: level_1
+{% endif %}{% if "factsheet" in components_to_install %}
+---
+# ............................................................................
+# AI Factsheets
+#   --components=factsheet --scale=${SCALE}
+#   Note: watsonx.governance passes its scale down to AI Factsheets.
+# ............................................................................
+factsheet:
+  method: apply-scale-config
+  component: factsheet
+  scale: level_1
+{% endif %}{% if "analyticsengine" in components_to_install %}
+---
+# ............................................................................
+# Analytics Engine powered by Apache Spark
+#   --components=analyticsengine --scale=${SCALE}
+# ............................................................................
+analyticsengine:
+  method: apply-scale-config
+  component: analyticsengine
+  scale: level_1
+{% endif %}{% if "dashboard" in components_to_install %}
+---
+# ............................................................................
+# Cognos Dashboards
+#   --components=dashboard --scale=${SCALE}
+# ............................................................................
+dashboard:
+  method: apply-scale-config
+  component: dashboard
+  scale: level_1
+{% endif %}{% if "udp" in components_to_install %}
+---
+# ............................................................................
+# Unstructured Data Integration
+#   --components=udp --scale=${SCALE}
+# ............................................................................
+udp:
+  method: apply-scale-config
+  component: udp
+  scale: level_1
+{% endif %}{% if "dp" in components_to_install %}
+---
+# ............................................................................
+# Data Privacy
+#   --components=dp --scale=${SCALE}
+# ............................................................................
+dp:
+  method: apply-scale-config
+  component: dp
+  scale: level_1
+{% endif %}{% if "dataproduct" in components_to_install %}
+---
+# ............................................................................
+# Data Product Hub
+#   --components=dataproduct --scale=${SCALE}
+# ............................................................................
+dataproduct:
+  method: apply-scale-config
+  component: dataproduct
+  scale: level_1
+{% endif %}{% if "datarefinery" in components_to_install %}
+---
+# ............................................................................
+# Data Refinery
+#   --components=datarefinery --scale=${SCALE}
+# ............................................................................
+datarefinery:
+  method: apply-scale-config
+  component: datarefinery
+  scale: level_1
+{% endif %}{% if "replication" in components_to_install %}
+---
+# ............................................................................
+# Data Replication
+#   --components=replication --scale=${SCALE}
+# ............................................................................
+replication:
+  method: apply-scale-config
+  component: replication
+  scale: level_1
+{% endif %}{% if "datastage_ent" in components_to_install or "datastage" in components_to_install %}
+---
+# ............................................................................
+# DataStage
+#   --components=datastage_ent --scale=${SCALE}
+# ............................................................................
+datastage_ent:
+  method: apply-scale-config
+  component: datastage_ent
+  scale: level_1
+{% endif %}{% if "dmc" in components_to_install %}
+---
+# ............................................................................
+# Db2 Data Management Console
+#   --components=dmc --scale=${SCALE}
+# ............................................................................
+dmc:
+  method: apply-scale-config
+  component: dmc
+  scale: level_1
+{% endif %}{% if "dods" in components_to_install %}
+---
+# ............................................................................
+# Decision Optimization
+#   --components=dods --scale=${SCALE}
+# ............................................................................
+dods:
+  method: apply-scale-config
+  component: dods
+  scale: level_1
+{% endif %}{% if "hee" in components_to_install %}
+---
+# ............................................................................
+# Execution Engine for Apache Hadoop
+#   --components=hee --scale=${SCALE}
+# ............................................................................
+hee:
+  method: apply-scale-config
+  component: hee
+  scale: level_1
+{% endif %}{% if "wkc" in components_to_install %}
+---
+# ............................................................................
+# IBM Knowledge Catalog
+#   --components=wkc --scale=${SCALE}
+#   WARNING: scaling up (e.g. level_3) increases the number of Neo4j cluster
+#   primaries. You CANNOT scale the Neo4j cluster back down once increased.
+# ............................................................................
+wkc:
+  method: apply-scale-config
+  component: wkc
+  scale: level_1
+{% endif %}{% if "ikc_premium" in components_to_install %}
+---
+# ............................................................................
+# IBM Knowledge Catalog Premium
+#   --components=ikc_premium --scale=${SCALE}
+#   WARNING: Neo4j primary count cannot be reduced after scaling up.
+# ............................................................................
+ikc_premium:
+  method: apply-scale-config
+  component: ikc_premium
+  scale: level_1
+{% endif %}{% if "ikc_standard" in components_to_install %}
+---
+# ............................................................................
+# IBM Knowledge Catalog Standard
+#   --components=ikc_standard --scale=${SCALE}
+#   WARNING: Neo4j primary count cannot be reduced after scaling up.
+# ............................................................................
+ikc_standard:
+  method: apply-scale-config
+  component: ikc_standard
+  scale: level_1
+{% endif %}{% if "datalineage" in components_to_install %}
+---
+# ............................................................................
+# IBM Manta Data Lineage
+#   --components=datalineage --scale=${SCALE}
+# ............................................................................
+datalineage:
+  method: apply-scale-config
+  component: datalineage
+  scale: level_1
+{% endif %}{% if "match360" in components_to_install %}
+---
+# ............................................................................
+# IBM Master Data Management
+#   --components=match360 --scale=${SCALE}
+# ............................................................................
+match360:
+  method: apply-scale-config
+  component: match360
+  scale: level_1
+{% endif %}{% if "mantaflow" in components_to_install %}
+---
+# ............................................................................
+# MANTA Automated Data Lineage
+#   --components=mantaflow --scale=${SCALE}
+# ............................................................................
+mantaflow:
+  method: apply-scale-config
+  component: mantaflow
+  scale: level_1
+{% endif %}{% if "openpages" in components_to_install %}
+---
+# ............................................................................
+# OpenPages
+#   --components=openpages_instance --scale=${SCALE} --param-file=<file>
+#   Requires a --param-file overriding the instance CR name:
+#     override_components_meta:
+#       openpages_instance:
+#         cr_name: <your-custom-resource-name>
+#   If the instance is in a tethered project, add:
+#     --tethered_instance_ns=${PROJECT_CPD_INSTANCE_TETHERED}
+#   Note: watsonx.governance passes its scale down to OpenPages.
+# ............................................................................
+openpages_instance:
+  method: apply-scale-config
+  component: openpages_instance
+  scale: level_1
+  cr_name: ""               # REQUIRED: set your OpenPages instance CR name
+  tethered: false           # set true if installed in a tethered project
+{% endif %}{% if "ws_pipelines" in components_to_install %}
+---
+# ............................................................................
+# Orchestration Pipelines
+#   --components=ws_pipelines --scale=${SCALE}
+# ............................................................................
+ws_pipelines:
+  method: apply-scale-config
+  component: ws_pipelines
+  scale: level_1
+{% endif %}{% if "productmaster" in components_to_install %}
+---
+# ............................................................................
+# Product Master
+#   --components=productmaster --scale=${SCALE}
+# ............................................................................
+productmaster:
+  method: apply-scale-config
+  component: productmaster
+  scale: level_1
+{% endif %}{% if "spss" in components_to_install %}
+---
+# ............................................................................
+# SPSS Modeler
+#   --components=spss --scale=${SCALE}
+#   Tip: if you scale SPSS Modeler you must also scale Canvas (canvasbase).
+# ............................................................................
+spss:
+  method: apply-scale-config
+  component: spss
+  scale: level_1
+{% endif %}{% if "watson_discovery" in components_to_install %}
+---
+# ............................................................................
+# Watson Discovery
+#   --components=watson_discovery --scale=${SCALE}
+#   Best practice: back up before scaling up. To scale the Elasticsearch
+#   cluster you must first update the index configuration settings.
+# ............................................................................
+watson_discovery:
+  method: apply-scale-config
+  component: watson_discovery
+  scale: level_1
+{% endif %}{% if "wml" in components_to_install %}
+---
+# ............................................................................
+# Watson Machine Learning
+#   --components=wml --scale=${SCALE}
+# ............................................................................
+wml:
+  method: apply-scale-config
+  component: wml
+  scale: level_1
+{% endif %}{% if "openscale" in components_to_install %}
+---
+# ............................................................................
+# Watson OpenScale
+#   --components=openscale --scale=${SCALE}
+# ............................................................................
+openscale:
+  method: apply-scale-config
+  component: openscale
+  scale: level_1
+{% endif %}{% if "ws" in components_to_install %}
+---
+# ............................................................................
+# Watson Studio
+#   --components=ws --scale=${SCALE}
+# ............................................................................
+ws:
+  method: apply-scale-config
+  component: ws
+  scale: level_1
+{% endif %}{% if "watsonx_ai" in components_to_install %}
+---
+# ............................................................................
+# watsonx.ai
+#   --components=watsonx_ai --scale=${SCALE}
+# ............................................................................
+watsonx_ai:
+  method: apply-scale-config
+  component: watsonx_ai
+  scale: level_1
+{% endif %}{% if "watson_assistant" in components_to_install %}
+---
+# ............................................................................
+# watsonx Assistant
+#   --components=watson_assistant --scale=${SCALE}
+# ............................................................................
+watson_assistant:
+  method: apply-scale-config
+  component: watson_assistant
+  scale: level_1
+{% endif %}{% if "wca" in components_to_install %}
+---
+# ............................................................................
+# watsonx Code Assistant
+#   --components=wca --scale=${SCALE}
+# ............................................................................
+wca:
+  method: apply-scale-config
+  component: wca
+  scale: level_1
+{% endif %}{% if "wca_ansible" in components_to_install %}
+---
+# ............................................................................
+# watsonx Code Assistant for Red Hat Ansible Lightspeed
+#   --components=wca_ansible --scale=${SCALE}
+# ............................................................................
+wca_ansible:
+  method: apply-scale-config
+  component: wca_ansible
+  scale: level_1
+{% endif %}{% if "wca_z" in components_to_install %}
+---
+# ............................................................................
+# watsonx Code Assistant for Z
+#   --components=wca_z --scale=${SCALE}
+# ............................................................................
+wca_z:
+  method: apply-scale-config
+  component: wca_z
+  scale: level_1
+{% endif %}{% if "wca_z_agentic" in components_to_install %}
+---
+# ............................................................................
+# watsonx Code Assistant for Z Agentic
+#   --components=wca_z_agentic --scale=${SCALE}
+# ............................................................................
+wca_z_agentic:
+  method: apply-scale-config
+  component: wca_z_agentic
+  scale: level_1
+{% endif %}{% if "wca_z_ce" in components_to_install %}
+---
+# ............................................................................
+# watsonx Code Assistant for Z Code Explanation
+#   --components=wca_z_ce --scale=${SCALE}
+# ............................................................................
+wca_z_ce:
+  method: apply-scale-config
+  component: wca_z_ce
+  scale: level_1
+{% endif %}{% if "wca_z_cg" in components_to_install %}
+---
+# ............................................................................
+# watsonx Code Assistant for Z Code Generation
+#   --components=wca_z_cg --scale=${SCALE}
+# ............................................................................
+wca_z_cg:
+  method: apply-scale-config
+  component: wca_z_cg
+  scale: level_1
+{% endif %}{% if "wca_z_understand" in components_to_install %}
+---
+# ............................................................................
+# watsonx Code Assistant for Z Understand
+#   --components=wca_z_understand --scale=${SCALE}
+# ............................................................................
+wca_z_understand:
+  method: apply-scale-config
+  component: wca_z_understand
+  scale: level_1
+{% endif %}{% if "watsonx_data" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data
+#   --components=watsonx_data --scale=${SCALE}
+# ............................................................................
+watsonx_data:
+  method: apply-scale-config
+  component: watsonx_data
+  scale: level_1
+{% endif %}{% if "watsonx_dataintelligence" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data intelligence
+#   --components=watsonx_dataintelligence --scale=${SCALE}
+#   Note (5.3.0+): if any sub-components don't scale along with it, scale
+#   those services separately (e.g. IBM Knowledge Catalog).
+# ............................................................................
+watsonx_dataintelligence:
+  method: apply-scale-config
+  component: watsonx_dataintelligence
+  scale: level_1
+{% endif %}{% if "watsonx_data_premium" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data Premium
+#   --components=watsonx_data_premium --scale=${SCALE}
+# ............................................................................
+watsonx_data_premium:
+  method: apply-scale-config
+  component: watsonx_data_premium
+  scale: level_1
+{% endif %}{% if "watsonx_orchestrate" in components_to_install %}
+---
+# ............................................................................
+# watsonx Orchestrate
+#   --components=watsonx_orchestrate --scale=${SCALE}
+# ............................................................................
+watsonx_orchestrate:
+  method: apply-scale-config
+  component: watsonx_orchestrate
+  scale: level_1
+{% endif %}
+
+# ==============================================================================
+# Method 2: cpd-cli manage apply-cluster-component-scale-config
+#           (cluster-scoped component, uses --scale=level_1..level_5)
+# ==============================================================================
+{% if "scheduler" in components_to_install or "scheduling_service" in components_to_install %}
+---
+# ............................................................................
+# Scheduling service
+#   cpd-cli manage apply-cluster-component-scale-config \
+#     --cluster_component_ns=${PROJECT_SCHEDULING_SERVICE} \
+#     --component=scheduler --scale=${SCALE} --release=${VERSION}
+#   Check current scale with get-cluster-component-scale-config.
+# ............................................................................
+scheduler:
+  method: apply-cluster-component-scale-config
+  component: scheduler
+  scale: level_1
+{% endif %}
+
+# ==============================================================================
+# Method 3: cpd-cli manage update-cr  (size string, not a level)
+#   Valid sizes: small_mincpureq, small (default), medium, large
+# ==============================================================================
+{% if "watsonx_governance" in components_to_install %}
+---
+# ............................................................................
+# watsonx.governance
+#   cpd-cli manage update-cr \
+#     --component=watsonx_governance \
+#     --cpd_instance_ns=${PROJECT_CPD_INST_OPERANDS} \
+#     --patch="{\"scaleConfig\":\"${SIZE}\"}"
+#   Note: scaling up/down also passes the value to downstream services
+#   such as AI Factsheets and OpenPages.
+# ............................................................................
+watsonx_governance:
+  method: update-cr-size
+  component: watsonx_governance
+  scale: small          # small_mincpureq | small | medium | large
+{% endif %}{% if "watson_speech" in components_to_install %}
+---
+# ............................................................................
+# Watson Speech services (STT & TTS scaled independently)
+#   Valid sizes: xsmall (default), small_mincpureq, small, medium, large
+#   Watson Speech to Text:
+#     cpd-cli manage update-cr --component=watson_speech \
+#       --cpd_instance_ns=${PROJECT_CPD_INST_OPERANDS} \
+#       --patch="{\"scaleConfig\":{\"stt\":{\"size\":\"${SIZE}\"}}}"
+#   Watson Text to Speech:
+#     cpd-cli manage update-cr --component=watson_speech \
+#       --cpd_instance_ns=${PROJECT_CPD_INST_OPERANDS} \
+#       --patch="{\"scaleConfig\":{\"tts\":{\"size\":\"${SIZE}\"}}}"
+# ............................................................................
+watson_speech:
+  method: update-cr-stt-tts
+  component: watson_speech
+  scale:
+    stt: xsmall         # xsmall | small_mincpureq | small | medium | large
+    tts: xsmall         # xsmall | small_mincpureq | small | medium | large
+{% endif %}
+
+# ==============================================================================
+# Method 4: oc patch  (size string into the instance CR)
+# ==============================================================================
+{% if "planning_analytics" in components_to_install %}
+---
+# ............................................................................
+# Planning Analytics  (per service instance)
+#   Valid sizes: small_mincpureq, small (default), medium, large
+#   export INSTANCE_NAME=<instance-name>
+#   oc patch PAServiceInstance ${INSTANCE_NAME} \
+#     --namespace ${PROJECT_CPD_INST_OPERANDS} \
+#     --patch '{"spec":{"scaleConfig":"'${SIZE}'"}}' --type=merge
+# ............................................................................
+planning_analytics:
+  method: oc-patch-pa
+  component: PAServiceInstance
+  instance_name: ""       # REQUIRED: set the PA service instance name
+  scale: small            # small_mincpureq | small | medium | large
+{% endif %}
+
+# ==============================================================================
+# Method 5: oc patch / oc scale  (replicas and/or CPU+memory, no scale levels)
+# ==============================================================================
+{% if "voice_gateway" in components_to_install %}
+---
+# ............................................................................
+# Voice Gateway  (scale by replica count, per instance)
+#   oc get voicegateway --namespace ${PROJECT_CPD_INST_OPERANDS}
+#   export INSTANCE_NAME=<instance-name>
+#   oc scale voicegateway ${INSTANCE_NAME} \
+#     --namespace ${PROJECT_CPD_INST_OPERANDS} --replicas=${REPLICAS}
+# ............................................................................
+voice_gateway:
+  method: oc-scale-replicas
+  component: voicegateway
+  instance_name: ""       # REQUIRED: set the Voice Gateway instance name
+  replicas: 1
+{% endif %}{% if "informix" in components_to_install or "informix_cp4d" in components_to_install %}
+---
+# ............................................................................
+# Informix  (no scale levels; patch replicas and/or CPU/memory per instance)
+#   export INSTANCE_ID=<instance-id>
+#   # replicas (server count):
+#   oc patch Informixes informix-${INSTANCE_ID} \
+#     --namespace ${PROJECT_CPD_INST_OPERANDS} \
+#     --patch '{"spec":{"replicas":2}}' --type=merge
+#   # resources (limits/requests for cpu/memory):
+#   oc patch Informixes informix-${INSTANCE_ID}-server \
+#     --namespace ${PROJECT_CPD_INST_OPERANDS} \
+#     --patch '{"spec":{"resources":{"limits":{"memory":"4Gi"}}}}' --type=merge
+#   # then delete the StatefulSet for changes to take effect:
+#   oc delete sts informix-${INSTANCE_ID}-server
+# ............................................................................
+informix:
+  method: oc-patch-resources
+  component: Informixes
+  instance_id: ""         # REQUIRED: set the Informix instance id
+  replicas: 1
+  resources:
+    requests:
+      cpu: "2"
+      memory: "2Gi"
+    limits:
+      cpu: "4"
+      memory: "4Gi"
+{% endif %}
+
+# ==============================================================================
+# Method 6: Instance provisioning size / web client  (no cpd-cli scale config)
+#   These services are sized at provisioning time and/or scaled from the
+#   IBM Software Hub web client. No scale-config file applies; documented here
+#   for completeness so the apply script can skip/warn appropriately.
+# ==============================================================================
+{% if "cognos_analytics" in components_to_install %}
+---
+# ............................................................................
+# Cognos Analytics
+#   Sized when provisioning an instance; change via the web client.
+#   Supported sizes: fixed minimum (no scale), xsmall, small_mincpureq,
+#   small, medium, large
+# ............................................................................
+cognos_analytics:
+  method: provision-size-webclient
+  component: cognos_analytics
+  scale: small            # informational only
+{% endif %}{% if "data_gate" in components_to_install or "datagate" in components_to_install %}
+---
+# ............................................................................
+# Data Gate
+#   Sized per instance. Supported sizes:
+#   small_mincpureq (default), small (default), medium, large
+# ............................................................................
+data_gate:
+  method: provision-size-instance
+  component: data_gate
+  scale: small            # informational only
+{% endif %}{% if "dv" in components_to_install %}
+---
+# ............................................................................
+# Data Virtualization
+#   Cannot be scaled directly with the scale setting. Instead use the scale
+#   setting on the underlying bigsql / db2u-dv CR in the DV instance.
+#   See: Scaling Data Virtualization.
+# ............................................................................
+dv:
+  method: special-bigsql-cr
+  component: dv
+  scale: level_1          # applied to the underlying bigsql / db2u-dv CR
+{% endif %}{% if "bigsql" in components_to_install %}
+---
+# ............................................................................
+# Db2 Big SQL
+#   Scaled from the instance details page in the web client.
+#   See: Configuring a Db2 Big SQL instance.
+# ............................................................................
+bigsql:
+  method: webclient-instance
+  component: bigsql
+  scale: ""               # informational only (no cpd-cli scale config)
+{% endif %}
+
+# ==============================================================================
+# Method 7: IBM Sales / Support sizing  (cluster sizing, no self-service scale)
+#   Work with your IBM Sales representative to size your cluster.
+# ==============================================================================
+{% if "db2oltp" in components_to_install %}
+---
+# ............................................................................
+# Db2  -> work with IBM Sales to size your cluster. See: Scaling up Db2.
+# ............................................................................
+db2oltp:
+  method: ibm-sales-sizing
+  component: db2oltp
+  scale: ""               # informational only
+{% endif %}{% if "db2wh" in components_to_install %}
+---
+# ............................................................................
+# Db2 Warehouse -> work with IBM Sales to size your cluster.
+#   See: Scaling Db2 Warehouse.
+# ............................................................................
+db2wh:
+  method: ibm-sales-sizing
+  component: db2wh
+  scale: ""               # informational only
+{% endif %}{% if "cpd_platform" in components_to_install and scale_concurrent_zen_users.value == true %}
+# ==============================================================================
+# Concurrent users: nginx worker connections  (zen control-plane gateway)
+#   Increase the number of simultaneous connections for the nginx worker
+#   processes when you have a large number of concurrent users, or when the
+#   ibm-nginx pod logs show "worker_connections are not enough":
+#     oc logs -n ${PROJECT_CPD_INST_OPERANDS} -l=component=ibm-nginx \
+#       | grep "worker_connections are not enough"
+#
+#   The zen scale level sets a DEFAULT number of nginx worker connections:
+#     level_1 (small_mincpureq) -> 1024   level_2 (small)  -> 2048
+#     level_3 (medium)          -> 5120   level_4 (large)  -> 10240
+#     level_5 (large)           -> 10240
+#   Check the current zen scaling configuration with:
+#     cpd-cli manage get-scale-config \
+#       --cpd_instance_ns=${PROJECT_CPD_INST_OPERANDS} --components=zen
+#
+#   Override the default by patching the zenservice lite-cr custom resource:
+#     export WORKER_CONNECTIONS=<number-of-connections>
+#     oc patch zenservice lite-cr \
+#       --namespace=${PROJECT_CPD_INST_OPERANDS} \
+#       --type=merge \
+#       --patch="{\"spec\":{\"gatewayWorkerConnections\": \"${WORKER_CONNECTIONS}\"}}"
+#   Set worker_connections below to a number to apply the override, or leave
+#   empty ("") to keep the default tied to the zen scale level.
+# ==============================================================================
+---
+zen_nginx_worker_connections:
+  method: oc-patch-zenservice
+  component: zenservice
+  cr_name: lite-cr
+  worker_connections: 2048    # nginx gateway worker connections (level_2 default); empty "" = use zen scale-level default
+{% endif %}

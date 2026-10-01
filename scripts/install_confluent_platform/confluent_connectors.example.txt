@@ -1,0 +1,44 @@
+# ==============================================================================
+# Kafka Connect plugin manifest - the requirements.txt equivalent
+# ------------------------------------------------------------------------------
+# Install everything listed here in one run, with a SINGLE Connect restart:
+#
+#   ./x.3_confluent_add_connector.sh --file confluent_connectors.example.txt
+#
+# One source per line. Blank lines and everything after a '#' are ignored.
+# Per-line options: --name <dir>   install under a specific directory name
+#                   --force        overwrite it if it already exists
+#
+# Run-wide options stay on the command line, not in here:
+#   --keep-going   install what works, report the rest (default: stop, and do
+#                  NOT restart, so a partial set never goes live)
+#   --no-restart   stage only; plugins load on the next restart
+#   --dry-run      show what would happen, change nothing
+#
+# A source is any of:
+#   owner/name:version                        Confluent Hub coordinate
+#   https://www.confluent.io/hub/owner/name   Hub page URL (resolved via the API)
+#   https://.../connector.zip                 ZIP, downloaded in-cluster
+#   ./path/to/connector.zip                   local ZIP, streamed into the pod
+#   ./path/to/connector.jar                   local uber JAR
+#   ./path/to/plugin-dir/                     local directory of JARs
+#
+# NOTE ':latest' resolves at install time, so it can drift between runs. Pin an
+# explicit version when you need the set to be reproducible.
+#
+# NOTE the Hub coordinate form runs confluent-hub INSIDE the pod, so it needs
+# cluster egress to Confluent Hub. On an egress-restricted cluster, download the
+# ZIP on a connected host and list the local path instead.
+# ==============================================================================
+
+confluentinc/kafka-connect-s3-source:latest
+confluentinc/kafka-connect-datagen:latest
+
+# Give a plugin its own directory name:
+# confluentinc/kafka-connect-http:latest      --name http-sink
+
+# Replace one that is already installed:
+# confluentinc/kafka-connect-jdbc:10.7.6      --force
+
+# Air-gapped: a ZIP downloaded beforehand
+# ./downloads/confluentinc-kafka-connect-jdbc-10.7.6.zip

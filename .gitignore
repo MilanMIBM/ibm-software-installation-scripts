@@ -179,3 +179,10 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Claude
+.claude/
+
+# Repo specific
+service_instances/*
+/scripts/install_confluent_platform/confluent_platform_vars
