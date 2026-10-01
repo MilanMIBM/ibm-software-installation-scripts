@@ -25,10 +25,23 @@ INSTALL_OPERATORS_IN_PARALLEL="${INSTALL_OPERATORS_IN_PARALLEL:-true}"
 #             with the other lanes.
 #   cpd-cli - MCG and Knative Eventing both drive `cpd-cli manage` through the one
 #             shared olm-utils container and work dir, so they must not overlap.
+CPD_CLI_LANE="2.2.4_install_multicloud_object_gateway_operator.sh"
+
+# Knative Eventing is only needed by watsonx_orchestrate and watson_assistant, so
+# it is not installed by default. Exact match on the comma-separated list, so e.g.
+# "watson_assistant_foo" does not trigger it. Run 2.2.5 directly to force it.
+_components=",${CPD_COMPONENTS:-},"
+if [[ "${_components// /}" == *",watsonx_orchestrate,"* || "${_components// /}" == *",watson_assistant,"* ]]; then
+  CPD_CLI_LANE+=" 2.2.5_install_ibm_knative_eventing_operator.sh"
+else
+  echo "[INFO] watsonx_orchestrate / watson_assistant not in CPD_COMPONENTS; skipping 2.2.5_install_ibm_knative_eventing_operator.sh."
+fi
+unset _components
+
 LANES=(
   "gpu:2.2.1_install_nvidia_node_discovery.sh 2.2.2_install_nvidia_gpu_operator.sh"
   "rhoai:2.2.3_install_openshift_ai_operator.sh"
-  "cpd-cli:2.2.4_install_multicloud_object_gateway_operator.sh 2.2.5_install_ibm_knative_eventing_operator.sh"
+  "cpd-cli:${CPD_CLI_LANE}"
 )
 
 run_lane() {
