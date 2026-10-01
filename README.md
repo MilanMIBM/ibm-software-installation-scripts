@@ -16,7 +16,7 @@ The Cloud Pak for Data workflow has two stages:
 | `*_vars_generation*.py`               | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options.                                               |
 | `configs/`                            | Your generated configs live here, one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts |
 | `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/`                                                                                            |
-| `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README)                                                   |
+| `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README)                                                  |
 | `src/helpers/`                        | Jinja2 templates and marimo widgets backing the notebooks                                                                                                                                |
 | `src/utilities/`                      | Extras: cpd-cli maintenance, IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group helpers, Software Hub checks                                                   |
 | `env_bootstrap.sh`                    | Sourced by every script to find the repo root and load `configs/` (via `scripts/source_env_setup.sh`)                                                                                    |
@@ -29,7 +29,7 @@ The Cloud Pak for Data workflow has two stages:
 - OpenShift cluster + `oc` and `cpd-cli` (installers for both under [scripts/install_cloud_pak_for_data/0_initial_setup/](scripts/install_cloud_pak_for_data/0_initial_setup/), macOS only)
 - `podman` (macOS: scripts start the podman machine automatically when needed)
 - Python 3.14+ and [uv](https://docs.astral.sh/uv/)
-- An IBM entitlement key
+- An IBM entitlement key - *[You can get one here if you have entitlements or IBM Software Access Catalog](https://myibm.ibm.com/products-services/containerlibrary)*
 
 ```bash
 uv sync          # or: uv add -r requirements.txt
