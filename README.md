@@ -123,17 +123,22 @@ ls scripts/install_cloud_pak_for_data/x_clean_or_debug_cp4d/
 
 ## Confluent Platform
 
-Config lives in `configs/confluent_platform_config/confluent_vars.sh`. Then run in order:
+Config lives in `configs/confluent_platform_config/confluent_vars.sh`. Create it in one of two ways:
+
+- **Notebook** - `marimo run confluent_platform_vars_generation.py`: pick the cluster login, t-shirt size, storage classes, security options and components (optionally the Flink add-on), then **Save directly to ./configs/confluent_platform_config/**. An existing `confluent_vars.sh` is copied to `confluent_vars.sh.bak` first.
+- **Templating script** - `./scripts/install_confluent_platform/0_confluent_prepare_template_config.sh --size small` (plus `install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh` for Flink).
+
+The two are compatible: re-running the `0_*` scripts on a notebook-generated file only rewrites the managed sizing blocks.
+
+Then run the full install:
 
 ```bash
-./scripts/install_confluent_platform/0_confluent_prepare_template_config.sh --size small   # apply sizing preset
-./scripts/install_confluent_platform/1.0_confluent_prep.sh
-./scripts/install_confluent_platform/1.1_confluent_install.sh
-./scripts/install_confluent_platform/1.2_confluent_status.sh
-./scripts/install_confluent_platform/1.3_confluent_get_instance_details.sh
+./scripts/install_confluent_platform/full_installprocess-confluent_platform.sh
 ```
 
-Auth, connectors, external access and uninstall live under `utility_scripts_confluent_platform/`. For Flink, see [install_confluent_platform_flink_addon/README.md](scripts/install_confluent_platform/install_confluent_platform_flink_addon/README.md).
+It runs `1.0` prep → `1.1` install → `1.2` status → `1.3` instance details (it does not run step `0`). If `confluent_vars.sh` holds the Flink settings, the Flink add-on's full install follows automatically; set `DO_FLINK_ADDON=false` to skip it. Each step can be toggled the same way (`DO_CONFLUENT_PREP=false`, …), or run the numbered `1.x_*.sh` scripts one at a time instead.
+
+Auth, connectors, external access and uninstall live under `utility_scripts_confluent_platform/`. `x.0_confluent_uninstall.sh` also removes the Flink add-on first when its settings are present (`DO_FLINK_UNINSTALL=false` to keep it), carrying over the same data policy; `x.1_confluent_reinstall.sh` rebuilds the platform only and leaves Flink in place. For Flink, see [install_confluent_platform_flink_addon/README.md](scripts/install_confluent_platform/install_confluent_platform_flink_addon/README.md).
 
 When both configs exist, Confluent values override CP4D ones; set `ENV_TARGET=<name|path>` to load only a single config.
 

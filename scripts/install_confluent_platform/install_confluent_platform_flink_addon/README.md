@@ -38,20 +38,27 @@ cd scripts/install_confluent_platform/install_confluent_platform_flink_addon
 ./utility_scripts_confluent_flink/x.3_flink_sample_job.sh --sql                     # run a job end to end
 ```
 
+Step `0` can be replaced by the `confluent_platform_vars_generation.py` notebook
+(repo root) with the Flink add-on enabled. Steps `1.0`-`1.3` can be run in one go
+with `./full_installprocess-confluent_flink.sh` - and
+`../full_installprocess-confluent_platform.sh` already runs it after the platform
+whenever the Flink settings are present in `confluent_vars.sh`.
+
 ## Scripts
 
-| Script                               | Purpose                                                                                                                                                                                                        |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0_flink_prepare_template_config.sh` | Writes the Flink block into `configs/confluent_platform_config/confluent_vars.sh`. `--size xsmall\|small\|medium\|large`, plus per-value overrides. Re-runnable; the managed block is replaced, hand edits outside it are preserved. |
-| `1.0_flink_prep.sh`                  | cert-manager, project, service accounts + `anyuid` SCC, checkpoint storage, licence secret, Helm repo. `--skip-cert-manager`, `--dry-run`.                                                                     |
-| `1.1_flink_install.sh`               | Installs both charts, then creates the CMF environment and default compute pool. `--skip-operator`, `--skip-cmf`, `--skip-resources`, `--dry-run`.                                                             |
-| `1.2_flink_status.sh`                | Read-only report: workloads, Helm releases, PVCs, CMF resources, jobs. `--jobs`, `--no-cmf`.                                                                                                                   |
-| `1.3_flink_get_instance_details.sh`  | Writes live endpoints to `configs/confluent_platform_config/confluent_flink_instance_details.sh`.                                                                                                                                    |
-| `x.0_flink_uninstall.sh`             | Removes everything, in the order that avoids stuck finalizers. `--keep-data`, `--keep-project`, `--dry-run`.                                                                                                   |
-| `x.2_flink_add_auth_openshift.sh`    | Puts the `cmf` route behind the OpenShift login with an oauth-proxy sidecar, as Control Center is. Browser login or `Authorization: Bearer $(oc whoami -t)`. `--disable`, `--dry-run`.                         |
-| `x.3_flink_sample_job.sh`            | Runs a sample job. `--application` (JAR, no Kafka needed) or `--sql` (needs a catalog). `--delete`, `--logs`, `--dry-run`.                                                                                     |
-| `x.4_flink_connect_kafka.sh`         | **Attaches a Kafka cluster.** Auto-discovers the Confluent install, or `--bootstrap` an external one. `--test`, `--replace`, `--allow-network`, `--dry-run`.                                                   |
-| `flink_cmf_connect.sh`               | Sourced helper. Resolves `CMF_URL` via the route, or opens a port-forward and tears it down on exit.                                                                                                           |
+| Script                                   | Purpose                                                                                                                                                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0_flink_prepare_template_config.sh`     | Writes the Flink block into `configs/confluent_platform_config/confluent_vars.sh`. `--size xsmall\|small\|medium\|large`, plus per-value overrides. Re-runnable; the managed block is replaced, hand edits outside it are preserved. |
+| `1.0_flink_prep.sh`                      | cert-manager, project, service accounts + `anyuid` SCC, checkpoint storage, licence secret, Helm repo. `--skip-cert-manager`, `--dry-run`.                                                                                           |
+| `1.1_flink_install.sh`                   | Installs both charts, then creates the CMF environment and default compute pool. `--skip-operator`, `--skip-cmf`, `--skip-resources`, `--dry-run`.                                                                                   |
+| `1.2_flink_status.sh`                    | Read-only report: workloads, Helm releases, PVCs, CMF resources, jobs. `--jobs`, `--no-cmf`.                                                                                                                                         |
+| `1.3_flink_get_instance_details.sh`      | Writes live endpoints to `configs/confluent_platform_config/confluent_flink_instance_details.sh`.                                                                                                                                    |
+| `full_installprocess-confluent_flink.sh` | Runs `1.0` → `1.3` in order (not `0`). Prep/install failures stop the chain; a failing status only warns. Per-step toggles: `DO_FLINK_PREP`, `DO_FLINK_INSTALL`, `DO_FLINK_STATUS`, `DO_FLINK_INSTANCE_DETAILS`.                     |
+| `x.0_flink_uninstall.sh`                 | Removes everything, in the order that avoids stuck finalizers. `--keep-data`, `--keep-project`, `--dry-run`.                                                                                                                         |
+| `x.2_flink_add_auth_openshift.sh`        | Puts the `cmf` route behind the OpenShift login with an oauth-proxy sidecar, as Control Center is. Browser login or `Authorization: Bearer $(oc whoami -t)`. `--disable`, `--dry-run`.                                               |
+| `x.3_flink_sample_job.sh`                | Runs a sample job. `--application` (JAR, no Kafka needed) or `--sql` (needs a catalog). `--delete`, `--logs`, `--dry-run`.                                                                                                           |
+| `x.4_flink_connect_kafka.sh`             | **Attaches a Kafka cluster.** Auto-discovers the Confluent install, or `--bootstrap` an external one. `--test`, `--replace`, `--allow-network`, `--dry-run`.                                                                         |
+| `flink_cmf_connect.sh`                   | Sourced helper. Resolves `CMF_URL` via the route, or opens a port-forward and tears it down on exit.                                                                                                                                 |
 
 ## Attaching Kafka - the add-on path
 
@@ -136,14 +143,14 @@ missing. Clusters installed before this change need a redeploy:
 All variables live in `configs/confluent_platform_config/confluent_vars.sh` alongside the Kafka ones,
 so a single `ENV_TARGET=confluent` covers both. Notable settings:
 
-| Variable                  | Default                             | Notes                                                                                                                                                                  |
-| ------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PROJECT_CONFLUENT_FLINK` | `${PROJECT_CONFLUENT_SERVER}-flink` | Set to the Confluent project to co-locate them.                                                                                                                        |
-| `FLINK_STATE_BACKEND`     | `pvc`                               | `pvc` (RWX volume), `s3`, or `none`. Without durable state a job cannot recover from failure.                                                                          |
-| `FLINK_CREATE_ROUTES`     | `false`                             | **The CMF REST API ships with no authentication.** A route exposes full control of Flink to anyone who can reach it. Off by default; the scripts port-forward instead. |
-| `FLINK_SQL_IMAGE`         | `cp-flink-sql:1.19-cp11`            | Compute pools **must** use a `cp-flink-sql` image - CMF rejects anything else.                                                                                         |
-| `FLINK_APPLICATION_IMAGE` | `cp-flink:2.0.2-cp3`                | For JAR applications.                                                                                                                                                  |
-| `FLINK_LICENSE_KEY`       | inherits `CONFLUENT_LICENSE_KEY`    | CMF is commercial; empty means a 30-day trial.                                                                                                                         |
+| Variable                  | Default                             | Notes                                                                                                                                                                                                                         |
+| ------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PROJECT_CONFLUENT_FLINK` | `${PROJECT_CONFLUENT_SERVER}-flink` | Set to the Confluent project to co-locate them.                                                                                                                                                                               |
+| `FLINK_STATE_BACKEND`     | `pvc`                               | `pvc` (RWX volume), `s3`, or `none`. Without durable state a job cannot recover from failure.                                                                                                                                 |
+| `FLINK_CREATE_ROUTES`     | `true`                              | **The CMF REST API ships with no authentication.** A route exposes full control of Flink to anyone who can reach it - protect it with `x.2_flink_add_auth_openshift.sh`, or set `false` and the scripts port-forward instead. |
+| `FLINK_SQL_IMAGE`         | `cp-flink-sql:1.19-cp11`            | Compute pools **must** use a `cp-flink-sql` image - CMF rejects anything else.                                                                                                                                                |
+| `FLINK_APPLICATION_IMAGE` | `cp-flink:2.0.2-cp3`                | For JAR applications.                                                                                                                                                                                                         |
+| `FLINK_LICENSE_KEY`       | inherits `CONFLUENT_LICENSE_KEY`    | CMF is commercial; empty means a 30-day trial.                                                                                                                                                                                |
 
 Chart versions are pinned exactly (`FLINK_CMF_CHART_VERSION`,
 `FLINK_OPERATOR_CHART_VERSION`) rather than with a `~` range, so a re-run never
@@ -155,6 +162,11 @@ silently upgrades the control plane.
 ./utility_scripts_confluent_flink/x.0_flink_uninstall.sh              # removes Flink; Kafka untouched
 ./utility_scripts_confluent_flink/x.0_flink_uninstall.sh --keep-data  # keep CMF metadata and checkpoints
 ```
+
+The platform's `../utility_scripts_confluent_platform/x.0_confluent_uninstall.sh`
+also runs this first whenever the Flink settings are present (and passes
+`--keep-data` whenever it keeps the broker data); set `DO_FLINK_UNINSTALL=false`
+to remove the platform alone.
 
 Jobs are deleted before the operator - the operator has to be alive to clear
 FlinkDeployment finalizers, and removing it first leaves the namespace stuck in

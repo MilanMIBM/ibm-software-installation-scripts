@@ -92,7 +92,9 @@ echo ""
 echo "------------------------------------------------------------------------------"
 echo " Step 1/3: uninstall"
 echo "------------------------------------------------------------------------------"
-"${UNINSTALL}" "${PASSTHRU[@]}"
+# The reinstall only rebuilds the platform, so the Flink addon is kept unless
+# DO_FLINK_UNINSTALL=true is set explicitly.
+DO_FLINK_UNINSTALL="${DO_FLINK_UNINSTALL:-false}" "${UNINSTALL}" "${PASSTHRU[@]}"
 
 echo ""
 echo "------------------------------------------------------------------------------"

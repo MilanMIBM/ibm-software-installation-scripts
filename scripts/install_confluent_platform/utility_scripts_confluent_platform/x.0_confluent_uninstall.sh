@@ -38,12 +38,18 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # By default the project itself is deleted, which removes everything in one
 # step. --keep-project switches to itemised deletion of just the Confluent
 # resources, which is the right choice when the namespace holds anything else.
+#
+# Flink addon: when DO_FLINK_UNINSTALL is true (default) and confluent_vars.sh
+# holds the Flink settings, x.0_flink_uninstall.sh runs first with the same
+# flags and the same data policy (Flink PVCs kept whenever broker PVCs are).
+# Set DO_FLINK_UNINSTALL=false to leave the Flink project untouched.
 # ==============================================================================
 
 KEEP_DATA=true
 KEEP_PROJECT=false
 ASSUME_YES=true
 DRY_RUN=false
+DO_FLINK_UNINSTALL="${DO_FLINK_UNINSTALL:-true}"
 
 for _arg in "$@"; do
     case "${_arg}" in
@@ -52,13 +58,49 @@ for _arg in "$@"; do
         --yes|-y)       ASSUME_YES=true ;;
         --dry-run)      DRY_RUN=true ;;
         -h|--help)
-            sed -n '19,40p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '19,45p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "[ERROR] Unknown argument '${_arg}'. Try --help." >&2
             exit 1 ;;
     esac
 done
+
+# ------------------------------------------------------------------------------
+# Flink addon - autodetected from confluent_vars.sh, removed before the platform
+# so no Flink job is left reading from brokers that are going away. Runs before
+# the platform namespace check, so it still cleans up when that is already gone.
+# ------------------------------------------------------------------------------
+FLINK_UNINSTALL="${SCRIPT_DIR}/../install_confluent_platform_flink_addon/utility_scripts_confluent_flink/x.0_flink_uninstall.sh"
+
+if [[ -n "${PROJECT_CONFLUENT_FLINK:-}" && -n "${FLINK_CMF_CHART_VERSION:-}" ]]; then
+    _flink_detected=true
+else
+    _flink_detected=false
+fi
+
+if [[ "${DO_FLINK_UNINSTALL}" != "true" ]]; then
+    echo "[INFO] Skipping Flink addon uninstall (DO_FLINK_UNINSTALL=${DO_FLINK_UNINSTALL}, detected in config: ${_flink_detected})."
+elif [[ "${_flink_detected}" != "true" ]]; then
+    echo "[INFO] No Flink settings in confluent_vars.sh - skipping Flink addon uninstall."
+else
+    echo "[INFO] Flink settings detected - uninstalling the Flink addon first."
+    echo ""
+    # The Flink script deletes its PVCs by default; carry over this script's
+    # data policy so one uninstall never keeps broker data but drops Flink's.
+    _flink_args=("$@")
+    [[ "${KEEP_DATA}" == "true" ]] && _flink_args+=(--keep-data)
+    _flink_rc=0
+    "${FLINK_UNINSTALL}" "${_flink_args[@]}" || _flink_rc=$?
+    if (( _flink_rc != 0 )); then
+        echo "[ERROR] Flink addon uninstall exited ${_flink_rc}; the Confluent Platform was not touched." >&2
+        echo "[ERROR] Re-run with DO_FLINK_UNINSTALL=false to remove the platform alone." >&2
+        exit "${_flink_rc}"
+    fi
+    unset _flink_rc _flink_args
+    echo ""
+fi
+unset _flink_detected
 
 eval "${OC_LOGIN}"
 
