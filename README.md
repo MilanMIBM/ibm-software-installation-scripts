@@ -18,7 +18,7 @@ The Cloud Pak for Data workflow has two stages:
 | `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/`                                                                                            |
 | `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README)                                                  |
 | `src/helpers/`                        | Jinja2 templates and marimo widgets backing the notebooks                                                                                                                                |
-| `src/utilities/`                      | Extras: cpd-cli maintenance, IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group helpers, Software Hub checks                                                   |
+| `src/utilities/`                      | Extras: cpd-cli maintenance, IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group/htpasswd login helpers, Software Hub checks                                    |
 | `env_bootstrap.sh`                    | Sourced by every script to find the repo root and load `configs/` (via `scripts/source_env_setup.sh`)                                                                                    |
 | `service_instances/`                  | Output folder for payloads written by the `4.5_service_instance_setups/` provisioning scripts (gitignored)                                                                               |
 

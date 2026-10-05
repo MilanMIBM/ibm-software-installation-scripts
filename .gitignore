@@ -188,3 +188,5 @@ service_instances/*
 /scripts/install_confluent_platform/confluent_platform_vars
 configs/*
 /scripts/install_confluent_platform/install_confluent_platform_flink_addon/flink_vars
+# cpd-cli writes health check results and logs here, in the folder it is run from
+/cpd-cli-workspace
