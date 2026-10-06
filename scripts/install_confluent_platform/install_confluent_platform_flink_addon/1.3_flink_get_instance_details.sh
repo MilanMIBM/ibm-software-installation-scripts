@@ -104,8 +104,9 @@ export FLINK_OPERATOR_DEPLOYED_VERSION="${FLINK_OPERATOR_DEPLOYED_VERSION}"
 # --- CMF endpoint -------------------------------------------------------------
 # In-cluster: what workloads on the cluster should use.
 export FLINK_CMF_INTERNAL_URL="${FLINK_CMF_INTERNAL_URL}"
-# External route. Empty when FLINK_CREATE_ROUTES is false, which is the default:
-# the CMF REST API ships without authentication. With no route, reach it with
+# External route (FLINK_CREATE_ROUTES, true by default). The CMF REST API ships
+# without authentication - protect the route with x.2_flink_add_auth_openshift.sh.
+# Empty when FLINK_CREATE_ROUTES is false; with no route, reach it with
 #   oc port-forward svc/${FLINK_CMF_SERVICE} ${FLINK_CMF_LOCAL_PORT}:${FLINK_CMF_PORT} -n ${NS}
 # which is what the x.* scripts do automatically.
 export FLINK_CMF_EXTERNAL_URL="${FLINK_CMF_EXTERNAL_URL}"
