@@ -84,7 +84,8 @@ unset -f _source_if_exists
 # as before. The unconditional commands stay available as *_FORCE.
 # The wrapped strings are self-contained so they also work in child shells.
 export OLM_UTILS_CONTAINER="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
-_oc_url="${OCP_URL%/}"
+# OCP_URL is unset when there is no cpd_vars.sh; treat that as empty under 'set -u'.
+_oc_url="${OCP_URL:-}"; _oc_url="${_oc_url%/}"
 if [[ -n "${OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
     export OC_LOGIN_FORCE="${OC_LOGIN}"
     export OC_LOGIN="if oc whoami >/dev/null 2>&1 && [ \"\$(oc whoami --show-server 2>/dev/null)\" = \"${_oc_url}\" ]; then echo \"[INFO] oc already logged in to ${_oc_url} as \$(oc whoami) - skipping login\"; else ${OC_LOGIN_FORCE}; fi"

@@ -19,16 +19,29 @@ set -euo pipefail
 # New accounts start with no rights. Access comes from set_cluster_access_groups.sh
 # (or 'oc adm policy ...'), not from this script.
 #
-# Assumes 'oc' is already logged in as a cluster-admin (kubeadmin is fine; the
-# users never see it). Safe to re-run: existing users keep their password and
-# only new users get one. Passwords are printed once and saved to
-# CREDENTIALS_FILE; the cluster only stores bcrypt hashes, so they cannot be
-# read back from it. Use --reset to issue a new one.
+# Logs in like the other scripts, with OC_LOGIN from cpd_vars.sh (skipped when
+# oc is already logged in to OCP_URL). Passing --token or --username logs in
+# with those instead, against --server, else OCP_URL, else the current server.
+# With neither, the current oc session is used. Needs a cluster-admin
+# (kubeadmin is fine; the users never see it).
 #
+# Safe to re-run: existing users keep their password and only new users get
+# one. Passwords are printed once and saved to CREDENTIALS_FILE; the cluster
+# only stores bcrypt hashes, so they cannot be read back from it. Use --reset
+# to issue a new one.
+#
+#   set_htpasswd_users.sh --token sha256~... [--server https://api.<cluster>:6443]
+#   set_htpasswd_users.sh -u kubeadmin [-p <password>] [--server ...]
+#                                            log in with these instead of OC_LOGIN;
+#                                            without -p, oc asks for the password
 #   set_htpasswd_users.sh                    add missing users, keep the rest
 #   set_htpasswd_users.sh --reset a@b.com    new password for that user (repeatable)
 #   set_htpasswd_users.sh --reset-all        new password for everyone listed
 #   set_htpasswd_users.sh --prune            also remove accounts no longer listed
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
+_b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; source "${_b}/env_bootstrap.sh"; unset _b
 
 # --- Edit these ---------------------------------------------------------------
 # Text on the login button. Changing it after users have logged in orphans their
@@ -42,21 +55,27 @@ HTPASSWD_USERS=(
 )
 # ------------------------------------------------------------------------------
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-_b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; unset _b
 # configs/ is gitignored, so the plain-text passwords never get committed.
 CREDENTIALS_FILE="${REPO_ROOT}/configs/openshift_config/htpasswd_credentials.txt"
 
 PRUNE=false
 RESET_ALL=false
 RESET_USERS=()
+LOGIN_SERVER=""
+LOGIN_TOKEN=""
+LOGIN_USERNAME=""
+LOGIN_PASSWORD=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --reset)     RESET_USERS+=("${2:?--reset needs a username}"); shift 2 ;;
-        --reset-all) RESET_ALL=true; shift ;;
-        --prune)     PRUNE=true; shift ;;
-        -h|--help)   sed -n '7,30p' "$0"; exit 0 ;;
-        *)           echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
+        --reset)       RESET_USERS+=("${2:?--reset needs a username}"); shift 2 ;;
+        --reset-all)   RESET_ALL=true; shift ;;
+        --prune)       PRUNE=true; shift ;;
+        --server)      LOGIN_SERVER="${2:?--server needs the API URL}"; shift 2 ;;
+        --token)       LOGIN_TOKEN="${2:?--token needs a token}"; shift 2 ;;
+        -u|--username) LOGIN_USERNAME="${2:?--username needs a username}"; shift 2 ;;
+        -p|--password) LOGIN_PASSWORD="${2:?--password needs a password}"; shift 2 ;;
+        -h|--help)     sed -n '9,40p' "$0"; exit 0 ;;
+        *)             echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
     esac
 done
 
@@ -67,6 +86,37 @@ for _tool in oc htpasswd openssl jq; do
     fi
 done
 unset _tool
+
+# --- Log in ---------------------------------------------------------------------
+# Credentials on the command line win. Otherwise OC_LOGIN from cpd_vars.sh, which
+# skips the login when oc is already logged in to OCP_URL. Without either, the
+# current oc session is used as is.
+if [[ -n "${LOGIN_TOKEN}" && -n "${LOGIN_USERNAME}" ]]; then
+    echo "[ERROR] Pass either --token or --username, not both." >&2
+    exit 1
+elif [[ -z "${LOGIN_TOKEN}${LOGIN_USERNAME}" && -n "${LOGIN_SERVER}${LOGIN_PASSWORD}" ]]; then
+    echo "[ERROR] --server and --password need --token or --username." >&2
+    exit 1
+fi
+if [[ -n "${LOGIN_TOKEN}${LOGIN_USERNAME}" ]]; then
+    _login=(oc login)
+    _server="${LOGIN_SERVER:-${OCP_URL:-}}"
+    [[ -n "${_server}" ]] && _login+=(--server="${_server}")
+    if [[ -n "${LOGIN_TOKEN}" ]]; then
+        _login+=(--token="${LOGIN_TOKEN}")
+    else
+        _login+=(--username="${LOGIN_USERNAME}")
+        # Without --password, oc asks for it.
+        [[ -n "${LOGIN_PASSWORD}" ]] && _login+=(--password="${LOGIN_PASSWORD}")
+    fi
+    "${_login[@]}"
+    unset _login _server
+elif [[ -n "${OC_LOGIN:-}" ]]; then
+    eval "${OC_LOGIN}"
+elif ! oc whoami &>/dev/null; then
+    echo "[ERROR] Not logged in. Set OC_LOGIN in cpd_vars.sh, or pass --token or --username." >&2
+    exit 1
+fi
 
 echo "[INFO] Target cluster: $(oc whoami --show-server)"
 echo "[INFO] Logged in as:   $(oc whoami)"
