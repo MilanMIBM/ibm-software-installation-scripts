@@ -203,8 +203,17 @@ print(walk(e))
 PROVIDER="${PROVIDER:-$(env_field provider)}"
 IMAGE_TAG="${IMAGE_TAG:-$(env_field version)}"
 IMAGE_TAG="${IMAGE_TAG:-JDK17_7.7.0}"
-CPUS="${CPUS:-$(env_field cpus)}"
-CPUS="${CPUS:-4.0}"
+if [[ -z "${CPUS}" ]]; then
+  CPUS="$(env_field cpus)"
+  CPUS="${CPUS:-4.0}"
+  # With 2 CPUs the engines stop answering the control plane within minutes of
+  # flow-editor use; the same image with 4 CPUs (IBM's default) does not. Only an
+  # explicit --cpus goes below 4.
+  if (( CPUS < 4 )); then
+    echo "[WARN] Environment allocates ${CPUS} CPUs per engine; using 4.0 instead (pass --cpus to override)."
+    CPUS=4.0
+  fi
+fi
 
 if [[ -z "${PROVIDER}" ]]; then
   if command -v docker &>/dev/null; then PROVIDER=docker
@@ -353,6 +362,26 @@ oc create secret generic "${ENGINE_NAME}-apikey" -n "${NAMESPACE}" \
 # then sees them as already installed.
 SDC_HOME="/opt/streamsets-datacollector-${IMAGE_TAG##*_}"
 
+# Engines can stop answering the control plane while staying "online": after a
+# few flow-editor requests are tunnelled to an engine at once, every sync-up to
+# the engine gateway times out (logged every 15s with a consecutive-error count)
+# and only a restart recovers it. The liveness probe restarts the container once
+# that has gone on for 12 errors (~3 min), or once the engine passes 2500
+# threads: every tunnelled request also leaks an HttpClient with its own thread
+# pool, and around 3500 threads the 1 GB heap is full. /data (holds sdc.id) and /logs are
+# emptyDirs, so the engine comes back under the same engine ID and keeps its log
+# from before the restart.
+SYNCUP_PROBE='t=$(sed -n "s/^Threads:[[:space:]]*//p" /proc/1/status)
+if [ "${t:-0}" -gt 2500 ]; then echo "engine has $t threads (leaked HTTP clients)"; exit 1; fi
+l=$(grep "Error sending sync-up request (consecutive errors:" /logs/sdc.log 2>/dev/null | tail -n 1)
+[ -n "$l" ] || exit 0
+n=$(echo "$l" | sed -E "s/.*consecutive errors: ([0-9]+).*/\1/")
+age=$(( $(date +%s) - $(date -d "$(echo "$l" | cut -c1-19)" +%s) ))
+if [ "$age" -le 60 ] && [ "$n" -ge 12 ]; then echo "gateway sync-up failing: $n consecutive errors"; exit 1; fi'
+# Indented to sit inside the YAML block scalar below.
+NL=$'\n'
+SYNCUP_PROBE_YAML="${SYNCUP_PROBE//${NL}/${NL}                  }"
+
 # Keep a replica count that was scaled up after the first run.
 REPLICAS="$(oc get deployment "${ENGINE_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
 REPLICAS="${REPLICAS:-1}"
@@ -390,6 +419,10 @@ spec:
             pullPolicy: IfNotPresent
         - name: stage-libs
           emptyDir: {}
+        - name: sdc-data
+          emptyDir: {}
+        - name: sdc-logs
+          emptyDir: {}
       initContainers:
         # Seed streamsets-libs with the image's built-in libs, then link in the rest.
         - name: link-stage-libs
@@ -404,12 +437,18 @@ spec:
                 [ -e "/target/\$(basename "\$lib")" ] || ln -s "\$lib" /target/
               done
               echo "streamsets-libs now has \$(ls /target | wc -l) stage libraries"
+              cp -R /data/. /seed-data/
+              cp -R /logs/. /seed-logs/
           volumeMounts:
             - name: stagelibs-image
               mountPath: /stagelibs
               readOnly: true
             - name: stage-libs
               mountPath: /target
+            - name: sdc-data
+              mountPath: /seed-data
+            - name: sdc-logs
+              mountPath: /seed-logs
       containers:
         - name: datacollector
           image: ${IMAGE}
@@ -442,6 +481,21 @@ spec:
               readOnly: true
             - name: stage-libs
               mountPath: ${SDC_HOME}/streamsets-libs
+            - name: sdc-data
+              mountPath: /data
+            - name: sdc-logs
+              mountPath: /logs
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  ${SYNCUP_PROBE_YAML}
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 2
           resources:
             limits:
               cpu: "${CPUS}"
