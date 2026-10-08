@@ -40,6 +40,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   --local                 run the container locally instead of on OpenShift
 #   --image-tag <tag>       engine image tag (default: from environment, else JDK17_7.7.0)
 #   --cpus <n>              CPUs for the engine (default: from environment, else 4.0)
+#   --replicas <n>          number of engines (default: keep the current count, 1 for a new one)
 #   --project-id <id>       StreamSets project id      } both set = skip the
 #   --environment-id <id>   StreamSets environment id  } lookup by name
 #   --cpd-url <url>         CPD URL to auth against (default: CPD_URL)
@@ -51,8 +52,11 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #
 # Every option can also be passed as an env var (flags win):
 #   SSET_PROJECT_ID, SSET_ENVIRONMENT_ID, SSET_PROJECT, SSET_PROVIDER,
-#   SSET_LOCAL=1, SSET_IMAGE_TAG, SSET_CPUS, SSET_BASE_URL, SSET_API_USER,
-#   SSET_API_KEY, SSET_CLUSTER_URL, SSET_CLUSTER_APIKEY
+#   SSET_LOCAL=1, SSET_IMAGE_TAG, SSET_CPUS, SSET_REPLICAS, SSET_BASE_URL,
+#   SSET_API_USER, SSET_API_KEY, SSET_CLUSTER_URL, SSET_CLUSTER_APIKEY
+#
+# Re-running restarts the engines only when something they use changed, such as
+# the API user or a rotated API key.
 # =============================================================================
 
 NAMESPACE="cpd-streamsets-engine"
@@ -65,6 +69,7 @@ PROVIDER="${SSET_PROVIDER:-}"
 LOCAL="${SSET_LOCAL:-0}"
 IMAGE_TAG="${SSET_IMAGE_TAG:-}"
 CPUS="${SSET_CPUS:-}"
+REPLICAS="${SSET_REPLICAS:-}"
 API_URL="${SSET_BASE_URL:-}"
 API_USER="${SSET_API_USER:-}"
 API_KEY="${SSET_API_KEY:-}"
@@ -78,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --local)      LOCAL=1; shift ;;
     --image-tag)  IMAGE_TAG="$2"; shift 2 ;;
     --cpus)       CPUS="$2"; shift 2 ;;
+    --replicas)   REPLICAS="$2"; shift 2 ;;
     --project-id)     SSET_PROJECT_ID="$2"; shift 2 ;;
     --environment-id) SSET_ENVIRONMENT_ID="$2"; shift 2 ;;
     --cpd-url)    API_URL="$2"; shift 2 ;;
@@ -150,7 +156,8 @@ except Exception:
     sys.exit(0)
 items = data if isinstance(data, list) else next((v for v in data.values() if isinstance(v, list)), [])
 for e in items:
-    if e.get("name") == sys.argv[1]:
+    # The list keeps the name under metadata, like any other asset.
+    if sys.argv[1] in (e.get("name"), e.get("metadata", {}).get("name")):
         print(json.dumps(e)); break
 ' "${ENV_NAME}")"
     if [[ -n "${match}" ]]; then
@@ -382,9 +389,15 @@ if [ "$age" -le 60 ] && [ "$n" -ge 12 ]; then echo "gateway sync-up failing: $n 
 NL=$'\n'
 SYNCUP_PROBE_YAML="${SYNCUP_PROBE//${NL}/${NL}                  }"
 
-# Keep a replica count that was scaled up after the first run.
-REPLICAS="$(oc get deployment "${ENGINE_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
-REPLICAS="${REPLICAS:-1}"
+# Keep a replica count that was scaled up after the first run, unless one was passed.
+if [[ -z "${REPLICAS}" ]]; then
+  REPLICAS="$(oc get deployment "${ENGINE_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+  REPLICAS="${REPLICAS:-1}"
+fi
+
+# The engines read the API key from the secret only when they start. A hash of it
+# on the pod template makes a re-run after a key rotation restart them with the new one.
+API_KEY_SHA="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:16])' "${SSET_API_KEY}")"
 
 oc apply -f - <<EOF
 apiVersion: apps/v1
@@ -404,6 +417,8 @@ spec:
     metadata:
       labels:
         app: ${ENGINE_NAME}
+      annotations:
+        streamsets/api-key-sha256: "${API_KEY_SHA}"
     spec:
       imagePullSecrets:${PULL_SECRETS_YAML}
       volumes:
