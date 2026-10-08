@@ -344,6 +344,19 @@ oc create secret generic "${ENGINE_NAME}-apikey" -n "${NAMESPACE}" \
   --from-literal=SSET_API_KEY="${SSET_API_KEY}" \
   --dry-run=client -o yaml | oc apply -f -
 
+# Jumpstart only looks for the stage libraries as OCI referrers of the engine
+# image, which cp.icr.io does not serve (404), so it silently installs nothing
+# and the engine starts with just basic/dataformats/dev (CONTAINER_0901 on any
+# other stage). The libraries ship as a plain image (${LIBS_IMAGE}) laid out as
+# streamsets-datacollector-<ver>/streamsets-libs/<lib>, so mount it as an image
+# volume and symlink every library into the engine's streamsets-libs dir; jumpstart
+# then sees them as already installed.
+SDC_HOME="/opt/streamsets-datacollector-${IMAGE_TAG##*_}"
+
+# Keep a replica count that was scaled up after the first run.
+REPLICAS="$(oc get deployment "${ENGINE_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+REPLICAS="${REPLICAS:-1}"
+
 oc apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -354,7 +367,7 @@ metadata:
     app: ${ENGINE_NAME}
     streamsets/environment-id: "${SSET_ENVIRONMENT_ID}"
 spec:
-  replicas: 1
+  replicas: ${REPLICAS}
   selector:
     matchLabels:
       app: ${ENGINE_NAME}
@@ -371,6 +384,32 @@ spec:
             items:
               - key: .dockerconfigjson
                 path: config.json
+        - name: stagelibs-image
+          image:
+            reference: ${LIBS_IMAGE}
+            pullPolicy: IfNotPresent
+        - name: stage-libs
+          emptyDir: {}
+      initContainers:
+        # Seed streamsets-libs with the image's built-in libs, then link in the rest.
+        - name: link-stage-libs
+          image: ${IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              cp -R ${SDC_HOME}/streamsets-libs/* /target/
+              for lib in /stagelibs/streamsets-datacollector-*/streamsets-libs/*; do
+                [ -e "/target/\$(basename "\$lib")" ] || ln -s "\$lib" /target/
+              done
+              echo "streamsets-libs now has \$(ls /target | wc -l) stage libraries"
+          volumeMounts:
+            - name: stagelibs-image
+              mountPath: /stagelibs
+              readOnly: true
+            - name: stage-libs
+              mountPath: /target
       containers:
         - name: datacollector
           image: ${IMAGE}
@@ -398,6 +437,11 @@ spec:
             - name: docker-config
               mountPath: /home/default/.docker
               readOnly: true
+            - name: stagelibs-image
+              mountPath: /stagelibs
+              readOnly: true
+            - name: stage-libs
+              mountPath: ${SDC_HOME}/streamsets-libs
           resources:
             limits:
               cpu: "${CPUS}"
