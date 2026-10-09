@@ -37,6 +37,15 @@ set -euo pipefail
 # so a failure shows what the API said. -q/--quiet prints only the outcome per
 # user; -v/--verbose turns the responses back on (the default).
 #
+# With STORE_APIKEYS_IN_VAULT=true (the default; --no-vault turns it off) the new
+# keys are also stored in the Software Hub internal vault by
+# softwarehub_utils/store_cpd_apikeys_in_vault.sh: by default as a 'key' secret
+# '<username>-apikey' owned by the user, with the admin as a member.
+# VAULT_SECRET_FORMATS (key, credentials, generic) and VAULT_SECRET_OWNER (user,
+# admin) change that; see that script. If it is not there, this step is skipped
+# with a warning; if it fails, the keys are still in CREDENTIALS_FILE and the
+# warning shows how to store them later.
+#
 # Software Hub URL, first found of: --cpd-url, the URL recorded in
 # CREDENTIALS_FILE by an earlier run, the 'cpd' route of the Software Hub on the
 # cluster oc is logged in to, CPD_URL from cpd_instance_details.sh.
@@ -45,6 +54,7 @@ set -euo pipefail
 #   generate_service_id_cpd_apikeys.sh svc-a svc-b         only these users
 #   generate_service_id_cpd_apikeys.sh --cpd-url https://cpd-<ns>.apps.<cluster>
 #   generate_service_id_cpd_apikeys.sh -q                  no API responses, outcomes only
+#   generate_service_id_cpd_apikeys.sh --no-vault          don't store the keys in the vault
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
@@ -60,6 +70,9 @@ URL_COMMENT="# Software Hub API keys below are for"
 # Sign-in attempts per user, SIGNIN_RETRY_DELAY seconds apart.
 SIGNIN_ATTEMPTS=2
 SIGNIN_RETRY_DELAY=5
+# Also store the new keys in the Software Hub internal vault, with this script.
+STORE_APIKEYS_IN_VAULT="${STORE_APIKEYS_IN_VAULT:-true}"
+VAULT_SCRIPT="${REPO_ROOT}/src/utilities/softwarehub_utils/store_cpd_apikeys_in_vault.sh"
 
 SH_URL=""
 VERBOSE=true
@@ -69,7 +82,8 @@ while [[ $# -gt 0 ]]; do
         --cpd-url)    SH_URL="${2:?--cpd-url needs the Software Hub URL}"; shift 2 ;;
         -v|--verbose) VERBOSE=true; shift ;;
         -q|--quiet)   VERBOSE=false; shift ;;
-        -h|--help)    sed -n '9,48p' "$0"; exit 0 ;;
+        --no-vault)   STORE_APIKEYS_IN_VAULT=false; shift ;;
+        -h|--help)    sed -n '9,57p' "$0"; exit 0 ;;
         -*)           echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
         *)            CLI_USERS+=("$1"); shift ;;
     esac
@@ -274,6 +288,25 @@ if (( ${#NEW_KEYS} > 0 )); then
     done
     echo "[INFO] Use as: curl -k \"${SH_URL}/usermgmt/v1/user/currentUserInfo\" -H \"Authorization: ZenApiKey <token>\""
     unset _u
+fi
+
+# --- Store the keys in the vault -------------------------------------------------------
+if (( ${#NEW_KEYS} > 0 )) && [[ "${STORE_APIKEYS_IN_VAULT:l}" == true ]]; then
+    if [[ ! -f "${VAULT_SCRIPT}" ]]; then
+        echo "[WARN] STORE_APIKEYS_IN_VAULT is on but ${VAULT_SCRIPT} is not there; the keys are not stored in the vault." >&2
+    else
+        _vault_args=(--cpd-url "${SH_URL}")
+        [[ "${VERBOSE}" == true ]] || _vault_args+=(-q)
+        echo "[INFO] ---"
+        echo "[INFO] Storing the new API keys in the Software Hub vault..."
+        # 'user:key:password' lines go in on stdin, so they stay out of the process list.
+        if ! for _u in "${(k)NEW_KEYS[@]}"; do print -r -- "${_u}:${NEW_KEYS[${_u}]}:${PASSWORDS[${_u}]}"; done \
+                | zsh "${VAULT_SCRIPT}" "${_vault_args[@]}"; then
+            echo "[WARN] Not every key could be stored in the vault (see above). They are in ${CREDENTIALS_FILE};" >&2
+            echo "       store them later with: ${VAULT_SCRIPT} --from-credentials-file --cpd-url ${SH_URL} ${(k)NEW_KEYS[*]}" >&2
+        fi
+        unset _u _vault_args
+    fi
 fi
 
 if (( ${#FAILED} > 0 )); then

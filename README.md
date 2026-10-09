@@ -11,22 +11,27 @@ The Cloud Pak for Data workflow has two stages:
 
 ## Repository overview
 
-| Path                                  | What's in it                                                                                                                                                                             |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `*_vars_generation*.py`               | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options.                                               |
-| `configs/`                            | Your generated configs live here, one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts |
-| `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/`                                                                                            |
-| `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README)                                                  |
-| `src/helpers/`                        | Jinja2 templates and marimo widgets backing the notebooks                                                                                                                                |
-| `src/utilities/`                      | Extras: cpd-cli maintenance, IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group/htpasswd login helpers, Software Hub checks                                    |
-| `env_bootstrap.sh`                    | Sourced by every script to find the repo root and load `configs/` (via `scripts/source_env_setup.sh`)                                                                                    |
-| `service_instances/`                  | Output folder for payloads written by the `4.5_service_instance_setups/` provisioning scripts (gitignored)                                                                               |
+| Path | What's in it |
+| --- | --- |
+| `*_vars_generation*.py` | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options. |
+| `configs/` | Your generated configs live here (gitignored), one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts. `openshift_config/` holds the credential files written by the user/service ID utilities. |
+| `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), service instance provisioning (`4.5_service_instance_setups/`), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/` |
+| `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README) |
+| `scripts/*.sh` | Shared script plumbing: `source_env_setup.sh` (config loading), `0.0_make_executable.sh`, and `operator_install_helpers.sh` (idempotency checks so OLM operator installs are safe to re-run) |
+| `src/helpers/` | Jinja2 templates and marimo widgets backing the notebooks, plus Python/zsh helpers: IBM Cloud IAM auth, watsonx.data database registration, IBM License Service, IBM Cloud Secrets Manager, the Software Hub internal vault, and the Software Hub → `cpd-cli` release resolver |
+| `src/cr_yaml_examples/` | Jinja2 custom resource templates rendered by `src/utilities/cpd-cli_utils/create_cr_instance.sh` |
+| `src/utilities/` | Extras: `cpd-cli` maintenance (upgrade, OLM image, workspace cleanup, premium features, CR create/delete), IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group/htpasswd/service ID helpers, Software Hub checks and API key vault storage |
+| `env_bootstrap.sh` | Sourced by every script to find the repo root and load `configs/` (via `scripts/source_env_setup.sh`) |
+| `s_env.sh` | `source s_env.sh` in your shell to load the configs and log in to the cluster with `oc` |
+| `service_instances/` | Output folder for payloads written by the `4.5_service_instance_setups/` provisioning scripts (gitignored) |
+| `cpd-cli-workspace/` | Health check results and logs that `cpd-cli` writes when run from the repo root (gitignored) |
 
 ---
 
 ## Prerequisites
 
 - OpenShift cluster + `oc` and `cpd-cli` (installers for both under [scripts/install_cloud_pak_for_data/0_initial_setup/](scripts/install_cloud_pak_for_data/0_initial_setup/), macOS only)
+- `zsh` - the scripts are zsh scripts; run them directly (`./script.sh`), not with `sh script.sh`
 - `podman` (macOS: scripts start the podman machine automatically when needed)
 - Python 3.14+ and [uv](https://docs.astral.sh/uv/)
 - An IBM entitlement key - *[You can get one here if you have entitlements or IBM Software Access Catalog](https://myibm.ibm.com/products-services/containerlibrary)*
@@ -99,7 +104,11 @@ Run these in order - each one is standalone and loads the config itself:
 ./scripts/install_cloud_pak_for_data/4_install_components/4.0_full_step_4_installprocess-cpd.sh
 ```
 
-Steps 0.1-0.2 and 1.0 are only needed once per workstation/cluster. Steps 3 and 4 are themselves wrappers - the individual sub-steps (`3.2`, `3.3`, `4.1`, `4.2`, …) sit next to them and can be run on their own when you need to redo just one part.
+Steps 0.1-0.2 and 1.0 are only needed once per workstation/cluster.
+
+`2.2_install_prerequisite_operators.sh` installs NVIDIA Node Feature Discovery + GPU operator, Red Hat OpenShift AI (+ Service Mesh) and Multicloud Object Gateway in parallel lanes (`INSTALL_OPERATORS_IN_PARALLEL=false` to run them one by one), and adds IBM Knative Eventing only when `watsonx_orchestrate` or `watson_assistant` is selected. Each `2.2.x` script can also be run alone.
+
+Steps 3 and 4 are themselves wrappers - the individual sub-steps (`3.2` admin setup, `3.3` Software Hub install, `3.4` entitlements, `3.5` CCS CR, `4.1` components, `4.2` cpd-cli profile, …) sit next to them and can be run on their own when you need to redo just one part. Step 4 also has watsonx Orchestrate pre-verification and watsonx.data OpenSearch install scripts, and `4.x*` scripts for CR upgrades and image pull fixes.
 
 Scripts run `./scripts/0.0_make_executable.sh` on their own if any `.sh` isn't executable or the podman machine isn't running; you can also run it manually.
 
@@ -115,9 +124,31 @@ Scripts run `./scripts/0.0_make_executable.sh` on their own if any `.sh` isn't e
 ls scripts/install_cloud_pak_for_data/x_clean_or_debug_cp4d/
 ```
 
-`scripts/install_cloud_pak_for_data/5_component_specific_scripts/` and `4.5_service_instance_setups/` hold per-service follow-ups (Db2, EDB Postgres, Informix, OpenSearch, DataStax HCD, watsonx Orchestrate, service routes, SCC prep) for after the base install is up.
+After the base install is up:
+
+- `scripts/install_cloud_pak_for_data/4.5_service_instance_setups/` provisions service instances: Db2, EDB Postgres, Databand Postgres, Informix, DataStax HCD, OpenPages and Planning Analytics.
+- `scripts/install_cloud_pak_for_data/5_component_specific_scripts/` holds per-service follow-ups:
+  - `cp4d_databases/`, `cp4d_informix/` - Db2 SCC prep, EDB Postgres and Informix prep
+  - `cp4d_general/` - Software Hub admins on a project, CPD projects, service routes, watsonx.data premium UI features
+  - `cp4d_streamsets/` - StreamSets project, environment and engine setup end to end
+  - `wxd_opensearch/`, `wxd_datastax_hcd/` - watsonx.data OpenSearch and DataStax HCD prep and fixes
+  - `wxo_adk_and_custom_model_import/` - watsonx Orchestrate ADK image support, environments and custom model import
+  - `wxai_model_gateway_model_import/` - register providers/models with the watsonx.ai model gateway (model definitions under `models/`)
 
 `src/utilities/ibmcloud_secrets_manager_variable_management/` can upload your generated configs to IBM Cloud Secrets Manager and rebuild them from there later (run either script with `--help`).
+
+`src/utilities/cpd-cli_utils/` covers `cpd-cli` upkeep: upgrading to a Software Hub version, refreshing/toggling the OLM utils image, cleaning the workspace, enabling premium features, and creating/deleting CR instances from `src/cr_yaml_examples/`.
+
+### Users, service IDs and API keys
+
+Scripts in `src/utilities/redhat_openshift_utils/` and `src/utilities/softwarehub_utils/`, run in this order:
+
+1. `set_htpasswd_users.sh` - htpasswd login users for people (credentials in `configs/openshift_config/htpasswd_credentials.txt`); `set_cluster_access_groups.sh` creates read-only/edit OpenShift groups, and `grant_softwarehub_admin_to_ocp_admins.sh` gives cluster admins Software Hub admin rights.
+2. `set_service_id_user_proxies.sh` - non-human service ID accounts on a hidden identity provider, added to Software Hub (credentials in `configs/openshift_config/service_id_credentials.txt`).
+3. `generate_service_id_cpd_apikeys.sh` - a fresh Software Hub API key per service ID (this revokes any previous key).
+4. `store_cpd_apikeys_in_vault.sh` - stores those API keys (and optionally username/password) as secrets in the Software Hub internal vault; safe to re-run.
+
+Pull secrets: `set_default_pull_secret.sh` and `set_namespace_pull_secret.sh`. Software Hub checks: `get_instance_addon_list.sh` and `wxo-prereq-check.sh`.
 
 ---
 
@@ -138,7 +169,7 @@ Then run the full install:
 
 It runs `1.0` prep → `1.1` install → `1.2` status → `1.3` instance details (it does not run step `0`). If `confluent_vars.sh` holds the Flink settings, the Flink add-on's full install follows automatically; set `DO_FLINK_ADDON=false` to skip it. Each step can be toggled the same way (`DO_CONFLUENT_PREP=false`, …), or run the numbered `1.x_*.sh` scripts one at a time instead.
 
-Auth, connectors, external access and uninstall live under `utility_scripts_confluent_platform/`. `x.0_confluent_uninstall.sh` also removes the Flink add-on first when its settings are present (`DO_FLINK_UNINSTALL=false` to keep it), carrying over the same data policy; `x.1_confluent_reinstall.sh` rebuilds the platform only and leaves Flink in place. For Flink, see [install_confluent_platform_flink_addon/README.md](scripts/install_confluent_platform/install_confluent_platform_flink_addon/README.md).
+Auth, connectors, external access and uninstall live under `utility_scripts_confluent_platform/`. `x.0_confluent_uninstall.sh` also removes the Flink add-on first when its settings are present (`DO_FLINK_UNINSTALL=false` to keep it), carrying over the same data policy; `x.1_confluent_reinstall.sh` rebuilds the platform only and leaves Flink in place. `source scripts/install_confluent_platform/confluent_cli_login.sh` installs the `confluent` CLI if needed and logs it in to the deployed cluster. For Flink (install steps, auth, sample job, Kafka connection), see [install_confluent_platform_flink_addon/README.md](scripts/install_confluent_platform/install_confluent_platform_flink_addon/README.md).
 
 When both configs exist, Confluent values override CP4D ones; set `ENV_TARGET=<name|path>` to load only a single config.
 
