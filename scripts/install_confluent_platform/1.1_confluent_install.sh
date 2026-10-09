@@ -220,8 +220,11 @@ if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
 
     # Listener-scoped SASL/TLS settings are written into kafka.properties at
     # startup by broker_listener_security.sh, shipped as this ConfigMap. The
-    # EXTERNAL entry is only listed when that listener exists.
-    _sasl_listeners="plaintext:${_mech} plaintext_host:${_mech}"
+    # in-cluster listeners accept every mechanism in
+    # CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS, with the platform's own _mech
+    # first. The EXTERNAL entry is only listed when that listener exists.
+    _internal_mechs="$(kafka_internal_mechanisms)"
+    _sasl_listeners="plaintext:${_internal_mechs} plaintext_host:${_internal_mechs}"
     [[ "${CONFLUENT_EXTERNAL_KAFKA_ENABLED}" == "true" ]] && \
         _sasl_listeners+=" external:${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}"
     _tls_listeners=""
@@ -246,7 +249,7 @@ if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
     # lets EXTERNAL accept PLAIN while the in-cluster listeners stay SCRAM.
     _broker_sasl_env="
             - name: KAFKA_SASL_ENABLED_MECHANISMS
-              value: '${_mech}'
+              value: '${_internal_mechs}'
             - name: KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL
               value: '${_mech}'
             - name: KAFKA_SUPER_USERS
@@ -388,8 +391,12 @@ if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
     # _sasl_deferred below). PLAIN needs none of this - its users are in the
     # JAAS entry - so a PLAIN cluster comes up authenticated on the first pass.
     _sasl_deferred=false
+    # Set once SCRAM users are written on this run, so the post-rollout step
+    # below does not repeat it.
+    _scram_registered=false
     if oc get statefulset broker -n "${NS}" &>/dev/null \
        && [[ "$(oc get statefulset broker -n "${NS}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" -ge 1 ]] 2>/dev/null; then
+        _scram_registered=true
         if [[ -n "$(kafka_scram_mechanisms_in_use)" ]]; then
             echo "[INFO] Registering SCRAM users on the running cluster..."
             if ! kafka_register_scram_users "${NS}" "${SASL_ADMIN_PW}" "${(@f)$(kafka_secret_credentials "${NS}")}"; then
@@ -422,7 +429,7 @@ if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
         echo "[INFO] Fresh cluster: bringing brokers up PLAINTEXT first; SASL is applied on a second pass."
     fi
 
-    echo "[INFO] SASL enabled: in-cluster ${_proto} / ${_mech}, admin user ${CONFLUENT_SASL_ADMIN_USER}."
+    echo "[INFO] SASL enabled: in-cluster ${_proto} accepting ${_internal_mechs} (platform uses ${_mech}), admin user ${CONFLUENT_SASL_ADMIN_USER}."
     [[ "${CONFLUENT_EXTERNAL_KAFKA_ENABLED}" == "true" ]] && \
         echo "[INFO]   EXTERNAL listener: SASL_SSL / ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}."
 fi
@@ -1124,6 +1131,22 @@ if [[ "${_sasl_deferred:-false}" != "true" ]]; then
 fi
 
 wait_rollout statefulset broker
+
+# ------------------------------------------------------------------------------
+# A fresh cluster whose platform mechanism is PLAIN comes up authenticated on
+# the first pass (no deferral), so nothing has registered SCRAM users yet - but
+# the listeners may still accept SCRAM (CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS
+# or the EXTERNAL list), and a SCRAM client would be refused until they exist.
+# Register them now that the brokers are up, authenticating over PLAIN.
+# ------------------------------------------------------------------------------
+if [[ "${CONFLUENT_SASL_ENABLED}" == "true" && "${_sasl_deferred:-false}" != "true" \
+      && "${_scram_registered:-true}" != "true" && -n "$(kafka_scram_mechanisms_in_use)" ]]; then
+    echo "[INFO] Registering SCRAM users on the new cluster..."
+    if ! kafka_register_scram_users "${NS}" "${SASL_ADMIN_PW}" "${(@f)$(kafka_secret_credentials "${NS}")}"; then
+        echo "[WARN] Could not register SCRAM users; SCRAM clients will be refused until they are."
+        echo "[WARN] Re-run this script, or x.2_confluent_add_sasl.sh."
+    fi
+fi
 
 # ------------------------------------------------------------------------------
 # MDS route. Not expose_route: that helper names the route after the service,
@@ -2200,7 +2223,7 @@ fi
 echo "[INFO] Confluent Platform ${CONFLUENT_VERSION} installed in project '${NS}'."
 echo "[INFO] In-cluster bootstrap servers: ${BOOTSTRAP}"
 if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
-    echo "[INFO] Kafka authentication: in-cluster ${CONFLUENT_SASL_PROTOCOL} / ${CONFLUENT_SASL_MECHANISM}${${CONFLUENT_EXTERNAL_KAFKA_ENABLED:#false}:+, EXTERNAL SASL_SSL / ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}}."
+    echo "[INFO] Kafka authentication: in-cluster ${CONFLUENT_SASL_PROTOCOL} / $(kafka_internal_mechanisms)${${CONFLUENT_EXTERNAL_KAFKA_ENABLED:#false}:+, EXTERNAL SASL_SSL / ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}}."
     echo "[INFO]   Client properties: 1.3_confluent_get_instance_details.sh writes them to configs/confluent_platform_config/."
 fi
 

@@ -139,15 +139,27 @@ fi
 # How clients authenticate. Exported under their own names so sourcing this file
 # never overrides the CONFLUENT_SASL_* settings in confluent_vars.sh.
 source "${SCRIPT_DIR}/confluent_kafka_security.sh"
+# Everything here is read from broker-0 itself, not from confluent_vars.sh: the
+# files must describe what the brokers accept NOW, which differs from the config
+# until 1.1_confluent_install.sh has been re-run after a change.
 CONFLUENT_KAFKA_INTERNAL_PROTOCOL=""
 CONFLUENT_KAFKA_INTERNAL_MECHANISM=""
+CONFLUENT_KAFKA_INTERNAL_MECHANISMS=""
+CONFLUENT_KAFKA_EXTERNAL_MECHANISMS=""
 if oc get pod broker-0 -n "${NS}" &>/dev/null; then
     read -r CONFLUENT_KAFKA_INTERNAL_PROTOCOL CONFLUENT_KAFKA_INTERNAL_MECHANISM \
         <<< "$(kafka_pod_internal_security "${NS}" broker-0)"
     [[ "${CONFLUENT_KAFKA_INTERNAL_MECHANISM}" == "-" ]] && CONFLUENT_KAFKA_INTERNAL_MECHANISM=""
+    CONFLUENT_KAFKA_INTERNAL_MECHANISMS="$(kafka_pod_listener_mechanisms "${NS}" broker-0 plaintext)"
+    CONFLUENT_KAFKA_EXTERNAL_MECHANISMS="$(kafka_pod_listener_mechanisms "${NS}" broker-0 external)"
 fi
-CONFLUENT_KAFKA_EXTERNAL_MECHANISMS=""
-[[ -n "${CONFLUENT_BOOTSTRAP_EXTERNAL}" ]] && CONFLUENT_KAFKA_EXTERNAL_MECHANISMS="${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}"
+# Brokers deployed before the listener lists existed accept just the one mechanism.
+: "${CONFLUENT_KAFKA_INTERNAL_MECHANISMS:=${CONFLUENT_KAFKA_INTERNAL_MECHANISM}}"
+if [[ -n "${CONFLUENT_BOOTSTRAP_EXTERNAL}" ]]; then
+    : "${CONFLUENT_KAFKA_EXTERNAL_MECHANISMS:=${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}}"
+else
+    CONFLUENT_KAFKA_EXTERNAL_MECHANISMS=""
+fi
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
 VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_instance_details.sh"
@@ -201,10 +213,13 @@ export CONFLUENT_PLATFORM_PASSWORD="${CONFLUENT_MDS_PASS}"
 export CONFLUENT_BOOTSTRAP_EXTERNAL="${CONFLUENT_BOOTSTRAP_EXTERNAL}"
 
 # --- Kafka client security ---------------------------------------------------
-# What the running brokers expect. The internal pair is read from broker-0
-# itself; the external list is empty unless the EXTERNAL listener is deployed.
+# What the running brokers accept, read from broker-0 itself. INTERNAL_MECHANISM
+# is what the platform uses; INTERNAL_MECHANISMS is every mechanism an in-cluster
+# client may pick. The external list is empty unless the EXTERNAL listener is
+# deployed.
 export CONFLUENT_KAFKA_INTERNAL_PROTOCOL="${CONFLUENT_KAFKA_INTERNAL_PROTOCOL}"
 export CONFLUENT_KAFKA_INTERNAL_MECHANISM="${CONFLUENT_KAFKA_INTERNAL_MECHANISM}"
+export CONFLUENT_KAFKA_INTERNAL_MECHANISMS="${CONFLUENT_KAFKA_INTERNAL_MECHANISMS}"
 export CONFLUENT_KAFKA_EXTERNAL_MECHANISMS="${CONFLUENT_KAFKA_EXTERNAL_MECHANISMS}"
 
 # --- Kafka SASL client credentials -------------------------------------------
@@ -267,7 +282,8 @@ else
             -o jsonpath='{.data.ca\.crt}' | base64 --decode > "${_truststore}"
         chmod 644 "${_truststore}"
     fi
-    _ext_mech="$(kafka_external_primary_mechanism)"
+    _ext_mechs="${CONFLUENT_KAFKA_EXTERNAL_MECHANISMS:-${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}}"
+    _ext_mech="${_ext_mechs%%,*}"
 
     {
         echo "# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -280,9 +296,18 @@ else
         echo "# Regenerate with: scripts/install_confluent_platform/$(basename $0)"
         echo "# Suppress with:   CONFLUENT_WRITE_SASL_PROPERTIES=false"
         echo ""
-        echo "# In-cluster listener: ${_proto} / ${_mech}"
+        echo "# In-cluster listener: ${_proto}, accepting ${CONFLUENT_KAFKA_INTERNAL_MECHANISMS}"
         echo "bootstrap.servers=${CONFLUENT_BOOTSTRAP_INTERNAL}"
         kafka_client_properties "${_proto}" "${_mech}" "${_default_user}" "${_default_pw}" "${_truststore}"
+        # Every accepted mechanism works with the same credential; only the
+        # mechanism name and login module change.
+        for _m in ${(s:,:)CONFLUENT_KAFKA_INTERNAL_MECHANISMS}; do
+            [[ "${_m}" == "${_mech}" ]] && continue
+            echo ""
+            echo "# Also accepted - swap these two lines in to use ${_m}:"
+            echo "# sasl.mechanism=${_m}"
+            echo "# sasl.jaas.config=$(kafka_client_jaas "${_m}" "${_default_user}" "${_default_pw}")"
+        done
         echo ""
         echo "# ---- other clients: swap the jaas line above for one of these ----"
         for _u in "${_sasl_users[@]}"; do
@@ -315,7 +340,7 @@ else
             done
             echo "#"
             echo "# SASL connection  - ON"
-            echo "# SASL mechanism   - ${_ext_mech}${${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS#${_ext_mech}}:+  (also accepted: ${${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS#${_ext_mech}}#,})}"
+            echo "# SASL mechanism   - ${_ext_mech}${${_ext_mechs#${_ext_mech}}:+  (also accepted: ${${_ext_mechs#${_ext_mech}}#,})}"
             echo "# Username         - ${_default_user}"
             echo "# API key/Password - ${_default_pw}"
             echo "#"

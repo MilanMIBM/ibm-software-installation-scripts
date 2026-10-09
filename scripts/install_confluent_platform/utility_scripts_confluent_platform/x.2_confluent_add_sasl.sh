@@ -21,8 +21,12 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #
 # What is configured comes from confluent_vars.sh (or the flags below):
 #   CONFLUENT_SASL_PROTOCOL    SASL_PLAINTEXT (default) | SASL_SSL
-#   CONFLUENT_SASL_MECHANISM   SCRAM-SHA-512 (default) | SCRAM-SHA-256 | PLAIN
-#   CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS   EXTERNAL listener, default PLAIN
+#   CONFLUENT_SASL_MECHANISM   SCRAM-SHA-512 (default) | SCRAM-SHA-256 | PLAIN -
+#                              what broker-to-broker traffic and the components use
+#   CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS   what the in-cluster listeners
+#                              accept, default PLAIN,SCRAM-SHA-512
+#   CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS   what the EXTERNAL listener
+#                              accepts, default PLAIN,SCRAM-SHA-512
 #
 # SCRAM stores credentials in Kafka's own metadata, so clients are added and
 # revoked with kafka-configs while the brokers run, and the password never
@@ -46,6 +50,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # Usage:
 #   ./x.2_confluent_add_sasl.sh [--clients a,b,c] [--rotate] [--disable]
 #                               [--protocol P] [--mechanism M]
+#                               [--internal-mechanisms M[,M]]
 #                               [--external-mechanisms M[,M]] [--rotate-tls]
 #                               [--yes] [--dry-run] [--no-status]
 #
@@ -54,14 +59,16 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   --rotate                 regenerate all SASL passwords
 #   --disable                revert the listeners to PLAINTEXT, keep the credentials
 #   --protocol P             in-cluster protocol: SASL_PLAINTEXT or SASL_SSL
-#   --mechanism M            in-cluster mechanism: SCRAM-SHA-512, SCRAM-SHA-256, PLAIN
+#   --mechanism M            mechanism the platform uses (inter-broker, components):
+#                            SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN
+#   --internal-mechanisms L  mechanisms the in-cluster listeners accept, comma-separated
 #   --external-mechanisms L  EXTERNAL listener mechanisms, comma-separated
 #   --rotate-tls             regenerate the in-cluster CA and broker certificate
 #   --yes                    skip the confirmation prompt
 #   --dry-run                report what would change, change nothing
 #   --no-status              skip the closing status report
 #
-# --protocol/--mechanism/--external-mechanisms are written back to
+# --protocol/--mechanism/--internal-mechanisms/--external-mechanisms are written back to
 # confluent_vars.sh. They have to be: 1.1_confluent_install.sh re-reads that
 # file, and a later run that reverted the mechanism would lock every client out.
 # ==============================================================================
@@ -85,13 +92,15 @@ while (( $# > 0 )); do
         --disable)   DISABLE=true; shift ;;
         --protocol)  _need_value "$1" "${2:-}"; _SET[CONFLUENT_SASL_PROTOCOL]="$2"; shift 2 ;;
         --mechanism) _need_value "$1" "${2:-}"; _SET[CONFLUENT_SASL_MECHANISM]="$2"; shift 2 ;;
+        --internal-mechanisms)
+                     _need_value "$1" "${2:-}"; _SET[CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS]="$2"; shift 2 ;;
         --external-mechanisms)
                      _need_value "$1" "${2:-}"; _SET[CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS]="$2"; shift 2 ;;
         --rotate-tls) ROTATE_TLS=true; shift ;;
         --yes|-y)    ASSUME_YES=true; shift ;;
         --dry-run)   DRY_RUN=true; shift ;;
         --no-status) RUN_STATUS=false; shift ;;
-        -h|--help)   sed -n '16,66p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '16,73p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Try --help." >&2; exit 1 ;;
     esac
 done
@@ -155,7 +164,8 @@ echo "  current : ${_state}"
 if $DISABLE; then
     echo "  target  : PLAINTEXT (authentication removed)"
 else
-    echo "  target  : ${CONFLUENT_SASL_PROTOCOL} / ${CONFLUENT_SASL_MECHANISM} in-cluster"
+    echo "  target  : ${CONFLUENT_SASL_PROTOCOL} in-cluster, accepting $(kafka_internal_mechanisms)"
+    echo "            (brokers and components use ${CONFLUENT_SASL_MECHANISM})"
     echo "            SASL_SSL / ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS} on the EXTERNAL listener (when enabled)"
     echo "  admin   : ${CONFLUENT_SASL_ADMIN_USER} (used by the platform components)"
     echo "  clients : ${_client_list}"
@@ -280,7 +290,9 @@ else
         echo "# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
         echo "# Kafka client properties for the SASL-enabled cluster in '${NS}'."
         echo "# One block per client - copy the one you need into your client config."
-        echo "# In-cluster listener: ${CONFLUENT_SASL_PROTOCOL} / ${CONFLUENT_SASL_MECHANISM}."
+        echo "# In-cluster listener: ${CONFLUENT_SASL_PROTOCOL}, accepting $(kafka_internal_mechanisms)."
+        echo "# Each block uses ${CONFLUENT_SASL_MECHANISM}; for another accepted mechanism swap"
+        echo "# sasl.mechanism and the login module (PlainLoginModule / ScramLoginModule)."
         echo ""
         for _u in ${=_client_list}; do
             _p="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode || true)"
@@ -298,7 +310,7 @@ else
     echo ""
     echo "  bootstrap.servers=broker-headless.${NS}.svc.cluster.local:${CONFLUENT_BROKER_INTERNAL_PORT}"
     echo "  security.protocol=${CONFLUENT_SASL_PROTOCOL}"
-    echo "  sasl.mechanism=${CONFLUENT_SASL_MECHANISM}"
+    echo "  sasl.mechanism=${CONFLUENT_SASL_MECHANISM}   (the listeners accept: $(kafka_internal_mechanisms))"
     [[ -n "${_truststore}" ]] && echo "  ssl.truststore.type=PEM  (CA: ${_truststore#${REPO_ROOT}/})"
     echo ""
     echo "  Read a client's password with:"

@@ -175,12 +175,15 @@ confluent_sasl_protocol_records = [
     },
 ]
 
-# The EXTERNAL listener is always SASL_SSL (the passthrough routes route on the
-# TLS SNI), so only its mechanisms are selectable. The first selected one is
-# what the generated client files use.
+# Mechanisms each listener accepts. In-cluster: the platform's own
+# CONFLUENT_SASL_MECHANISM is always accepted on top of these. EXTERNAL is always
+# SASL_SSL (the passthrough routes route on the TLS SNI), so only its mechanisms
+# are selectable; the first selected one is what the generated client files use.
+confluent_internal_sasl_mechanism_options = ["PLAIN", "SCRAM-SHA-512", "SCRAM-SHA-256"]
 confluent_external_sasl_mechanism_options = ["PLAIN", "SCRAM-SHA-512", "SCRAM-SHA-256"]
 
-default_confluent_external_sasl_mechanisms = ["PLAIN"]
+default_confluent_internal_sasl_mechanisms = ["PLAIN", "SCRAM-SHA-512"]
+default_confluent_external_sasl_mechanisms = ["PLAIN", "SCRAM-SHA-512"]
 
 confluent_mds_user_store_options = ["LDAP", "OAUTH"]
 
@@ -289,7 +292,10 @@ default_confluent_sasl = [
     {"key": "CONFLUENT_SASL_ENABLED", "value": "true"},
     # In-cluster listeners, inter-broker traffic and every platform component
     {"key": "CONFLUENT_SASL_PROTOCOL", "value": "SASL_PLAINTEXT"},  # or SASL_SSL
+    # What broker-to-broker traffic and the components use
     {"key": "CONFLUENT_SASL_MECHANISM", "value": "SCRAM-SHA-512"},  # SCRAM-SHA-256, PLAIN
+    # What in-cluster clients may use (comma-separated)
+    {"key": "CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS", "value": "PLAIN,SCRAM-SHA-512"},
     {"key": "CONFLUENT_SASL_ADMIN_USER", "value": "confluent-admin"},
     {"key": "CONFLUENT_SASL_CLIENTS", "value": "app-client"},  # comma-separated
     {"key": "CONFLUENT_SASL_SECRET", "value": "confluent-sasl"},
@@ -335,7 +341,7 @@ default_confluent_oauth = [
 default_confluent_external_access = [
     {"key": "CONFLUENT_EXTERNAL_KAFKA_ENABLED", "value": "true"},  # requires SASL
     # Always SASL_SSL; comma-separated, the first is the one client files use
-    {"key": "CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS", "value": "PLAIN"},
+    {"key": "CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS", "value": "PLAIN,SCRAM-SHA-512"},
     {"key": "CONFLUENT_EXTERNAL_KAFKA_PORT", "value": "9094"},
     {"key": "CONFLUENT_EXTERNAL_TLS_SECRET", "value": "confluent-kafka-tls"},
     {"key": "CONFLUENT_EXTERNAL_CERT_VALIDITY_DAYS", "value": "825"},

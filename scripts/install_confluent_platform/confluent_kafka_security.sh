@@ -11,9 +11,13 @@
 #       adds TLS from a private CA this file generates, so credentials are also
 #       encrypted on the pod network.
 #   CONFLUENT_SASL_MECHANISM      SCRAM-SHA-512 | SCRAM-SHA-256 | PLAIN
-#       The in-cluster mechanism: inter-broker traffic, every platform
-#       component, and in-cluster applications.
-#   CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS   comma list, default PLAIN
+#       The mechanism the platform itself uses: inter-broker traffic and every
+#       platform component. Also what the generated in-cluster client files use.
+#   CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS   comma list, default PLAIN,SCRAM-SHA-512
+#       Every mechanism the in-cluster listeners accept, so in-cluster clients
+#       (CPD connections, applications) may use any of them. The platform's own
+#       CONFLUENT_SASL_MECHANISM is always accepted, listed or not.
+#   CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS   comma list, default PLAIN,SCRAM-SHA-512
 #       The mechanisms the EXTERNAL listener accepts. The first is what the
 #       generated client files use. The EXTERNAL listener is always SASL_SSL:
 #       the passthrough routes pick the broker from the TLS SNI hostname, so a
@@ -33,7 +37,8 @@
 
 : "${CONFLUENT_SASL_PROTOCOL:=SASL_PLAINTEXT}"
 : "${CONFLUENT_SASL_MECHANISM:=SCRAM-SHA-512}"
-: "${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS:=PLAIN}"
+: "${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS:=PLAIN,SCRAM-SHA-512}"
+: "${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS:=PLAIN,SCRAM-SHA-512}"
 : "${CONFLUENT_INTERNAL_TLS_SECRET:=confluent-kafka-internal-tls}"
 : "${CONFLUENT_INTERNAL_CERT_VALIDITY_DAYS:=825}"
 
@@ -41,7 +46,8 @@
 CONFLUENT_BROKER_TLS_DIR="/etc/confluent/internal-tls"
 CONFLUENT_KAFKA_CA_MOUNT="/etc/confluent/kafka-ca"
 
-# Spaces are tolerated in the list ("PLAIN, SCRAM-SHA-512") and dropped here.
+# Spaces are tolerated in the lists ("PLAIN, SCRAM-SHA-512") and dropped here.
+CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS="${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS//[[:space:]]/}"
 CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS="${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS//[[:space:]]/}"
 
 # ------------------------------------------------------------------------------
@@ -58,19 +64,26 @@ kafka_security_validate() {
         echo "[ERROR] CONFLUENT_SASL_MECHANISM='${CONFLUENT_SASL_MECHANISM}' - expected SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN." >&2
         ok=false
     fi
-    if [[ -z "${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}" ]]; then
-        echo "[ERROR] CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS is empty - list at least one mechanism." >&2
-        ok=false
-    fi
-    for m in ${(s:,:)CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}; do
-        if ! kafka_is_mechanism "${m}"; then
-            echo "[ERROR] CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS contains '${m}' - expected SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN." >&2
+    local var
+    for var in CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS; do
+        if [[ -z "${(P)var}" ]]; then
+            echo "[ERROR] ${var} is empty - list at least one mechanism." >&2
             ok=false
         fi
+        for m in ${(s:,:)${(P)var}}; do
+            if ! kafka_is_mechanism "${m}"; then
+                echo "[ERROR] ${var} contains '${m}' - expected SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN." >&2
+                ok=false
+            fi
+        done
     done
-    if [[ "${CONFLUENT_SASL_MECHANISM}" == "PLAIN" && "${CONFLUENT_SASL_PROTOCOL}" == "SASL_PLAINTEXT" ]]; then
-        echo "[WARN] SASL/PLAIN over SASL_PLAINTEXT sends passwords unencrypted across the pod network."
-        echo "[WARN] Confluent recommends PLAIN only with TLS: set CONFLUENT_SASL_PROTOCOL=SASL_SSL."
+    if [[ ",${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS}," != *",${CONFLUENT_SASL_MECHANISM},"* ]]; then
+        echo "[INFO] CONFLUENT_SASL_MECHANISM=${CONFLUENT_SASL_MECHANISM} is not in CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS;"
+        echo "[INFO] the in-cluster listeners accept it anyway (broker-to-broker traffic and the components use it)."
+    fi
+    if [[ "${CONFLUENT_SASL_PROTOCOL}" == "SASL_PLAINTEXT" && ",$(kafka_internal_mechanisms)," == *",PLAIN,"* ]]; then
+        # PLAIN sends the password itself; Confluent recommends it only over TLS.
+        echo "[WARN] In-cluster PLAIN runs unencrypted (SASL_PLAINTEXT): set CONFLUENT_SASL_PROTOCOL=SASL_SSL to protect PLAIN passwords on the pod network."
     fi
     $ok
 }
@@ -80,6 +93,18 @@ kafka_is_mechanism() {
         PLAIN|SCRAM-SHA-256|SCRAM-SHA-512) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# ------------------------------------------------------------------------------
+# kafka_internal_mechanisms - what the in-cluster listeners accept, as a comma
+# list: CONFLUENT_SASL_MECHANISM first (broker_listener_security.sh reads the
+# first entry as the inter-broker mechanism), then the rest of
+# CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS without repeats.
+# ------------------------------------------------------------------------------
+kafka_internal_mechanisms() {
+    local -aU list
+    list=("${CONFLUENT_SASL_MECHANISM}" ${(s:,:)CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS})
+    print -r -- "${(j:,:)list}"
 }
 
 # The mechanism written into generated external client files.
@@ -127,9 +152,11 @@ kafka_client_properties() {
 # ------------------------------------------------------------------------------
 kafka_scram_mechanisms_in_use() {
     local -aU mechs
-    [[ "${CONFLUENT_SASL_MECHANISM}" == SCRAM-* ]] && mechs+=("${CONFLUENT_SASL_MECHANISM}")
+    local m
+    for m in ${(s:,:)$(kafka_internal_mechanisms)}; do
+        [[ "${m}" == SCRAM-* ]] && mechs+=("${m}")
+    done
     if [[ "${CONFLUENT_EXTERNAL_KAFKA_ENABLED:-false}" == "true" ]]; then
-        local m
         for m in ${(s:,:)CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}; do
             [[ "${m}" == SCRAM-* ]] && mechs+=("${m}")
         done
@@ -169,6 +196,21 @@ kafka_pod_internal_security() {
     done
     [[ "${proto:-PLAINTEXT}" == "PLAINTEXT" ]] && mech=""
     print -r -- "${proto:-PLAINTEXT} ${mech:--}"
+}
+
+# ------------------------------------------------------------------------------
+# kafka_pod_listener_mechanisms <ns> <pod> <listener> - the comma list of
+# mechanisms a running broker accepts on one listener (plaintext, external),
+# read from its BROKER_SASL_LISTENERS. Empty when the listener has no SASL.
+# ------------------------------------------------------------------------------
+kafka_pod_listener_mechanisms() {
+    local ns="$1" pod="$2" listener="$3" entries entry
+    entries="$(oc get pod "${pod}" -n "${ns}" \
+        -o jsonpath='{.spec.containers[0].env[?(@.name=="BROKER_SASL_LISTENERS")].value}' 2>/dev/null || true)"
+    for entry in ${=entries}; do
+        [[ "${entry%%:*}" == "${listener}" ]] && { print -r -- "${entry#*:}"; return 0; }
+    done
+    return 0
 }
 
 # ------------------------------------------------------------------------------

@@ -173,4 +173,30 @@ Auth, connectors, external access and uninstall live under `utility_scripts_conf
 
 When both configs exist, Confluent values override CP4D ones; set `ENV_TARGET=<name|path>` to load only a single config.
 
+### Version presets
+
+```bash
+# Current preset (Confluent Platform 8.2.0)
+export CONFLUENT_VERSION="8.2.0"
+export CONFLUENT_C3_VERSION="2.5.0"
+export FLINK_CMF_CHART_VERSION="2.4.2"
+export FLINK_OPERATOR_CHART_VERSION="1.150.3"
+export FLINK_APPLICATION_IMAGE="confluentinc/cp-flink:2.0.2-cp3"
+export FLINK_SQL_IMAGE="confluentinc/cp-flink-sql:1.19-cp11"
+export FLINK_APPLICATION_VERSION="v2_0"
+export FLINK_SQL_VERSION="v1_19"
+```
+
+```bash
+# Recommended (Confluent Platform 8.3.2)
+export CONFLUENT_VERSION="8.3.2"
+export CONFLUENT_C3_VERSION="2.6.1"
+export FLINK_CMF_CHART_VERSION="2.4.3"
+export FLINK_OPERATOR_CHART_VERSION="1.150.4"
+export FLINK_APPLICATION_IMAGE="confluentinc/cp-flink:2.0.2-cp4"
+export FLINK_SQL_IMAGE="confluentinc/cp-flink-sql:1.19-cp12"
+export FLINK_APPLICATION_VERSION="v2_0"
+export FLINK_SQL_VERSION="v1_19"
+```
+
 ---

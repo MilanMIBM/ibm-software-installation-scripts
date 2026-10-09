@@ -64,12 +64,17 @@ export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
 # openshift = oauth-proxy sidecar + cluster login; basic = nginx basic auth.
 {{ export_block(confluent_web_ui_auth) }}
 # ---- Kafka client authentication (SASL) --------------------------------------
-# In-cluster listeners, inter-broker traffic and every platform component:
+# In-cluster listeners:
 #   CONFLUENT_SASL_PROTOCOL   SASL_PLAINTEXT | SASL_SSL (TLS from a generated CA)
-#   CONFLUENT_SASL_MECHANISM  SCRAM-SHA-512 | SCRAM-SHA-256 | PLAIN
+#   CONFLUENT_SASL_MECHANISM  SCRAM-SHA-512 | SCRAM-SHA-256 | PLAIN - what
+#                             broker-to-broker traffic and the components use
+#   CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS  comma list of what in-cluster
+#                             clients may use (CONFLUENT_SASL_MECHANISM is always
+#                             accepted too)
 # SCRAM users can be added at runtime; PLAIN rolls the brokers on every change
 # and should only run over SASL_SSL. Change these on a live cluster with
-# x.2_confluent_add_sasl.sh --protocol/--mechanism, which also saves them here.
+# x.2_confluent_add_sasl.sh --protocol/--mechanism/--internal-mechanisms, which
+# also saves them here.
 {{ export_block(confluent_sasl) }}
 # ---- Metadata Service (MDS) / RBAC -------------------------------------------
 # Requires CONFLUENT_SASL_ENABLED=true. Licensed: empty key = 30-day trial.

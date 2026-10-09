@@ -32,6 +32,7 @@ def _():
         confluent_auth_mode_records,
         confluent_component_toggle_records,
         confluent_external_sasl_mechanism_options,
+        confluent_internal_sasl_mechanism_options,
         confluent_mds_user_store_records,
         confluent_sasl_mechanism_options,
         confluent_sasl_protocol_records,
@@ -41,6 +42,7 @@ def _():
         default_confluent_external_access,
         default_confluent_external_sasl_mechanisms,
         default_confluent_images,
+        default_confluent_internal_sasl_mechanisms,
         default_confluent_ldap,
         default_confluent_mds,
         default_confluent_oauth,
@@ -70,6 +72,7 @@ def _():
         confluent_auth_mode_records,
         confluent_component_toggle_records,
         confluent_external_sasl_mechanism_options,
+        confluent_internal_sasl_mechanism_options,
         confluent_mds_user_store_records,
         confluent_sasl_mechanism_options,
         confluent_sasl_protocol_records,
@@ -79,6 +82,7 @@ def _():
         default_confluent_external_access,
         default_confluent_external_sasl_mechanisms,
         default_confluent_images,
+        default_confluent_internal_sasl_mechanisms,
         default_confluent_ldap,
         default_confluent_mds,
         default_confluent_oauth,
@@ -171,6 +175,7 @@ def _():
         "CONFLUENT_SASL_ENABLED",
         "CONFLUENT_SASL_PROTOCOL",
         "CONFLUENT_SASL_MECHANISM",
+        "CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS",
         "CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS",
         "CONFLUENT_MDS_ENABLED",
         "CONFLUENT_MDS_USER_STORE",
@@ -196,6 +201,7 @@ def _():
 def _(
     confluent_auth_mode_records,
     confluent_external_sasl_mechanism_options,
+    confluent_internal_sasl_mechanism_options,
     confluent_mds_user_store_records,
     confluent_sasl_mechanism_options,
     confluent_sasl_protocol_records,
@@ -219,6 +225,9 @@ def _(
     sasl_protocol_options = {
         r["sasl_protocol_name"]: r["sasl_protocol_id"]
         for r in confluent_sasl_protocol_records
+    }
+    internal_sasl_mechanism_options = {
+        m: m for m in confluent_internal_sasl_mechanism_options
     }
     external_sasl_mechanism_options = {
         m: m for m in confluent_external_sasl_mechanism_options
@@ -276,6 +285,7 @@ def _(
         component_file_storage_options,
         external_sasl_mechanism_options,
         flink_state_backend_options,
+        internal_sasl_mechanism_options,
         login_argument_options,
         mds_user_store_options,
         sasl_mechanism_options,
@@ -294,7 +304,8 @@ def _():
         "storage_file": "**Select your file storage class (RWX):**",
         "size": "**Select your t-shirt size (Confluent + Flink):**",
         "auth_mode": "**Select the web UI authentication mode:**",
-        "sasl_mechanism": "**Select the in-cluster Kafka SASL mechanism:**",
+        "sasl_mechanism": "**Select the SASL mechanism the brokers and components use:**",
+        "internal_sasl_mechanisms": "**Select the in-cluster listener SASL mechanisms (what clients may use):**",
         "sasl_protocol": "**Select the in-cluster Kafka security protocol:**",
         "external_sasl_mechanisms": "**Select the EXTERNAL listener SASL mechanisms (SASL_SSL):**",
         "mds_user_store": "**Select the MDS / RBAC user store:**",
@@ -338,6 +349,7 @@ def _(
     external_sasl_mechanisms_select,
     file_storage_class_select,
     flink_state_backend_select,
+    internal_sasl_mechanisms_select,
     login_argument_select,
     mds_user_store_select,
     sasl_mechanism_select,
@@ -363,22 +375,29 @@ def _(
             ),
             mo.hstack(
                 [
-                    auth_mode_select.style({"width": widget_width}),
                     sasl_protocol_select.style({"width": widget_width}),
+                    sasl_mechanism_select.style({"width": widget_width}),
                 ],
                 justify="space-around",
             ),
             mo.hstack(
                 [
-                    sasl_mechanism_select.style({"width": widget_width}),
+                    internal_sasl_mechanisms_select.style({"width": widget_width}),
                     external_sasl_mechanisms_select.style({"width": widget_width}),
                 ],
                 justify="space-around",
             ),
             mo.hstack(
                 [
+                    auth_mode_select.style({"width": widget_width}),
                     mds_user_store_select.style({"width": widget_width}),
+                ],
+                justify="space-around",
+            ),
+            mo.hstack(
+                [
                     flink_state_backend_select.style({"width": widget_width}),
+                    mo.md(""),
                 ],
                 justify="space-around",
             ),
@@ -734,6 +753,23 @@ def _(sasl_protocol_options, widget_labels):
         full_width=True,
     )
     return (sasl_protocol_select,)
+
+
+@app.cell
+def _(
+    default_confluent_internal_sasl_mechanisms,
+    internal_sasl_mechanism_options,
+    widget_labels,
+):
+    # The platform's own mechanism (the dropdown above) is accepted whether or
+    # not it is selected here.
+    internal_sasl_mechanisms_select = mo.ui.multiselect(
+        label=widget_labels.get("internal_sasl_mechanisms"),
+        options=internal_sasl_mechanism_options,
+        value=default_confluent_internal_sasl_mechanisms,
+        full_width=True,
+    )
+    return (internal_sasl_mechanisms_select,)
 
 
 @app.cell
@@ -1180,6 +1216,7 @@ def _(
     default_confluent_web_ui_auth,
     external_kafka_enabled_checkbox,
     external_sasl_mechanisms_select,
+    internal_sasl_mechanisms_select,
     license_key_input,
     mds_enabled_checkbox,
     mds_user_store_select,
@@ -1240,6 +1277,12 @@ def _(
             "CONFLUENT_SASL_ENABLED": bool_str(sasl_enabled_checkbox.value),
             "CONFLUENT_SASL_PROTOCOL": sasl_protocol_select.value,
             "CONFLUENT_SASL_MECHANISM": sasl_mechanism_select.value,
+            # Nothing selected means the platform's own mechanism only; an empty
+            # value would make the scripts fall back to their default list.
+            "CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS": ",".join(
+                internal_sasl_mechanisms_select.value
+            )
+            or sasl_mechanism_select.value,
         },
     )
     confluent_mds = ordered_values(
@@ -1347,6 +1390,7 @@ def _(
     external_sasl_mechanisms_select,
     flink_state,
     include_flink_checkbox,
+    internal_sasl_mechanisms_select,
     mds_enabled_checkbox,
     sasl_enabled_checkbox,
     sasl_mechanism_select,
@@ -1372,14 +1416,21 @@ def _(
         _warnings.append(
             "Select at least one SASL mechanism for the EXTERNAL listener."
         )
+    _internal = set(internal_sasl_mechanisms_select.value) | {sasl_mechanism_select.value}
+    if sasl_enabled_checkbox.value and not internal_sasl_mechanisms_select.value:
+        _warnings.append(
+            f"No in-cluster listener mechanisms selected - the listeners will accept "
+            f"only {sasl_mechanism_select.value}, the platform's own."
+        )
     if (
         sasl_enabled_checkbox.value
-        and sasl_mechanism_select.value == "PLAIN"
+        and "PLAIN" in _internal
         and sasl_protocol_select.value == "SASL_PLAINTEXT"
     ):
         _warnings.append(
-            "SASL/PLAIN over SASL_PLAINTEXT sends passwords unencrypted across the "
-            "pod network - Confluent recommends PLAIN only with SASL_SSL."
+            "The in-cluster listeners accept PLAIN over SASL_PLAINTEXT: a client that picks "
+            "PLAIN sends its password unencrypted across the pod network. Confluent recommends "
+            "PLAIN only with SASL_SSL."
         )
     if len(cluster_id_input.value) != 22:
         _warnings.append("The KRaft cluster id must be exactly 22 characters.")
