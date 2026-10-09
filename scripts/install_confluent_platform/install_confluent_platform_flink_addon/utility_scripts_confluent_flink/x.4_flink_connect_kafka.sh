@@ -192,15 +192,17 @@ fi
 # ------------------------------------------------------------------------------
 # Security protocol
 # ------------------------------------------------------------------------------
-# The internal listener is SASL_PLAINTEXT: it carries credentials but is not
-# encrypted, which is what the brokers offer inside the cluster. Traffic stays
-# on the pod network. An external bootstrap over the passthrough routes would be
+source "${_CP4D_REPO_ROOT}/scripts/install_confluent_platform/confluent_sasl_helpers.sh"
+confluent_sasl_resolve || exit 1
+# The internal listener is CONFLUENT_SASL_SECURITY_PROTOCOL (SASL_PLAINTEXT):
+# it carries credentials but is not encrypted, which is what the brokers offer
+# inside the cluster. Traffic stays on the pod network. An external bootstrap over the passthrough routes would be
 # SASL_SSL instead - detected here by the :443 the routes advertise.
 if [[ "${USE_SASL}" == "true" ]]; then
     if [[ "${BOOTSTRAP}" == *:443 ]]; then
         SECURITY_PROTOCOL="SASL_SSL"
     else
-        SECURITY_PROTOCOL="SASL_PLAINTEXT"
+        SECURITY_PROTOCOL="${CONFLUENT_SASL_SECURITY_PROTOCOL}"
     fi
 else
     SECURITY_PROTOCOL="PLAINTEXT"
@@ -216,7 +218,7 @@ printf '  %-22s %s\n' \
     "bootstrap"         "${BOOTSTRAP}" \
     "security protocol" "${SECURITY_PROTOCOL}"
 [[ "${USE_SASL}" == "true" ]] && printf '  %-22s %s\n' \
-    "SASL mechanism"    "${CONFLUENT_SASL_MECHANISM}" \
+    "SASL mechanism"    "${CONFLUENT_SASL_CLIENT_MECHANISM}" \
     "SASL user"         "${SASL_USER}"
 [[ "${USE_SR}" == "true" ]] && printf '  %-22s %s\n' "schema registry" "${SR_URL}"
 echo ""
@@ -354,7 +356,7 @@ SECRET_ID="${FLINK_KAFKA_SECRET}"
 # heredoc: a password containing a quote, backslash or $ would otherwise break
 # the generated python, and would show up in a shell trace.
 _SASL_USER="${SASL_USER}" _SASL_PW="${SASL_PASSWORD}" _USE_SASL="${USE_SASL}" \
-_SASL_MECH="${CONFLUENT_SASL_MECHANISM}" _SECRET_ID="${SECRET_ID}" \
+_SASL_MECH="${CONFLUENT_SASL_CLIENT_MECHANISM}" _SECRET_ID="${SECRET_ID}" \
 python3 - > "${SECRET_FILE}" <<'PY'
 import json, os
 
@@ -419,7 +421,7 @@ PY
 DATABASE_FILE="${RESOURCE_DIR}/kafka-database.json"
 _DATABASE="${DATABASE}" _BOOTSTRAP="${BOOTSTRAP}" _PROTOCOL="${SECURITY_PROTOCOL}" \
 _ENVIRONMENT="${FLINK_ENVIRONMENT}" \
-_USE_SASL="${USE_SASL}" _SASL_MECH="${CONFLUENT_SASL_MECHANISM}" _SECRET_ID="${SECRET_ID}" \
+_USE_SASL="${USE_SASL}" _SASL_MECH="${CONFLUENT_SASL_CLIENT_MECHANISM}" _SECRET_ID="${SECRET_ID}" \
 python3 - > "${DATABASE_FILE}" <<'PY'
 import json, os
 

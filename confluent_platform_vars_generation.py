@@ -33,6 +33,7 @@ def _():
         confluent_component_toggle_records,
         confluent_mds_user_store_records,
         confluent_sasl_mechanism_options,
+        confluent_sasl_security_protocol_options,
         confluent_size_presets,
         confluent_size_records,
         default_confluent_component_toggles,
@@ -68,6 +69,7 @@ def _():
         confluent_component_toggle_records,
         confluent_mds_user_store_records,
         confluent_sasl_mechanism_options,
+        confluent_sasl_security_protocol_options,
         confluent_size_presets,
         confluent_size_records,
         default_confluent_component_toggles,
@@ -164,6 +166,7 @@ def _():
         "CONFLUENT_AUTH_PASSWORD",
         "CONFLUENT_SASL_ENABLED",
         "CONFLUENT_SASL_MECHANISM",
+        "CONFLUENT_SASL_SECURITY_PROTOCOL",
         "CONFLUENT_MDS_ENABLED",
         "CONFLUENT_MDS_USER_STORE",
         "CONFLUENT_LICENSE_KEY",
@@ -189,6 +192,7 @@ def _(
     confluent_auth_mode_records,
     confluent_mds_user_store_records,
     confluent_sasl_mechanism_options,
+    confluent_sasl_security_protocol_options,
     confluent_size_records,
     flink_state_backend_records,
 ):
@@ -206,6 +210,9 @@ def _(
         r["auth_mode_name"]: r["auth_mode_id"] for r in confluent_auth_mode_records
     }
     sasl_mechanism_options = {m: m for m in confluent_sasl_mechanism_options}
+    sasl_security_protocol_options = {
+        p: p for p in confluent_sasl_security_protocol_options
+    }
     mds_user_store_options = {
         r["user_store_name"]: r["user_store_id"]
         for r in confluent_mds_user_store_records
@@ -261,6 +268,7 @@ def _(
         login_argument_options,
         mds_user_store_options,
         sasl_mechanism_options,
+        sasl_security_protocol_options,
         size_options,
         stg_class_block_options,
         stg_class_file_options,
@@ -275,7 +283,8 @@ def _():
         "storage_file": "**Select your file storage class (RWX):**",
         "size": "**Select your t-shirt size (Confluent + Flink):**",
         "auth_mode": "**Select the web UI authentication mode:**",
-        "sasl_mechanism": "**Select the Kafka SASL/SCRAM mechanism:**",
+        "sasl_mechanism": "**Select the Kafka SASL mechanisms** *(clients use the strongest)*:",
+        "sasl_security_protocol": "**Select the Kafka security protocol** *(internal listeners)*:",
         "mds_user_store": "**Select the MDS / RBAC user store:**",
         "flink_state_backend": "**Select the Flink checkpoint storage:**",
         "confluent_storage_class": "**Select the broker storage class:**",
@@ -319,6 +328,7 @@ def _(
     login_argument_select,
     mds_user_store_select,
     sasl_mechanism_select,
+    sasl_security_protocol_select,
     size_select,
     widget_width,
 ):
@@ -347,7 +357,13 @@ def _(
             ),
             mo.hstack(
                 [
+                    sasl_security_protocol_select.style({"width": widget_width}),
                     mds_user_store_select.style({"width": widget_width}),
+                ],
+                justify="space-around",
+            ),
+            mo.hstack(
+                [
                     flink_state_backend_select.style({"width": widget_width}),
                 ],
                 justify="space-around",
@@ -682,15 +698,26 @@ def _(auth_mode_options, widget_labels):
 
 @app.cell
 def _(sasl_mechanism_options, widget_labels):
-    sasl_mechanism_select = mo.ui.dropdown(
+    sasl_mechanism_select = mo.ui.multiselect(
         label=widget_labels.get("sasl_mechanism"),
         options=sasl_mechanism_options,
-        value=list(sasl_mechanism_options.keys())[0],
+        value=[list(sasl_mechanism_options.keys())[0]],
+        full_width=True,
+    )
+    return (sasl_mechanism_select,)
+
+
+@app.cell
+def _(sasl_security_protocol_options, widget_labels):
+    sasl_security_protocol_select = mo.ui.dropdown(
+        label=widget_labels.get("sasl_security_protocol"),
+        options=sasl_security_protocol_options,
+        value=list(sasl_security_protocol_options.keys())[0],
         allow_select_none=False,
         searchable=True,
         full_width=True,
     )
-    return (sasl_mechanism_select,)
+    return (sasl_security_protocol_select,)
 
 
 @app.cell
@@ -1126,6 +1153,7 @@ def _(
     registry_password_input,
     sasl_enabled_checkbox,
     sasl_mechanism_select,
+    sasl_security_protocol_select,
     size_select,
 ):
     # Merge widget-controlled values into the key/value groups the template renders
@@ -1176,7 +1204,8 @@ def _(
         confluent_sasl_records,
         {
             "CONFLUENT_SASL_ENABLED": bool_str(sasl_enabled_checkbox.value),
-            "CONFLUENT_SASL_MECHANISM": sasl_mechanism_select.value,
+            "CONFLUENT_SASL_MECHANISM": ",".join(sasl_mechanism_select.value),
+            "CONFLUENT_SASL_SECURITY_PROTOCOL": sasl_security_protocol_select.value,
         },
     )
     confluent_mds = ordered_values(
@@ -1282,9 +1311,21 @@ def _(
     include_flink_checkbox,
     mds_enabled_checkbox,
     sasl_enabled_checkbox,
+    sasl_mechanism_select,
+    sasl_security_protocol_select,
 ):
     # Flag combinations the install scripts reject
     _warnings = []
+    if sasl_enabled_checkbox.value and not sasl_mechanism_select.value:
+        _warnings.append("SASL is enabled - select at least one SASL mechanism.")
+    if (
+        sasl_enabled_checkbox.value
+        and sasl_security_protocol_select.value != "SASL_PLAINTEXT"
+    ):
+        _warnings.append(
+            f"Security protocol {sasl_security_protocol_select.value} is not supported yet - "
+            "the internal listeners have no TLS and PLAINTEXT/SSL disable SASL. Use SASL_PLAINTEXT."
+        )
     if not sasl_enabled_checkbox.value and mds_enabled_checkbox.value:
         _warnings.append(
             "MDS / RBAC requires SASL - enable SASL or disable MDS."
