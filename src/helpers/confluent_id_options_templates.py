@@ -162,7 +162,17 @@ confluent_auth_mode_records = [
     },
 ]
 
-confluent_sasl_mechanism_options = ["SCRAM-SHA-512", "SCRAM-SHA-256"]
+# Several may be enabled at once; clients use the strongest (listed first).
+confluent_sasl_mechanism_options = ["SCRAM-SHA-512", "SCRAM-SHA-256", "PLAIN"]
+
+# Only SASL_PLAINTEXT is served today; the others need TLS on the internal
+# listeners (SSL/SASL_SSL) or disable SASL (PLAINTEXT/SSL).
+confluent_sasl_security_protocol_options = [
+    "SASL_PLAINTEXT",
+    "SASL_SSL",
+    "PLAINTEXT",
+    "SSL",
+]
 
 confluent_mds_user_store_options = ["LDAP", "OAUTH"]
 
@@ -270,6 +280,7 @@ default_confluent_web_ui_auth = [
 default_confluent_sasl = [
     {"key": "CONFLUENT_SASL_ENABLED", "value": "true"},
     {"key": "CONFLUENT_SASL_MECHANISM", "value": "SCRAM-SHA-512"},
+    {"key": "CONFLUENT_SASL_SECURITY_PROTOCOL", "value": "SASL_PLAINTEXT"},
     {"key": "CONFLUENT_SASL_ADMIN_USER", "value": "confluent-admin"},
     {"key": "CONFLUENT_SASL_CLIENTS", "value": "app-client"},  # comma-separated
     {"key": "CONFLUENT_SASL_SECRET", "value": "confluent-sasl"},

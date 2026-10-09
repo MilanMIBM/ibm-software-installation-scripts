@@ -14,27 +14,31 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # ==============================================================================
 # Confluent Platform - SASL authentication for Kafka clients
 # ------------------------------------------------------------------------------
-# Turns on SASL/SCRAM-SHA-512 on the broker listeners and mints per-client
+# Turns on SASL on the broker listeners (the mechanisms in
+# CONFLUENT_SASL_MECHANISM, SCRAM-SHA-512 by default) and mints per-client
 # credentials. This is a DIFFERENT axis from the web UI auth in the other x.2
 # scripts: those protect Control Center, this protects the Kafka protocol, which
 # is otherwise open to anyone who can reach port 29092.
 #
-# SCRAM rather than PLAIN: SCRAM stores credentials in Kafka's own metadata, so
-# clients can be added and revoked with kafka-configs at runtime. SASL/PLAIN
-# keeps them in a static JAAS file that requires a rolling broker restart for
-# every change.
+# SCRAM is the default: it stores credentials in Kafka's own metadata, so
+# clients can be added and revoked with kafka-configs at runtime. PLAIN can be
+# listed as well (e.g. CONFLUENT_SASL_MECHANISM=PLAIN,SCRAM-SHA-512) for clients
+# that do not speak SCRAM; its credentials are rendered from the same secret
+# into the broker JAAS by the installer, so every change rolls the brokers.
 #
 # Listener layout after this runs:
 #   CONTROLLER  (29093) PLAINTEXT      - KRaft quorum, never leaves the pod network
 #   PLAINTEXT   (29092) SASL_PLAINTEXT - platform components and in-cluster apps
 #   PLAINTEXT_HOST (9092) SASL_PLAINTEXT - same, via the broker Service
+# The SASL_PLAINTEXT of the two client listeners is CONFLUENT_SASL_SECURITY_PROTOCOL.
 #
 # TLS is deliberately NOT enabled here: it needs a cert lifecycle (cert-manager
 # or a CA) that this stack has no opinion about. SASL_PLAINTEXT authenticates
-# clients but does not encrypt, so credentials cross the pod network in the
-# SCRAM handshake (which is challenge-response, so the password itself is never
-# sent in the clear). Adequate inside a cluster; add TLS before exposing Kafka
-# outside one.
+# clients but does not encrypt. With SCRAM that is acceptable inside a cluster:
+# the handshake is challenge-response, so the password itself is never sent.
+# PLAIN sends the password as-is, readable by anything on the pod network, so
+# prefer SCRAM for in-cluster clients and keep PLAIN for those that need it.
+# External access (x.4) is always SASL_SSL.
 #
 # DISRUPTIVE: every broker restarts, and every component is reconfigured. Topic
 # data is preserved.
@@ -87,18 +91,26 @@ eval "${OC_LOGIN}"
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 : "${CONFLUENT_SASL_MECHANISM:=SCRAM-SHA-512}"
+: "${CONFLUENT_SASL_SECURITY_PROTOCOL:=SASL_PLAINTEXT}"
 : "${CONFLUENT_SASL_ADMIN_USER:=confluent-admin}"
 : "${CONFLUENT_SASL_SECRET:=confluent-sasl}"
 : "${CONFLUENT_SASL_CLIENTS:=app-client}"
 : "${CONFLUENT_BROKER_INTERNAL_PORT:=29092}"
 [[ -n "${CLIENTS_OVERRIDE}" ]] && CONFLUENT_SASL_CLIENTS="${CLIENTS_OVERRIDE}"
+source "${_CP4D_REPO_ROOT}/scripts/install_confluent_platform/confluent_sasl_helpers.sh"
+confluent_sasl_resolve || exit 1
+# Checked here as well as in the installer so a bad value fails before any
+# broker restarts. --disable ignores it: the listeners go back to PLAINTEXT.
+if ! $DISABLE; then
+    confluent_sasl_check_protocol || exit 1
+fi
 
 oc get namespace "${NS}" &>/dev/null || { echo "[ERROR] Project '${NS}' does not exist." >&2; exit 1; }
 
 _current="$(oc get sts broker -n "${NS}" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KAFKA_LISTENER_SECURITY_PROTOCOL_MAP")].value}' 2>/dev/null || true)"
 case "${_current}" in
-    *SASL*) _state="SASL enabled (${CONFLUENT_SASL_MECHANISM})" ;;
+    *SASL*) _state="SASL enabled" ;;
     *)      _state="PLAINTEXT - Kafka is open to anyone who can reach it" ;;
 esac
 
@@ -111,7 +123,7 @@ echo "  current : ${_state}"
 if $DISABLE; then
     echo "  target  : PLAINTEXT (authentication removed)"
 else
-    echo "  target  : SASL_PLAINTEXT / ${CONFLUENT_SASL_MECHANISM}"
+    echo "  target  : ${CONFLUENT_SASL_SECURITY_PROTOCOL} / ${CONFLUENT_SASL_MECHANISMS} (clients use ${CONFLUENT_SASL_CLIENT_MECHANISM})"
     echo "  admin   : ${CONFLUENT_SASL_ADMIN_USER} (used by the platform components)"
     echo "  clients : ${_client_list}"
 fi
@@ -151,6 +163,12 @@ if $DISABLE; then
 else
     export CONFLUENT_SASL_ENABLED="true"
 
+    # The admin password the running brokers know, captured before a rotation
+    # replaces it: registering SCRAM users on a cluster that already requires
+    # SASL has to authenticate with the credential currently in force.
+    _admin_pw_live="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
+        -o jsonpath="{.data.${CONFLUENT_SASL_ADMIN_USER}}" 2>/dev/null | base64 --decode 2>/dev/null || true)"
+
     # Reuse stored passwords unless rotating, so existing clients keep working.
     typeset -A _pw
     for _u in "${CONFLUENT_SASL_ADMIN_USER}" ${=_client_list}; do
@@ -171,17 +189,20 @@ else
 
     # SCRAM credentials live in Kafka metadata. They must exist BEFORE the
     # brokers restart into SASL, or the components cannot authenticate and the
-    # cluster will not form. Written over the still-PLAINTEXT listener.
-    echo "[INFO] Registering SCRAM credentials in Kafka..."
+    # cluster will not form. Written over the internal listener, as the admin
+    # user when that listener already requires SASL. PLAIN needs nothing here:
+    # the installer renders it from the secret above.
+    [[ -n "${CONFLUENT_SASL_SCRAM_MECHANISMS}" ]] && echo "[INFO] Registering SCRAM credentials in Kafka..."
     for _u in "${(@k)_pw}"; do
-        if oc exec broker-0 -n "${NS}" -- kafka-configs \
-              --bootstrap-server "localhost:${CONFLUENT_BROKER_INTERNAL_PORT}" \
-              --alter --add-config "${CONFLUENT_SASL_MECHANISM}=[password=${_pw[$_u]}]" \
+        [[ -z "${CONFLUENT_SASL_SCRAM_MECHANISMS}" ]] && break
+        if confluent_sasl_kafka_configs "${NS}" "${CONFLUENT_BROKER_INTERNAL_PORT}" \
+              "${CONFLUENT_SASL_ADMIN_USER}" "${_admin_pw_live}" \
+              --alter --add-config "$(confluent_sasl_scram_config "${_pw[$_u]}")" \
               --entity-type users --entity-name "${_u}" >/dev/null 2>&1; then
             echo "[INFO]   registered ${_u}"
         else
             echo "[ERROR] Failed to register SCRAM credential for '${_u}'." >&2
-            echo "[ERROR] Brokers are still PLAINTEXT and unchanged; nothing was broken." >&2
+            echo "[ERROR] The brokers are unchanged; nothing was broken." >&2
             exit 1
         fi
     done
@@ -223,9 +244,9 @@ else
             [[ -z "${_p}" ]] && continue
             echo "# ---- ${_u} ----"
             echo "# bootstrap.servers=broker-headless.${NS}.svc.cluster.local:${CONFLUENT_BROKER_INTERNAL_PORT}"
-            echo "# security.protocol=SASL_PLAINTEXT"
-            echo "# sasl.mechanism=${CONFLUENT_SASL_MECHANISM}"
-            echo "# sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${_u}\" password=\"${_p}\";"
+            echo "# security.protocol=${CONFLUENT_SASL_SECURITY_PROTOCOL}"
+            # One mechanism + jaas pair per enabled mechanism; pick one.
+            confluent_sasl_client_alternatives "${_u}" "${_p}"
             echo ""
         done
     } > "${OUT}"
@@ -234,8 +255,8 @@ else
     echo "[INFO] Client properties written to ${OUT##*/} (mode 600)."
     echo ""
     echo "  bootstrap.servers=broker-headless.${NS}.svc.cluster.local:${CONFLUENT_BROKER_INTERNAL_PORT}"
-    echo "  security.protocol=SASL_PLAINTEXT"
-    echo "  sasl.mechanism=${CONFLUENT_SASL_MECHANISM}"
+    echo "  security.protocol=${CONFLUENT_SASL_SECURITY_PROTOCOL}"
+    echo "  sasl.mechanism=${CONFLUENT_SASL_CLIENT_MECHANISM}  (enabled: ${CONFLUENT_SASL_MECHANISMS})"
     echo ""
     echo "  Read a client's password with:"
     echo "    oc get secret ${CONFLUENT_SASL_SECRET} -n ${NS} -o jsonpath='{.data.<client>}' | base64 --decode"

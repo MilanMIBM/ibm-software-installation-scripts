@@ -42,7 +42,7 @@
         {
         "encrypt": false,
         "key": "kafka.security-protocol",
-        "value": {{ sasl_mechanism  | default("SASL_SSL") | tojson }}
+        "value": {{ security_protocol  | default("SASL_SSL") | tojson }}
         },
         {
         "encrypt": false,

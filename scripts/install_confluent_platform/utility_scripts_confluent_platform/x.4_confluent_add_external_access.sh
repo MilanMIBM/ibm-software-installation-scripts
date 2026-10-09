@@ -55,7 +55,11 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # Usage:
 #   ./x.4_confluent_add_external_access.sh [--disable] [--rotate] [--yes]
 #        [--dry-run] [--no-status] [--cert-path P --key-path P]
+#        [--client-config-only]
 #
+#   --client-config-only  only rewrite confluent_external_client.properties
+#                from the live cluster; certificates, routes and brokers are
+#                left alone (external access must already be enabled)
 #   --disable    remove the routes and the EXTERNAL listener
 #   --rotate     regenerate the CA and broker certificates
 #   --cert-path  use an existing PEM certificate instead of generating one
@@ -72,6 +76,7 @@ DRY_RUN=false
 RUN_STATUS=true
 CERT_PATH=""
 KEY_PATH=""
+CLIENT_CONFIG_ONLY=false
 
 _need_value() { [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }; }
 
@@ -84,7 +89,8 @@ while (( $# > 0 )); do
         --yes|-y)    ASSUME_YES=true; shift ;;
         --dry-run)   DRY_RUN=true; shift ;;
         --no-status) RUN_STATUS=false; shift ;;
-        -h|--help)   sed -n '16,62p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --client-config-only) CLIENT_CONFIG_ONLY=true; shift ;;
+        -h|--help)   sed -n '16,69p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Try --help." >&2; exit 1 ;;
     esac
 done
@@ -106,10 +112,11 @@ NS="${PROJECT_CONFLUENT_SERVER}"
 : "${CONFLUENT_EXTERNAL_CERT_VALIDITY_DAYS:=825}"
 : "${CONFLUENT_BROKER_REPLICAS:=3}"
 : "${CONFLUENT_SASL_ENABLED:=false}"
-: "${CONFLUENT_SASL_MECHANISM:=SCRAM-SHA-512}"
 : "${CONFLUENT_SASL_SECRET:=confluent-sasl}"
 : "${CONFLUENT_SASL_CLIENTS:=app-client}"
 : "${CONFLUENT_ROUTE_DOMAIN:=}"
+source "${_CP4D_REPO_ROOT}/scripts/install_confluent_platform/confluent_sasl_helpers.sh"
+confluent_sasl_resolve || exit 1
 
 oc get namespace "${NS}" &>/dev/null || { echo "[ERROR] Project '${NS}' does not exist." >&2; exit 1; }
 
@@ -145,7 +152,11 @@ else
     echo "  brokers : ${CONFLUENT_BROKER_REPLICAS}"
     for _h in "${_hosts[@]}"; do echo "            ${_h}:443"; done
 fi
-echo "  restarts: all ${CONFLUENT_BROKER_REPLICAS} brokers (topic data is kept)"
+if $CLIENT_CONFIG_ONLY; then
+    echo "  restarts: none (--client-config-only: local client file only)"
+else
+    echo "  restarts: all ${CONFLUENT_BROKER_REPLICAS} brokers (topic data is kept)"
+fi
 echo ""
 
 # ------------------------------------------------------------------------------
@@ -157,6 +168,72 @@ if ! $DISABLE && [[ "${CONFLUENT_SASL_ENABLED}" != "true" ]]; then
     echo "[ERROR] something this script will do. Run this first:" >&2
     echo "[ERROR]   ${SCRIPT_DIR}/x.2_confluent_add_sasl.sh" >&2
     exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Client configuration, written by step 4 and by --client-config-only
+# ------------------------------------------------------------------------------
+write_client_config() {
+    REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
+    OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_external_client.properties"
+    CA_OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
+    mkdir -p "$(dirname "${OUT}")"
+
+    _bootstrap=""
+    for _h in "${_hosts[@]}"; do _bootstrap+="${_h}:443,"; done
+    _bootstrap="${_bootstrap%,}"
+
+    _first_client="${CONFLUENT_SASL_CLIENTS%%,*}"
+    _first_pw="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
+        -o jsonpath="{.data.${_first_client}}" 2>/dev/null | base64 --decode || true)"
+
+    {
+        echo "# Written by $(basename "${ZSH_ARGZERO}") on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo "# Kafka client properties for EXTERNAL access to the cluster in '${NS}'."
+        echo "#"
+        echo "#   kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
+        echo "#     --command-config configs/confluent_platform_config/confluent_external_client.properties --list"
+        echo ""
+        echo "bootstrap.servers=${_bootstrap}"
+        echo "security.protocol=SASL_SSL"
+        echo "sasl.mechanism=${CONFLUENT_SASL_CLIENT_MECHANISM}"
+        echo "ssl.truststore.type=PEM"
+        echo "ssl.truststore.location=${CA_OUT}"
+        if [[ -n "${_first_pw}" ]]; then
+            echo "sasl.jaas.config=$(confluent_sasl_client_jaas "${CONFLUENT_SASL_CLIENT_MECHANISM}" "${_first_client}" "${_first_pw}")"
+            echo ""
+            echo "# ---- alternatives: replace BOTH sasl.* lines above with one pair ----"
+            confluent_sasl_client_alternatives "${_first_client}" "${_first_pw}" "${CONFLUENT_SASL_CLIENT_MECHANISM}"
+        else
+            echo "# sasl.jaas.config=$(confluent_sasl_client_jaas "${CONFLUENT_SASL_CLIENT_MECHANISM}" "<user>" "<password>")"
+        fi
+    } > "${OUT}"
+    chmod 600 "${OUT}"
+
+    echo "[INFO] Client properties written to ${OUT##*/} (mode 600)."
+    echo "[INFO] CA certificate at ${CA_OUT##*/}."
+    echo ""
+    echo "  bootstrap.servers=${_bootstrap}"
+    echo "  security.protocol=SASL_SSL"
+    echo ""
+    echo "  Test it from here:"
+    echo "    kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
+    echo "      --command-config ${OUT#${REPO_ROOT}/} --list"
+    echo ""
+    echo "  Remove external access:  $(basename "${ZSH_ARGZERO}") --disable"
+}
+
+if $CLIENT_CONFIG_ONLY; then
+    if [[ "${_state}" != "enabled" ]]; then
+        echo "[ERROR] External access is not enabled; run this script without --client-config-only first." >&2
+        exit 1
+    fi
+    if $DRY_RUN; then
+        echo "[INFO] --dry-run: would rewrite confluent_external_client.properties only."
+        exit 0
+    fi
+    write_client_config
+    exit 0
 fi
 
 if $DRY_RUN; then
@@ -386,50 +463,7 @@ echo "--------------------------------------------------------------------------
 echo " Step 4/4: client configuration"
 echo "------------------------------------------------------------------------------"
 
-REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_external_client.properties"
-CA_OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
-mkdir -p "$(dirname "${OUT}")"
-
-_bootstrap=""
-for _h in "${_hosts[@]}"; do _bootstrap+="${_h}:443,"; done
-_bootstrap="${_bootstrap%,}"
-
-_first_client="${CONFLUENT_SASL_CLIENTS%%,*}"
-_first_pw="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
-    -o jsonpath="{.data.${_first_client}}" 2>/dev/null | base64 --decode || true)"
-
-{
-    echo "# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    echo "# Kafka client properties for EXTERNAL access to the cluster in '${NS}'."
-    echo "#"
-    echo "#   kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
-    echo "#     --command-config configs/confluent_platform_config/confluent_external_client.properties --list"
-    echo ""
-    echo "bootstrap.servers=${_bootstrap}"
-    echo "security.protocol=SASL_SSL"
-    echo "sasl.mechanism=${CONFLUENT_SASL_MECHANISM}"
-    echo "ssl.truststore.type=PEM"
-    echo "ssl.truststore.location=${CA_OUT}"
-    if [[ -n "${_first_pw}" ]]; then
-        echo "sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${_first_client}\" password=\"${_first_pw}\";"
-    else
-        echo "# sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"<user>\" password=\"<password>\";"
-    fi
-} > "${OUT}"
-chmod 600 "${OUT}"
-
-echo "[INFO] Client properties written to ${OUT##*/} (mode 600)."
-echo "[INFO] CA certificate at ${CA_OUT##*/}."
-echo ""
-echo "  bootstrap.servers=${_bootstrap}"
-echo "  security.protocol=SASL_SSL"
-echo ""
-echo "  Test it from here:"
-echo "    kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
-echo "      --command-config ${OUT#${REPO_ROOT}/} --list"
-echo ""
-echo "  Remove external access:  $(basename $0) --disable"
+write_client_config
 
 if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
     echo ""

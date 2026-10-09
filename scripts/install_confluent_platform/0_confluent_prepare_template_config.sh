@@ -354,12 +354,22 @@ _platform_defaults=(
 # it is then reused on every later run, so redeploys keep the same credentials.'
     'CONFLUENT_AUTH_PASSWORD||'
     'CONFLUENT_AUTH_PASSWORD_LENGTH|24|'
-    'CONFLUENT_SASL_ENABLED|true|# ---- Kafka client authentication (SASL/SCRAM) --------------------------------
+    'CONFLUENT_SASL_ENABLED|true|# ---- Kafka client authentication (SASL) --------------------------------------
 # Independent of the web-UI auth above: this secures the Kafka wire protocol.
 # Enabling it makes the brokers reject unauthenticated clients.'
-    'CONFLUENT_SASL_MECHANISM|SCRAM-SHA-512|'
+    'CONFLUENT_SASL_MECHANISM|SCRAM-SHA-512|# One or more of PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, comma-separated
+# (e.g. PLAIN,SCRAM-SHA-512). The brokers accept all of them; inter-broker
+# traffic, the components and generated client configs use the strongest.
+# PLAIN credentials are rendered into the broker JAAS from the SASL secret.
+# Known client limit: StreamSets (watsonx.data) connects over the internal
+# listener with PLAIN only - SCRAM-SHA-512 failed there - so keep PLAIN in the
+# list while it is used. Do not set CONFLUENT_SASL_CLIENT_MECHANISM here: it is
+# derived from this list on every run.'
+    'CONFLUENT_SASL_SECURITY_PROTOCOL|SASL_PLAINTEXT|# security.protocol of the internal broker listeners, the components and the
+# generated client properties. One of: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL.
+# Only SASL_PLAINTEXT works today: the internal listeners have no TLS.'
     'CONFLUENT_SASL_ADMIN_USER|confluent-admin|'
-    'CONFLUENT_SASL_CLIENTS|app-client|# Comma-separated. One SCRAM credential is minted per name.'
+    'CONFLUENT_SASL_CLIENTS|app-client|# Comma-separated. One credential is minted per name, valid for every enabled mechanism.'
     'CONFLUENT_SASL_SECRET|confluent-sasl|'
     'CONFLUENT_MDS_ENABLED|true|# ---- Metadata Service (MDS) / RBAC -------------------------------------------
 # MDS is embedded in the cp-server broker image, so enabling it adds no new

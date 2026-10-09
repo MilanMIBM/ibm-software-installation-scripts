@@ -121,7 +121,7 @@ for _s in "${CONFLUENT_LDAP_SECRET}" "${CONFLUENT_KEYCLOAK_SECRET}"; do
     fi
 done
 
-# SASL/SCRAM client credentials for the Kafka wire protocol, minted by
+# SASL client credentials for the Kafka wire protocol, minted by
 # x.2_confluent_add_sasl.sh. Emitted as NAME=PASSWORD pairs, one per line, so a
 # caller can pick the client it needs without a second oc call.
 : "${CONFLUENT_SASL_SECRET:=confluent-sasl}"
@@ -187,7 +187,7 @@ export CONFLUENT_PLATFORM_PASSWORD="${CONFLUENT_MDS_PASS}"
 # configs/confluent_platform_config/confluent_external_client.properties (SASL_SSL).
 export CONFLUENT_BOOTSTRAP_EXTERNAL="${CONFLUENT_BOOTSTRAP_EXTERNAL}"
 
-# --- Kafka SASL/SCRAM client credentials -------------------------------------
+# --- Kafka SASL client credentials -------------------------------------------
 # Empty unless x.2_confluent_add_sasl.sh has been run. One NAME=PASSWORD per
 # line, including the platform admin user. Read one with:
 #   echo "\$CONFLUENT_SASL_CLIENT_CREDS" | grep '^app-client=' | cut -d= -f2-
@@ -212,7 +212,8 @@ echo "[INFO] Confluent instance details written to ${VARS_FILE##*/}"
 # passed to the CLI tools with --command-config, so the values are live rather
 # than commented out.
 : "${CONFLUENT_WRITE_SASL_PROPERTIES:=true}"
-: "${CONFLUENT_SASL_MECHANISM:=SCRAM-SHA-512}"
+source "${_CP4D_REPO_ROOT}/scripts/install_confluent_platform/confluent_sasl_helpers.sh"
+confluent_sasl_resolve || exit 1
 
 if [[ "${CONFLUENT_WRITE_SASL_PROPERTIES}" != "true" ]]; then
     echo "[INFO] Skipping the SASL client properties file (CONFLUENT_WRITE_SASL_PROPERTIES=false)."
@@ -247,23 +248,29 @@ else
         echo "# Suppress with:   CONFLUENT_WRITE_SASL_PROPERTIES=false"
         echo ""
         echo "bootstrap.servers=${CONFLUENT_BOOTSTRAP_INTERNAL}"
-        echo "security.protocol=SASL_PLAINTEXT"
-        echo "sasl.mechanism=${CONFLUENT_SASL_MECHANISM}"
-        echo "sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${_default_user}\" password=\"${_default_pw}\";"
+        echo "security.protocol=${CONFLUENT_SASL_SECURITY_PROTOCOL}"
+        echo "sasl.mechanism=${CONFLUENT_SASL_CLIENT_MECHANISM}"
+        echo "sasl.jaas.config=$(confluent_sasl_client_jaas "${CONFLUENT_SASL_CLIENT_MECHANISM}" "${_default_user}" "${_default_pw}")"
         echo ""
-        echo "# ---- other clients: swap the jaas line above for one of these ----"
+        # Every user can log in with every enabled mechanism, so each pair is
+        # listed; the live settings above are left out of the list.
+        echo "# ---- alternatives: replace BOTH sasl.* lines above with one pair ----"
+        echo "# The brokers accept ${CONFLUENT_SASL_MECHANISMS//,/, }; every user can use any of them."
+        echo "# Not every client supports every mechanism: StreamSets (watsonx.data)"
+        echo "# connects to this internal bootstrap with PLAIN; SCRAM-SHA-512 failed there."
+        confluent_sasl_client_alternatives "${_default_user}" "${_default_pw}" "${CONFLUENT_SASL_CLIENT_MECHANISM}"
         for _u in "${_sasl_users[@]}"; do
             [[ "${_u}" == "${_default_user}" ]] && continue
             _p="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
                 -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode || true)"
             [[ -z "${_p}" ]] && continue
-            echo "# ${_u}"
-            echo "# sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${_u}\" password=\"${_p}\";"
+            echo "#"
+            confluent_sasl_client_alternatives "${_u}" "${_p}"
         done
 
         # watsonx.data "Add component - Apache Kafka" needs the EXTERNAL
         # listener: its form has no plaintext option, so it always opens TLS and
-        # the SASL_PLAINTEXT listener above cannot answer it. The fields are
+        # the internal listener above cannot answer it. The fields are
         # spelled out because they are typed into a UI, not read by a client.
         echo ""
         echo "# =============================================================================="
@@ -282,7 +289,9 @@ else
             done
             echo "#"
             echo "# SASL connection  - ON"
-            echo "# SASL mechanism   - ${CONFLUENT_SASL_MECHANISM}"
+            _also=(${(s:,:)CONFLUENT_SASL_MECHANISMS})
+            _also=(${_also:#${CONFLUENT_SASL_CLIENT_MECHANISM}})
+            echo "# SASL mechanism   - ${CONFLUENT_SASL_CLIENT_MECHANISM}${_also:+ (also accepted: ${(j:, :)_also})}"
             echo "# Username         - ${_default_user}"
             echo "# API key/Password - ${_default_pw}"
             echo "#"
