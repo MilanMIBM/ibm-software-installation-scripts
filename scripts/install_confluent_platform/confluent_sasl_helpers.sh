@@ -29,18 +29,22 @@
 #   CONFLUENT_SASL_MECHANISMS        de-duplicated comma list (sasl.enabled.mechanisms)
 #   CONFLUENT_SASL_CLIENT_MECHANISM  strongest of them (inter-broker, components, clients)
 #   CONFLUENT_SASL_SCRAM_MECHANISMS  space-separated SCRAM subset (registered via kafka-configs)
+# All three are derived on every run and overwrite any value already in the
+# environment, so they do not belong in confluent_vars.sh.
 confluent_sasl_resolve() {
     local _m
     local -a _list
     for _m in ${(s:,:)CONFLUENT_SASL_MECHANISM}; do
         _m="${${_m//[[:space:]]/}:u}"
         [[ -z "${_m}" ]] && continue
-        # Kafka's name for SASL/PLAIN is just PLAIN; SASL_PLAIN reaches the
-        # brokers as an unknown mechanism and every client fails with
-        # "Failed to create SaslClient with mechanism SASL_PLAIN".
-        [[ "${_m}" == "SASL_PLAIN" ]] && _m="PLAIN"
         case "${_m}" in
             PLAIN|SCRAM-SHA-256|SCRAM-SHA-512) ;;
+            # Kafka's name for SASL/PLAIN is just PLAIN. SASL_PLAIN reaches the
+            # brokers as an unknown mechanism and every client fails with
+            # "Failed to create SaslClient with mechanism SASL_PLAIN".
+            SASL_PLAIN)
+                echo "[ERROR] 'SASL_PLAIN' is not a Kafka SASL mechanism; use 'PLAIN' in CONFLUENT_SASL_MECHANISM." >&2
+                return 1 ;;
             *)
                 echo "[ERROR] Unsupported SASL mechanism '${_m}' in CONFLUENT_SASL_MECHANISM." >&2
                 echo "[ERROR] Use PLAIN, SCRAM-SHA-256 and/or SCRAM-SHA-512, comma-separated." >&2
@@ -55,12 +59,21 @@ confluent_sasl_resolve() {
 
     CONFLUENT_SASL_MECHANISMS="${(j:,:)_list}"
     CONFLUENT_SASL_SCRAM_MECHANISMS="${(j: :)${(@M)_list:#SCRAM-*}}"
+    CONFLUENT_SASL_CLIENT_MECHANISM=""
     for _m in SCRAM-SHA-512 SCRAM-SHA-256 PLAIN; do
         if (( ${_list[(Ie)${_m}]} )); then
             CONFLUENT_SASL_CLIENT_MECHANISM="${_m}"
             break
         fi
     done
+    # Unreachable while the case above and this preference order list the same
+    # mechanisms. Guarded because an unset value surfaces later, under set -u,
+    # as "CONFLUENT_SASL_CLIENT_MECHANISM: parameter not set", which reads as
+    # a missing setting and invites exporting one by hand.
+    if [[ -z "${CONFLUENT_SASL_CLIENT_MECHANISM}" ]]; then
+        echo "[ERROR] No usable client mechanism in '${CONFLUENT_SASL_MECHANISMS}'." >&2
+        return 1
+    fi
 }
 
 # Only SASL_PLAINTEXT can be served today: the internal listeners have no

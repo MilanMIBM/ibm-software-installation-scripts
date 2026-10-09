@@ -30,14 +30,15 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   CONTROLLER  (29093) PLAINTEXT      - KRaft quorum, never leaves the pod network
 #   PLAINTEXT   (29092) SASL_PLAINTEXT - platform components and in-cluster apps
 #   PLAINTEXT_HOST (9092) SASL_PLAINTEXT - same, via the broker Service
-# (the SASL_PLAINTEXT above is CONFLUENT_SASL_SECURITY_PROTOCOL)
+# The SASL_PLAINTEXT of the two client listeners is CONFLUENT_SASL_SECURITY_PROTOCOL.
 #
 # TLS is deliberately NOT enabled here: it needs a cert lifecycle (cert-manager
 # or a CA) that this stack has no opinion about. SASL_PLAINTEXT authenticates
-# clients but does not encrypt, so credentials cross the pod network in the
-# SCRAM handshake (which is challenge-response, so the password itself is never
-# sent in the clear). Adequate inside a cluster; add TLS before exposing Kafka
-# outside one.
+# clients but does not encrypt. With SCRAM that is acceptable inside a cluster:
+# the handshake is challenge-response, so the password itself is never sent.
+# PLAIN sends the password as-is, readable by anything on the pod network, so
+# prefer SCRAM for in-cluster clients and keep PLAIN for those that need it.
+# External access (x.4) is always SASL_SSL.
 #
 # DISRUPTIVE: every broker restarts, and every component is reconfigured. Topic
 # data is preserved.

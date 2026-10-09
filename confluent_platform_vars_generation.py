@@ -292,7 +292,7 @@ def _():
         "flink_state_storage_class": "**Select the Flink checkpoint PVC storage class (RWX, pvc backend):**",
         "components_multiselect": "**Select the optional components to install (the broker is always installed):**",
         "auth_enabled": "Protect the web UIs with authentication?",
-        "sasl_enabled": "Require **SASL/SCRAM** authentication for Kafka clients?",
+        "sasl_enabled": "Require **SASL** authentication (PLAIN / SCRAM) for Kafka clients?",
         "mds_enabled": "Enable **MDS / RBAC** (`confluent login`)? *Requires SASL, licensed (30-day trial).*",
         "external_kafka_enabled": "Expose Kafka **outside the cluster** (SASL_SSL passthrough routes)? *Requires SASL.*",
         "create_routes": "Expose the component web endpoints as **OpenShift routes**?",
@@ -1033,7 +1033,7 @@ def _(
         default_confluent_web_ui_auth,
     )
     confluent_sasl_records = _kv(
-        "Kafka SASL/SCRAM (clients are comma-separated):",
+        "Kafka SASL (clients are comma-separated):",
         default_confluent_sasl,
     )
     confluent_mds_records = _kv(

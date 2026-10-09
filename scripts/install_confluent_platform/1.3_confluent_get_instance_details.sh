@@ -121,7 +121,7 @@ for _s in "${CONFLUENT_LDAP_SECRET}" "${CONFLUENT_KEYCLOAK_SECRET}"; do
     fi
 done
 
-# SASL/SCRAM client credentials for the Kafka wire protocol, minted by
+# SASL client credentials for the Kafka wire protocol, minted by
 # x.2_confluent_add_sasl.sh. Emitted as NAME=PASSWORD pairs, one per line, so a
 # caller can pick the client it needs without a second oc call.
 : "${CONFLUENT_SASL_SECRET:=confluent-sasl}"
@@ -187,7 +187,7 @@ export CONFLUENT_PLATFORM_PASSWORD="${CONFLUENT_MDS_PASS}"
 # configs/confluent_platform_config/confluent_external_client.properties (SASL_SSL).
 export CONFLUENT_BOOTSTRAP_EXTERNAL="${CONFLUENT_BOOTSTRAP_EXTERNAL}"
 
-# --- Kafka SASL/SCRAM client credentials -------------------------------------
+# --- Kafka SASL client credentials -------------------------------------------
 # Empty unless x.2_confluent_add_sasl.sh has been run. One NAME=PASSWORD per
 # line, including the platform admin user. Read one with:
 #   echo "\$CONFLUENT_SASL_CLIENT_CREDS" | grep '^app-client=' | cut -d= -f2-
@@ -256,6 +256,8 @@ else
         # listed; the live settings above are left out of the list.
         echo "# ---- alternatives: replace BOTH sasl.* lines above with one pair ----"
         echo "# The brokers accept ${CONFLUENT_SASL_MECHANISMS//,/, }; every user can use any of them."
+        echo "# Not every client supports every mechanism: StreamSets (watsonx.data)"
+        echo "# connects to this internal bootstrap with PLAIN; SCRAM-SHA-512 failed there."
         confluent_sasl_client_alternatives "${_default_user}" "${_default_pw}" "${CONFLUENT_SASL_CLIENT_MECHANISM}"
         for _u in "${_sasl_users[@]}"; do
             [[ "${_u}" == "${_default_user}" ]] && continue

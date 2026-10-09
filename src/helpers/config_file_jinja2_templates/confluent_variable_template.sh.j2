@@ -63,7 +63,7 @@ export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
 # ---- Web UI authentication ---------------------------------------------------
 # openshift = oauth-proxy sidecar + cluster login; basic = nginx basic auth.
 {{ export_block(confluent_web_ui_auth) }}
-# ---- Kafka client authentication (SASL/SCRAM) --------------------------------
+# ---- Kafka client authentication (SASL) --------------------------------------
 {{ export_block(confluent_sasl) }}
 # ---- Metadata Service (MDS) / RBAC -------------------------------------------
 # Requires CONFLUENT_SASL_ENABLED=true. Licensed: empty key = 30-day trial.
