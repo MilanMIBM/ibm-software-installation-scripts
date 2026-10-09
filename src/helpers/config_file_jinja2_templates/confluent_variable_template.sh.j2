@@ -63,7 +63,13 @@ export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
 # ---- Web UI authentication ---------------------------------------------------
 # openshift = oauth-proxy sidecar + cluster login; basic = nginx basic auth.
 {{ export_block(confluent_web_ui_auth) }}
-# ---- Kafka client authentication (SASL/SCRAM) --------------------------------
+# ---- Kafka client authentication (SASL) --------------------------------------
+# In-cluster listeners, inter-broker traffic and every platform component:
+#   CONFLUENT_SASL_PROTOCOL   SASL_PLAINTEXT | SASL_SSL (TLS from a generated CA)
+#   CONFLUENT_SASL_MECHANISM  SCRAM-SHA-512 | SCRAM-SHA-256 | PLAIN
+# SCRAM users can be added at runtime; PLAIN rolls the brokers on every change
+# and should only run over SASL_SSL. Change these on a live cluster with
+# x.2_confluent_add_sasl.sh --protocol/--mechanism, which also saves them here.
 {{ export_block(confluent_sasl) }}
 # ---- Metadata Service (MDS) / RBAC -------------------------------------------
 # Requires CONFLUENT_SASL_ENABLED=true. Licensed: empty key = 30-day trial.
@@ -73,7 +79,9 @@ export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
 # ---- Keycloak / external OIDC (CONFLUENT_MDS_USER_STORE=OAUTH) ---------------
 {{ export_block(confluent_oauth) }}
 # ---- External Kafka access (passthrough routes + SASL_SSL) -------------------
-# Requires CONFLUENT_SASL_ENABLED=true.
+# Requires CONFLUENT_SASL_ENABLED=true. Always SASL_SSL: the routes pick the
+# broker from the TLS SNI. CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS is a comma
+# list (PLAIN, SCRAM-SHA-512, SCRAM-SHA-256); the first is used in client files.
 {{ export_block(confluent_external_access) }}
 # >>> confluent sizing (managed by 0_confluent_prepare_template_config.sh) >>>
 # Size: {{ size_select.value }}

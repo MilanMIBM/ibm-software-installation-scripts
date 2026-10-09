@@ -109,13 +109,15 @@ ALERTMANAGER_URL="http://alertmanager:${CONFLUENT_ALERTMANAGER_PORT}"
 # ------------------------------------------------------------------------------
 # SASL (Kafka client authentication), provisioned by x.2_confluent_add_sasl.sh
 # ------------------------------------------------------------------------------
-# When enabled the broker listeners become SASL_PLAINTEXT and every component
-# must present the admin credential. The credential is read back from the secret
-# so repeated installs keep the same one.
+# When enabled the in-cluster listeners become CONFLUENT_SASL_PROTOCOL
+# (SASL_PLAINTEXT or SASL_SSL) with CONFLUENT_SASL_MECHANISM, and every
+# component presents the admin credential. The EXTERNAL listener takes its own
+# mechanism list. See confluent_kafka_security.sh for what each setting means.
+# The credential is read back from the secret so repeated installs keep it.
 : "${CONFLUENT_SASL_ENABLED:=false}"
-: "${CONFLUENT_SASL_MECHANISM:=SCRAM-SHA-512}"
 : "${CONFLUENT_SASL_ADMIN_USER:=confluent-admin}"
 : "${CONFLUENT_SASL_SECRET:=confluent-sasl}"
+source "${SCRIPT_DIR}/confluent_kafka_security.sh"
 
 # MDS implies SASL. MDS issues tokens to principals that must already be able to
 # authenticate to Kafka, so SASL is a hard prerequisite rather than an
@@ -164,14 +166,34 @@ fi
 
 _broker_protocol_map="CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
 _broker_sasl_env=""
-_client_sasl_env=""
-_jaas_props=""
+_broker_sasl_mounts=""
+_broker_sasl_volumes=""
 _broker_launch="              exec /etc/confluent/docker/run"
+_client_sasl_env=""
+_restproxy_sasl_env=""
 _connect_sasl_env=""
 _ksql_sasl_env=""
 _c3_sasl_env=""
+# Component-side CA mount for SASL_SSL. Two forms of each: a whole block for
+# components with no volumes of their own, and a bare list item for Control
+# Center, which already has volumeMounts/volumes lists to extend.
+_client_ca_mount=""
+_client_ca_mount_item=""
+_client_ca_volume=""
+_client_ca_volume_item=""
+# Pod-template annotations. A credential or certificate change does not touch
+# any other field of the spec, so without these a rotation would never roll the
+# pods that read the new value at startup.
+_client_auth_annotation=""
+_broker_auth_annotation=""
+# What the inter-broker listener speaks, as "<protocol>/<mechanism>/<ca>". Two
+# brokers that disagree on it cannot replicate, which is what the stale-broker
+# check after the broker rollout compares.
+_inter_broker_security="PLAINTEXT/-/-"
 
 if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
+    kafka_security_validate || exit 1
+
     SASL_ADMIN_PW="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
         -o jsonpath="{.data.${CONFLUENT_SASL_ADMIN_USER}}" 2>/dev/null | base64 --decode || true)"
     if [[ -z "${SASL_ADMIN_PW}" ]]; then
@@ -180,141 +202,202 @@ if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
         exit 1
     fi
 
+    _proto="${CONFLUENT_SASL_PROTOCOL}"
+    _mech="${CONFLUENT_SASL_MECHANISM}"
+
+    _ca_hash="-"
+    if [[ "${_proto}" == "SASL_SSL" ]]; then
+        kafka_ensure_internal_tls "${NS}" || exit 1
+        _ca_hash="$(oc get secret "${CONFLUENT_INTERNAL_TLS_SECRET}" -n "${NS}" \
+            -o jsonpath='{.data.ca\.crt}' | kafka_hash)"
+    fi
+    _inter_broker_security="${_proto}/${_mech}/${_ca_hash}"
+
     # The controller listener stays PLAINTEXT: it is pod-network-internal and
     # KRaft quorum traffic authenticating against SCRAM stored in the very
     # metadata log it is trying to form is a bootstrapping deadlock.
-    _broker_protocol_map="CONTROLLER:PLAINTEXT,PLAINTEXT:SASL_PLAINTEXT,PLAINTEXT_HOST:SASL_PLAINTEXT"
+    _broker_protocol_map="CONTROLLER:PLAINTEXT,PLAINTEXT:${_proto},PLAINTEXT_HOST:${_proto}"
 
-    # Emitted into a single-quoted YAML scalar, so the double quotes JAAS
-    # requires are literal here. Escaping them (\\") would put real backslashes
-    # in the value and Kafka would fail to parse the login module.
-    _jaas="org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${CONFLUENT_SASL_ADMIN_USER}\" password=\"${SASL_ADMIN_PW}\";"
+    # Listener-scoped SASL/TLS settings are written into kafka.properties at
+    # startup by broker_listener_security.sh, shipped as this ConfigMap. The
+    # EXTERNAL entry is only listed when that listener exists.
+    _sasl_listeners="plaintext:${_mech} plaintext_host:${_mech}"
+    [[ "${CONFLUENT_EXTERNAL_KAFKA_ENABLED}" == "true" ]] && \
+        _sasl_listeners+=" external:${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}"
+    _tls_listeners=""
+    [[ "${_proto}" == "SASL_SSL" ]] && _tls_listeners="plaintext plaintext_host"
 
-    # The listener-scoped JAAS config CANNOT be passed as an environment
-    # variable. The image lowercases KAFKA_* names and turns every underscore
-    # into a dot, so KAFKA_LISTENER_NAME_PLAINTEXT_SCRAM_SHA_512_SASL_JAAS_CONFIG
-    # becomes listener.name.plaintext.scram.sha.512.sasl.jaas.config - but Kafka
-    # wants the mechanism hyphenated: listener.name.plaintext.scram-sha-512....
-    # The dotted key is silently ignored and the broker dies with
-    # "Could not find a 'KafkaServer' or 'plaintext.KafkaServer' entry in the
-    # JAAS configuration". The unprefixed sasl.jaas.config does NOT satisfy it
-    # either (verified: the SASL listener still fails to build), so these two
-    # properties are appended to kafka.properties in the startup command below,
-    # where hyphens survive.
-    _jaas_props="listener.name.plaintext.${CONFLUENT_SASL_MECHANISM:l}.sasl.jaas.config=${_jaas}
-listener.name.plaintext_host.${CONFLUENT_SASL_MECHANISM:l}.sasl.jaas.config=${_jaas}"
+    oc create configmap broker-listener-security -n "${NS}" \
+        --from-file=listener-security.sh="${SCRIPT_DIR}/broker_listener_security.sh" \
+        --dry-run=client -o yaml | oc apply -f - >/dev/null
+    oc label configmap broker-listener-security -n "${NS}" \
+        app.kubernetes.io/part-of=confluent --overwrite >/dev/null
 
     # Replicate what /etc/confluent/docker/run does (configure -> ensure ->
-    # launch) so the JAAS properties can be appended to the generated config
+    # launch) so the listener settings can be appended to the generated config
     # between the first two phases.
-    # Written with printf, not a heredoc: a heredoc body would have to start at
-    # column 1, which breaks out of the YAML block scalar this is embedded in.
-    _jaas_line1="listener.name.plaintext.${CONFLUENT_SASL_MECHANISM:l}.sasl.jaas.config=${_jaas}"
-    _jaas_line2="listener.name.plaintext_host.${CONFLUENT_SASL_MECHANISM:l}.sasl.jaas.config=${_jaas}"
-    # The EXTERNAL listener needs the same treatment for the same reason: its
-    # env-var form becomes listener.name.external.scram.sha.512... (dots), which
-    # Kafka ignores, and the broker dies with "Could not find a 'KafkaServer' or
-    # 'external.KafkaServer' entry". The line is only appended when that
-    # listener exists, so the non-external case is unchanged.
-    _jaas_line3=""
-    if [[ "${CONFLUENT_EXTERNAL_KAFKA_ENABLED}" == "true" ]]; then
-        _jaas_line3=" 'listener.name.external.${CONFLUENT_SASL_MECHANISM:l}.sasl.jaas.config=${_jaas}'"
-    fi
     _broker_launch="              /etc/confluent/docker/configure
-              printf '%s\\n' '${_jaas_line1}' '${_jaas_line2}'${_jaas_line3} >> /etc/kafka/kafka.properties
+              bash /etc/confluent/listener-security/listener-security.sh /etc/kafka/kafka.properties
               /etc/confluent/docker/ensure
               exec /etc/confluent/docker/launch"
 
+    # KAFKA_SASL_ENABLED_MECHANISMS is the fallback list; every SASL listener
+    # sets its own listener.name.<l>.sasl.enabled.mechanisms, which is what
+    # lets EXTERNAL accept PLAIN while the in-cluster listeners stay SCRAM.
     _broker_sasl_env="
             - name: KAFKA_SASL_ENABLED_MECHANISMS
-              value: '${CONFLUENT_SASL_MECHANISM}'
+              value: '${_mech}'
             - name: KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL
-              value: '${CONFLUENT_SASL_MECHANISM}'
+              value: '${_mech}'
             - name: KAFKA_SUPER_USERS
-              value: 'User:${CONFLUENT_SASL_ADMIN_USER}'"
+              value: 'User:${CONFLUENT_SASL_ADMIN_USER}'
+            - name: BROKER_SASL_ADMIN_USER
+              value: '${CONFLUENT_SASL_ADMIN_USER}'
+            - name: BROKER_SASL_LISTENERS
+              value: '${_sasl_listeners}'
+            - name: BROKER_TLS_LISTENERS
+              value: '${_tls_listeners}'"
 
-    # Plain Kafka clients (Schema Registry, REST Proxy) take the standard
-    # security.protocol/sasl.* trio under their own env prefix.
-    _client_sasl_env="
-            - name: SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL
-              value: 'SASL_PLAINTEXT'
-            - name: SCHEMA_REGISTRY_KAFKASTORE_SASL_MECHANISM
-              value: '${CONFLUENT_SASL_MECHANISM}'
-            - name: SCHEMA_REGISTRY_KAFKASTORE_SASL_JAAS_CONFIG
-              value: '${_jaas}'"
+    # 0440, not 0400: the broker runs as uid 1000 and reads these through its
+    # fsGroup, while the files are owned by root.
+    _broker_sasl_mounts="
+            - name: sasl-credentials
+              mountPath: /etc/confluent/sasl
+              readOnly: true
+            - name: listener-security
+              mountPath: /etc/confluent/listener-security
+              readOnly: true"
+    _broker_sasl_volumes="
+        - name: sasl-credentials
+          secret:
+            secretName: ${CONFLUENT_SASL_SECRET}
+            defaultMode: 0440
+        - name: listener-security
+          configMap:
+            name: broker-listener-security"
+    if [[ "${_proto}" == "SASL_SSL" ]]; then
+        _broker_sasl_mounts+="
+            - name: internal-tls
+              mountPath: ${CONFLUENT_BROKER_TLS_DIR}
+              readOnly: true"
+        _broker_sasl_volumes+="
+        - name: internal-tls
+          secret:
+            secretName: ${CONFLUENT_INTERNAL_TLS_SECRET}
+            defaultMode: 0440"
+    fi
 
-    _restproxy_sasl_env="
-            - name: KAFKA_REST_CLIENT_SECURITY_PROTOCOL
-              value: 'SASL_PLAINTEXT'
-            - name: KAFKA_REST_CLIENT_SASL_MECHANISM
-              value: '${CONFLUENT_SASL_MECHANISM}'
-            - name: KAFKA_REST_CLIENT_SASL_JAAS_CONFIG
-              value: '${_jaas}'"
+    # PLAIN validates against the user list baked into the JAAS entry at
+    # startup, so with PLAIN on any listener every credential change must roll
+    # the brokers. SCRAM users are read live from the metadata log, so only the
+    # broker's own credential matters there.
+    _broker_hash_input="${_sasl_listeners}|${_tls_listeners}|${_ca_hash}|$(kafka_hash < "${SCRIPT_DIR}/broker_listener_security.sh")"
+    if [[ "${_sasl_listeners}" == *PLAIN* ]]; then
+        _broker_hash_input+="|$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" -o jsonpath='{.data}')"
+    else
+        _broker_hash_input+="|${SASL_ADMIN_PW}"
+    fi
+    _broker_auth_annotation="
+        confluent.io/kafka-auth: '$(print -r -- "${_broker_hash_input}" | kafka_hash)'"
 
-    # Connect needs the settings three times: worker, producer and consumer.
-    _connect_sasl_env="
-            - name: CONNECT_SECURITY_PROTOCOL
-              value: 'SASL_PLAINTEXT'
-            - name: CONNECT_SASL_MECHANISM
-              value: '${CONFLUENT_SASL_MECHANISM}'
-            - name: CONNECT_SASL_JAAS_CONFIG
-              value: '${_jaas}'
-            - name: CONNECT_PRODUCER_SECURITY_PROTOCOL
-              value: 'SASL_PLAINTEXT'
-            - name: CONNECT_PRODUCER_SASL_MECHANISM
-              value: '${CONFLUENT_SASL_MECHANISM}'
-            - name: CONNECT_PRODUCER_SASL_JAAS_CONFIG
-              value: '${_jaas}'
-            - name: CONNECT_CONSUMER_SECURITY_PROTOCOL
-              value: 'SASL_PLAINTEXT'
-            - name: CONNECT_CONSUMER_SASL_MECHANISM
-              value: '${CONFLUENT_SASL_MECHANISM}'
-            - name: CONNECT_CONSUMER_SASL_JAAS_CONFIG
-              value: '${_jaas}'"
+    # --------------------------------------------------------------------------
+    # Component clients. The password comes from the secret through an env var
+    # and is spliced into the JAAS value by Kubernetes' $(VAR) expansion, so it
+    # never appears in the Deployment spec or the rendered manifests.
+    # SASL_CLIENT_PASSWORD has no prefix any of the images maps to a property.
+    # --------------------------------------------------------------------------
+    _client_jaas="$(kafka_client_jaas "${_mech}" "${CONFLUENT_SASL_ADMIN_USER}" '$(SASL_CLIENT_PASSWORD)')"
+    _client_pw_env="
+            - name: SASL_CLIENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${CONFLUENT_SASL_SECRET}
+                  key: ${CONFLUENT_SASL_ADMIN_USER}"
 
-    _ksql_sasl_env="
-            - name: KSQL_SECURITY_PROTOCOL
-              value: 'SASL_PLAINTEXT'
-            - name: KSQL_SASL_MECHANISM
-              value: '${CONFLUENT_SASL_MECHANISM}'
-            - name: KSQL_SASL_JAAS_CONFIG
-              value: '${_jaas}'"
+    # _env_for <prefix>... - the security.protocol/sasl.* set (and the
+    # truststore for SASL_SSL) under each config prefix a component reads.
+    # The password env entry leads the block: $(VAR) only expands variables
+    # defined earlier in the same env list.
+    _env_for() {
+        local p out="${_client_pw_env}"
+        for p in "$@"; do
+            out+="
+            - name: ${p}SECURITY_PROTOCOL
+              value: '${_proto}'
+            - name: ${p}SASL_MECHANISM
+              value: '${_mech}'
+            - name: ${p}SASL_JAAS_CONFIG
+              value: '${_client_jaas}'"
+            if [[ "${_proto}" == "SASL_SSL" ]]; then
+                out+="
+            - name: ${p}SSL_TRUSTSTORE_TYPE
+              value: 'PEM'
+            - name: ${p}SSL_TRUSTSTORE_LOCATION
+              value: '${CONFLUENT_KAFKA_CA_MOUNT}/ca.crt'"
+            fi
+        done
+        print -r -- "${out}"
+    }
 
+    # Schema Registry's store and REST Proxy's clients take the standard set
+    # under their own prefixes.
+    _client_sasl_env="$(_env_for SCHEMA_REGISTRY_KAFKASTORE_)"
+    _restproxy_sasl_env="$(_env_for KAFKA_REST_CLIENT_)"
+    # Connect: the worker, the producers/consumers/admin clients it creates for
+    # connectors, and the monitoring interceptors those clients load - the
+    # interceptors open their own connection to write to _confluent-monitoring
+    # and do not inherit the client's security settings.
+    _connect_sasl_env="$(_env_for CONNECT_ CONNECT_PRODUCER_ CONNECT_CONSUMER_ CONNECT_ADMIN_ \
+        CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_ \
+        CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_)"
+    # ksqlDB passes unprefixed client settings to its streams, producer,
+    # consumer and admin clients.
+    _ksql_sasl_env="$(_env_for KSQL_)"
     # C3 talks to Kafka through Streams, and also as a plain admin client.
-    _c3_sasl_env="
-            - name: CONTROL_CENTER_STREAMS_SECURITY_PROTOCOL
-              value: 'SASL_PLAINTEXT'
-            - name: CONTROL_CENTER_STREAMS_SASL_MECHANISM
-              value: '${CONFLUENT_SASL_MECHANISM}'
-            - name: CONTROL_CENTER_STREAMS_SASL_JAAS_CONFIG
-              value: '${_jaas}'"
+    _c3_sasl_env="$(_env_for CONTROL_CENTER_STREAMS_)"
 
-    # Chicken-and-egg: the brokers cannot come up SASL-only until the SCRAM
-    # users exist, and the users can only be written to a running cluster. On an
-    # existing PLAINTEXT cluster we register them now, before the listeners flip.
-    # On a fresh install there is nothing to talk to yet, so the brokers are
-    # brought up PLAINTEXT first, the users are registered, and the SASL
-    # listeners are applied on a second pass (see _sasl_deferred below).
+    if [[ "${_proto}" == "SASL_SSL" ]]; then
+        # Only the CA is projected: the components verify the brokers, they do
+        # not need the broker's keystore.
+        _client_ca_mount_item="
+            - name: kafka-ca
+              mountPath: ${CONFLUENT_KAFKA_CA_MOUNT}
+              readOnly: true"
+        _client_ca_mount="
+          volumeMounts:${_client_ca_mount_item}"
+        _client_ca_volume_item="
+        - name: kafka-ca
+          secret:
+            secretName: ${CONFLUENT_INTERNAL_TLS_SECRET}
+            items:
+              - key: ca.crt
+                path: ca.crt"
+        _client_ca_volume="
+      volumes:${_client_ca_volume_item}"
+    fi
+    _client_auth_annotation="
+      annotations:
+        confluent.io/kafka-auth: '$(print -r -- "${_proto}|${_mech}|${_ca_hash}|${SASL_ADMIN_PW}" | kafka_hash)'"
+
+    # Chicken-and-egg, SCRAM only: the brokers cannot come up with SCRAM on the
+    # inter-broker listener until the SCRAM users exist, and the users can only
+    # be written to a running cluster. On an existing cluster we register them
+    # now, before the listeners flip. On a fresh install there is nothing to
+    # talk to yet, so the brokers are brought up PLAINTEXT first, the users are
+    # registered, and the SASL listeners are applied on a second pass (see
+    # _sasl_deferred below). PLAIN needs none of this - its users are in the
+    # JAAS entry - so a PLAIN cluster comes up authenticated on the first pass.
     _sasl_deferred=false
     if oc get statefulset broker -n "${NS}" &>/dev/null \
        && [[ "$(oc get statefulset broker -n "${NS}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" -ge 1 ]] 2>/dev/null; then
-        echo "[INFO] Registering SCRAM users on the running cluster..."
-        _sasl_reg_ok=true
-        for _u in "${CONFLUENT_SASL_ADMIN_USER}" ${=${CONFLUENT_SASL_CLIENTS:-app-client}//,/ }; do
-            _up="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
-                -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode 2>/dev/null || true)"
-            [[ -z "${_up}" ]] && continue
-            oc exec broker-0 -n "${NS}" -- kafka-configs \
-                --bootstrap-server "localhost:${CONFLUENT_BROKER_INTERNAL_PORT}" \
-                --alter --add-config "${CONFLUENT_SASL_MECHANISM}=[password=${_up}]" \
-                --entity-type users --entity-name "${_u}" >/dev/null 2>&1 \
-                || { _sasl_reg_ok=false; break; }
-        done
-        if ! $_sasl_reg_ok; then
-            echo "[WARN] Could not register SCRAM users (the cluster may already be SASL-only)."
-            echo "[WARN] Continuing; if the brokers fail to authenticate, run x.2_confluent_add_sasl.sh."
+        if [[ -n "$(kafka_scram_mechanisms_in_use)" ]]; then
+            echo "[INFO] Registering SCRAM users on the running cluster..."
+            if ! kafka_register_scram_users "${NS}" "${SASL_ADMIN_PW}" "${(@f)$(kafka_secret_credentials "${NS}")}"; then
+                echo "[WARN] Could not register SCRAM users. Continuing; if clients fail to"
+                echo "[WARN] authenticate, run x.2_confluent_add_sasl.sh."
+            fi
         fi
-    else
+    elif [[ "${_mech}" == SCRAM-* ]]; then
         # Fresh cluster: defer SASL to a second pass so the brokers can form.
         #
         # Only the brokers are deployed on this pass. Every other component is
@@ -327,15 +410,21 @@ listener.name.plaintext_host.${CONFLUENT_SASL_MECHANISM:l}.sasl.jaas.config=${_j
         _sasl_deferred=true
         _brokers_only=true
         _broker_protocol_map="CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
-        _broker_sasl_env=""
+        _broker_sasl_env=""; _broker_sasl_mounts=""; _broker_sasl_volumes=""
+        _broker_launch="              exec /etc/confluent/docker/run"
+        _broker_auth_annotation=""
+        _inter_broker_security="PLAINTEXT/-/-"
         _client_sasl_env=""; _restproxy_sasl_env=""; _connect_sasl_env=""
         _ksql_sasl_env=""; _c3_sasl_env=""
+        _client_ca_mount=""; _client_ca_mount_item=""
+        _client_ca_volume=""; _client_ca_volume_item=""
+        _client_auth_annotation=""
         echo "[INFO] Fresh cluster: bringing brokers up PLAINTEXT first; SASL is applied on a second pass."
     fi
 
-    echo "[INFO] SASL enabled (${CONFLUENT_SASL_MECHANISM}, admin user ${CONFLUENT_SASL_ADMIN_USER})."
-else
-    _restproxy_sasl_env=""
+    echo "[INFO] SASL enabled: in-cluster ${_proto} / ${_mech}, admin user ${CONFLUENT_SASL_ADMIN_USER}."
+    [[ "${CONFLUENT_EXTERNAL_KAFKA_ENABLED}" == "true" ]] && \
+        echo "[INFO]   EXTERNAL listener: SASL_SSL / ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}."
 fi
 
 # ------------------------------------------------------------------------------
@@ -642,9 +731,9 @@ if [[ "${CONFLUENT_EXTERNAL_KAFKA_ENABLED}" == "true" ]]; then
     # picks this specific broker.
     _external_advertised=",EXTERNAL://broker-\${ORDINAL}-kafka-${NS}.${_ext_domain}:443"
 
-    # No KAFKA_LISTENER_NAME_EXTERNAL_..._SASL_JAAS_CONFIG here: the env-var
-    # form loses the hyphens the mechanism name needs and Kafka ignores it.
-    # That property is appended to kafka.properties in _broker_launch instead.
+    # Only the TLS half is set here. The SASL half (enabled mechanisms and one
+    # JAAS entry per mechanism) is written by broker_listener_security.sh from
+    # the "external:" entry in BROKER_SASL_LISTENERS.
     _broker_external_env="
             - name: KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEYSTORE_LOCATION
               value: '/etc/confluent/tls/keystore.jks'
@@ -671,8 +760,13 @@ if [[ "${CONFLUENT_EXTERNAL_KAFKA_ENABLED}" == "true" ]]; then
             secretName: ${CONFLUENT_EXTERNAL_TLS_SECRET}
             defaultMode: 0400"
 
-    echo "[INFO] External Kafka listener enabled (SASL_SSL, advertised on *.${_ext_domain}:443)."
+    echo "[INFO] External Kafka listener enabled (SASL_SSL / ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}, advertised on *.${_ext_domain}:443)."
 fi
+
+# The SASL mounts were built before _broker_volumes/_broker_mds_mounts were
+# initialised for MDS, so they are folded in here.
+_broker_mds_mounts+="${_broker_sasl_mounts}"
+_broker_volumes+="${_broker_sasl_volumes}"
 
 BOOTSTRAP="broker-headless:${CONFLUENT_BROKER_INTERNAL_PORT}"
 SR_URL="http://schema-registry:${CONFLUENT_SCHEMA_REGISTRY_PORT}"
@@ -836,6 +930,8 @@ spec:
       labels:
         app: broker
         app.kubernetes.io/part-of: confluent
+      annotations:
+        confluent.io/inter-broker-security: '${_inter_broker_security}'${_broker_auth_annotation}
     spec:
       serviceAccountName: ${SA}
       # The cp-* images run as uid 1000 (appuser). anyuid permits that uid but
@@ -998,23 +1094,31 @@ ${_broker_volumes:+${_nl}      volumes:${_broker_volumes}}
 EOF
 
 # ------------------------------------------------------------------------------
-# Switching an EXISTING cluster to SASL deadlocks a RollingUpdate: the
-# StatefulSet rolls the highest ordinal first and waits for it to become Ready,
-# but that broker cannot fetch from the peers still running PLAINTEXT
-# ("IllegalSaslStateException: ... enabled mechanisms are []"), so it never
-# goes Ready and the rollout never reaches them. Deleting the lagging pods lets
-# them come back on the new spec together. Only needed when SASL is being
-# turned on over a cluster that is already up.
-if [[ "${CONFLUENT_SASL_ENABLED}" == "true" && "${_sasl_deferred:-false}" != "true" ]]; then
+# Changing what the inter-broker listener speaks on a RUNNING cluster deadlocks
+# a RollingUpdate: the StatefulSet rolls the highest ordinal first and waits for
+# it to become Ready, but that broker cannot fetch from peers still on the old
+# protocol, mechanism or CA ("IllegalSaslStateException: ... enabled mechanisms
+# are []", or a TLS handshake failure), so it never goes Ready and the rollout
+# never reaches them. Deleting the lagging pods lets them come back on the new
+# spec together. Every other change (credentials, the EXTERNAL listener) is an
+# ordinary rolling update and is left to the StatefulSet.
+if [[ "${_sasl_deferred:-false}" != "true" ]]; then
     _stale=()
     for _i in $(seq 0 $(( CONFLUENT_BROKER_REPLICAS - 1 ))); do
-        _pod_mech="$(oc get pod "broker-${_i}" -n "${NS}" \
-            -o jsonpath='{.spec.containers[0].env[?(@.name=="KAFKA_SASL_ENABLED_MECHANISMS")].value}' 2>/dev/null || true)"
-        [[ -z "${_pod_mech}" ]] && oc get pod "broker-${_i}" -n "${NS}" &>/dev/null && _stale+=("broker-${_i}")
+        oc get pod "broker-${_i}" -n "${NS}" &>/dev/null || continue
+        _pod_sig="$(oc get pod "broker-${_i}" -n "${NS}" \
+            -o jsonpath='{.metadata.annotations.confluent\.io/inter-broker-security}' 2>/dev/null || true)"
+        if [[ -z "${_pod_sig}" ]]; then
+            # Pods from before the annotation existed: derive it from their env.
+            # They predate SASL_SSL support, so there is no CA to compare.
+            read -r _p _m <<< "$(kafka_pod_internal_security "${NS}" "broker-${_i}")"
+            _pod_sig="${_p}/${_m}/-"
+        fi
+        [[ "${_pod_sig}" != "${_inter_broker_security}" ]] && _stale+=("broker-${_i}")
     done
     if (( ${#_stale[@]} > 0 )); then
-        echo "[INFO] Restarting ${#_stale[@]} broker(s) still on the pre-SASL spec: ${_stale[*]}"
-        echo "[INFO] (a rolling update alone cannot cross the PLAINTEXT -> SASL boundary)"
+        echo "[INFO] Restarting ${#_stale[@]} broker(s) on the previous inter-broker security: ${_stale[*]}"
+        echo "[INFO] (a rolling update alone cannot cross a protocol, mechanism or CA change)"
         oc delete pod "${_stale[@]}" -n "${NS}" --wait=false >/dev/null 2>&1 || true
     fi
 fi
@@ -1087,7 +1191,7 @@ spec:
     metadata:
       labels:
         app: schema-registry
-        app.kubernetes.io/part-of: confluent
+        app.kubernetes.io/part-of: confluent${_client_auth_annotation}
     spec:
       serviceAccountName: ${SA}
       # The service named 'schema-registry' makes Kubernetes inject
@@ -1108,7 +1212,7 @@ spec:
             - name: SCHEMA_REGISTRY_LISTENERS
               value: http://0.0.0.0:${CONFLUENT_SCHEMA_REGISTRY_PORT}
             - name: SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR
-              value: '${CONFLUENT_REPLICATION_FACTOR}'${_client_sasl_env}
+              value: '${CONFLUENT_REPLICATION_FACTOR}'${_client_sasl_env}${_client_ca_mount}
           readinessProbe:
             httpGet:
               path: /subjects
@@ -1122,7 +1226,7 @@ spec:
               memory: "${CONFLUENT_COMPONENT_MEM_REQUEST}"
             limits:
               cpu: "${CONFLUENT_COMPONENT_CPU_LIMIT}"
-              memory: "${CONFLUENT_COMPONENT_MEM_LIMIT}"
+              memory: "${CONFLUENT_COMPONENT_MEM_LIMIT}"${_client_ca_volume}
 EOF
     wait_rollout deployment schema-registry
     expose_route schema-registry "${CONFLUENT_SCHEMA_REGISTRY_PORT}"
@@ -1167,7 +1271,7 @@ spec:
     metadata:
       labels:
         app: connect
-        app.kubernetes.io/part-of: confluent
+        app.kubernetes.io/part-of: confluent${_client_auth_annotation}
     spec:
       serviceAccountName: ${SA}
       # Service 'connect' would inject CONNECT_PORT=tcp://<ip>:8083, which the
@@ -1217,7 +1321,7 @@ spec:
             - name: CONNECT_PLUGIN_PATH
               value: '/usr/share/java,/usr/share/confluent-hub-components'
             - name: CONNECT_LOG4J_LOGGERS
-              value: org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR${_connect_sasl_env}
+              value: org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR${_connect_sasl_env}${_client_ca_mount}
           readinessProbe:
             httpGet:
               path: /connectors
@@ -1231,7 +1335,7 @@ spec:
               memory: "${CONFLUENT_COMPONENT_MEM_REQUEST}"
             limits:
               cpu: "${CONFLUENT_COMPONENT_CPU_LIMIT}"
-              memory: "${CONFLUENT_COMPONENT_MEM_LIMIT}"
+              memory: "${CONFLUENT_COMPONENT_MEM_LIMIT}"${_client_ca_volume}
 EOF
     wait_rollout deployment connect
     expose_route connect "${CONFLUENT_CONNECT_PORT}"
@@ -1276,7 +1380,7 @@ spec:
     metadata:
       labels:
         app: ksqldb-server
-        app.kubernetes.io/part-of: confluent
+        app.kubernetes.io/part-of: confluent${_client_auth_annotation}
     spec:
       serviceAccountName: ${SA}
       # No collision today (image reads KSQL_*, service injects KSQLDB_SERVER_*)
@@ -1307,7 +1411,7 @@ spec:
             - name: KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE
               value: 'true'
             - name: KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE
-              value: 'true'${_ksql_sasl_env}
+              value: 'true'${_ksql_sasl_env}${_client_ca_mount}
           readinessProbe:
             httpGet:
               path: /info
@@ -1321,7 +1425,7 @@ spec:
               memory: "${CONFLUENT_COMPONENT_MEM_REQUEST}"
             limits:
               cpu: "${CONFLUENT_COMPONENT_CPU_LIMIT}"
-              memory: "${CONFLUENT_COMPONENT_MEM_LIMIT}"
+              memory: "${CONFLUENT_COMPONENT_MEM_LIMIT}"${_client_ca_volume}
 EOF
     wait_rollout deployment ksqldb-server
     expose_route ksqldb-server "${CONFLUENT_KSQLDB_PORT}"
@@ -1366,7 +1470,7 @@ spec:
     metadata:
       labels:
         app: rest-proxy
-        app.kubernetes.io/part-of: confluent
+        app.kubernetes.io/part-of: confluent${_client_auth_annotation}
     spec:
       serviceAccountName: ${SA}
       # No collision today (image reads KAFKA_REST_*, service injects
@@ -1385,7 +1489,7 @@ spec:
             - name: KAFKA_REST_LISTENERS
               value: http://0.0.0.0:${CONFLUENT_REST_PROXY_PORT}
             - name: KAFKA_REST_SCHEMA_REGISTRY_URL
-              value: '${SR_URL}'${_restproxy_sasl_env}
+              value: '${SR_URL}'${_restproxy_sasl_env}${_client_ca_mount}
           readinessProbe:
             httpGet:
               path: /topics
@@ -1399,7 +1503,7 @@ spec:
               memory: "${CONFLUENT_COMPONENT_MEM_REQUEST}"
             limits:
               cpu: "${CONFLUENT_COMPONENT_CPU_LIMIT}"
-              memory: "${CONFLUENT_COMPONENT_MEM_LIMIT}"
+              memory: "${CONFLUENT_COMPONENT_MEM_LIMIT}"${_client_ca_volume}
 EOF
     wait_rollout deployment rest-proxy
     expose_route rest-proxy "${CONFLUENT_REST_PROXY_PORT}"
@@ -1947,7 +2051,7 @@ spec:
     metadata:
       labels:
         app: control-center
-        app.kubernetes.io/part-of: confluent
+        app.kubernetes.io/part-of: confluent${_client_auth_annotation}
     spec:
       serviceAccountName: ${SA}
       # Service 'control-center' would inject CONTROL_CENTER_PORT=tcp://<ip>:9021,
@@ -2010,7 +2114,7 @@ spec:
               value: '${CONFLUENT_CONTROL_CENTER_PORT}'${_c3_auth_env}${_c3_sasl_env}
           volumeMounts:
             - name: config
-              mountPath: /mnt/config${_c3_auth_mount}
+              mountPath: /mnt/config${_c3_auth_mount}${_client_ca_mount_item}
           readinessProbe:
             httpGet:
               path: /
@@ -2030,7 +2134,7 @@ spec:
           configMap:
             name: confluent-monitoring-config
         - name: config
-          emptyDir: {}${_c3_auth_volume}${_c3_gateway_volumes}
+          emptyDir: {}${_c3_auth_volume}${_c3_gateway_volumes}${_client_ca_volume_item}
 EOF
     wait_rollout deployment control-center
     expose_route control-center "${CONFLUENT_CONTROL_CENTER_PORT}"
@@ -2050,22 +2154,11 @@ echo ""
 if [[ "${_sasl_deferred:-false}" == "true" ]]; then
     echo ""
     echo "[INFO] Registering SCRAM users on the new cluster..."
-    for _u in "${CONFLUENT_SASL_ADMIN_USER}" ${=${CONFLUENT_SASL_CLIENTS:-app-client}//,/ }; do
-        _up="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
-            -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode 2>/dev/null || true)"
-        [[ -z "${_up}" ]] && continue
-        if oc exec broker-0 -n "${NS}" -- kafka-configs \
-            --bootstrap-server "localhost:${CONFLUENT_BROKER_INTERNAL_PORT}" \
-            --alter --add-config "${CONFLUENT_SASL_MECHANISM}=[password=${_up}]" \
-            --entity-type users --entity-name "${_u}" >/dev/null 2>&1; then
-            echo "[INFO]   registered ${_u}"
-        else
-            echo "[ERROR] Failed to register SCRAM user '${_u}'." >&2
-            echo "[ERROR] The platform is running but UNAUTHENTICATED. Re-run this script" >&2
-            echo "[ERROR] or x.2_confluent_add_sasl.sh once the cluster is healthy." >&2
-            exit 1
-        fi
-    done
+    if ! kafka_register_scram_users "${NS}" "${SASL_ADMIN_PW}" "${(@f)$(kafka_secret_credentials "${NS}")}"; then
+        echo "[ERROR] The platform is running but UNAUTHENTICATED. Re-run this script" >&2
+        echo "[ERROR] or x.2_confluent_add_sasl.sh once the cluster is healthy." >&2
+        exit 1
+    fi
     echo "[INFO] Applying the SASL listeners (second pass)..."
     # Re-assert MDS across the exec: the first pass turned it off locally so the
     # brokers could form, and the second pass is where it is actually applied.
@@ -2106,6 +2199,10 @@ fi
 
 echo "[INFO] Confluent Platform ${CONFLUENT_VERSION} installed in project '${NS}'."
 echo "[INFO] In-cluster bootstrap servers: ${BOOTSTRAP}"
+if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
+    echo "[INFO] Kafka authentication: in-cluster ${CONFLUENT_SASL_PROTOCOL} / ${CONFLUENT_SASL_MECHANISM}${${CONFLUENT_EXTERNAL_KAFKA_ENABLED:#false}:+, EXTERNAL SASL_SSL / ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}}."
+    echo "[INFO]   Client properties: 1.3_confluent_get_instance_details.sh writes them to configs/confluent_platform_config/."
+fi
 
 if [[ "${CONFLUENT_AUTH_ENABLED}" == "true" && "${CONFLUENT_AUTH_MODE}" == "basic" ]]; then
     echo "[INFO] Web UIs require basic auth - user '${AUTH_USER}', password:"

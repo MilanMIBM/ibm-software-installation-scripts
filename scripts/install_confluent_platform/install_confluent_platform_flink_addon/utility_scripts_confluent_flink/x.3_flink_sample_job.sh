@@ -388,6 +388,8 @@ except Exception:
     echo "[INFO] Read the topic back:"
     echo "[INFO]   oc exec -n ${PROJECT_CONFLUENT_SERVER} broker-0 -- \\"
     echo "[INFO]     kafka-console-consumer --bootstrap-server localhost:${CONFLUENT_BROKER_INTERNAL_PORT} \\"
+    [[ "${CONFLUENT_SASL_ENABLED:-false}" == "true" ]] && \
+        echo "[INFO]     --consumer.config /etc/kafka/client.properties \\"
     echo "[INFO]     --topic ${TOPIC} --from-beginning --max-messages 5"
     echo "[INFO] Stop it:"
     echo "[INFO]   ./x.3_flink_sample_job.sh --sql --delete"

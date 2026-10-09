@@ -191,9 +191,14 @@ if [[ -z "${CONFLUENT_PLATFORM_MDS_URL}" ]]; then
     echo "[INFO] Until MDS is enabled, use the REST endpoints directly instead:"
     echo "[INFO]   curl -s \"\${CONFLUENT_SCHEMA_REGISTRY_URL}/subjects\""
     echo "[INFO]   curl -s \"\${CONFLUENT_CONNECT_URL}/connectors\""
-    echo "[INFO] or run kafka-* tools inside a broker pod:"
+    echo "[INFO] or run kafka-* tools inside a broker pod (with SASL on, the brokers"
+    echo "[INFO] write a matching admin client config to /etc/kafka/client.properties):"
     echo "[INFO]   oc exec broker-0 -n \${CONFLUENT_NAMESPACE} -- kafka-topics \\"
-    echo "[INFO]     --bootstrap-server localhost:29092 --list"
+    if [[ "${CONFLUENT_SASL_ENABLED:-false}" == "true" ]]; then
+        echo "[INFO]     --bootstrap-server localhost:29092 --command-config /etc/kafka/client.properties --list"
+    else
+        echo "[INFO]     --bootstrap-server localhost:29092 --list"
+    fi
     return 0 2>/dev/null || exit 0
 fi
 

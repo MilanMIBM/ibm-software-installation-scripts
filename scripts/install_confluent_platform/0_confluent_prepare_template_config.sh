@@ -354,13 +354,20 @@ _platform_defaults=(
 # it is then reused on every later run, so redeploys keep the same credentials.'
     'CONFLUENT_AUTH_PASSWORD||'
     'CONFLUENT_AUTH_PASSWORD_LENGTH|24|'
-    'CONFLUENT_SASL_ENABLED|true|# ---- Kafka client authentication (SASL/SCRAM) --------------------------------
+    'CONFLUENT_SASL_ENABLED|true|# ---- Kafka client authentication (SASL) --------------------------------------
 # Independent of the web-UI auth above: this secures the Kafka wire protocol.
 # Enabling it makes the brokers reject unauthenticated clients.'
-    'CONFLUENT_SASL_MECHANISM|SCRAM-SHA-512|'
+    'CONFLUENT_SASL_PROTOCOL|SASL_PLAINTEXT|# In-cluster listeners, inter-broker traffic and every platform component.
+# SASL_PLAINTEXT = authenticated, unencrypted on the pod network.
+# SASL_SSL       = also TLS-encrypted, with a CA generated into
+#                  CONFLUENT_INTERNAL_TLS_SECRET (clients must trust it).'
+    'CONFLUENT_SASL_MECHANISM|SCRAM-SHA-512|# SCRAM-SHA-512 | SCRAM-SHA-256 | PLAIN. SCRAM users can be added at
+# runtime; PLAIN rolls the brokers on every change and belongs on SASL_SSL.'
     'CONFLUENT_SASL_ADMIN_USER|confluent-admin|'
-    'CONFLUENT_SASL_CLIENTS|app-client|# Comma-separated. One SCRAM credential is minted per name.'
+    'CONFLUENT_SASL_CLIENTS|app-client|# Comma-separated. One credential is minted per name, valid for every mechanism.'
     'CONFLUENT_SASL_SECRET|confluent-sasl|'
+    'CONFLUENT_INTERNAL_TLS_SECRET|confluent-kafka-internal-tls|# CONFLUENT_SASL_PROTOCOL=SASL_SSL only: the in-cluster CA and broker keystore.'
+    'CONFLUENT_INTERNAL_CERT_VALIDITY_DAYS|825|'
     'CONFLUENT_MDS_ENABLED|true|# ---- Metadata Service (MDS) / RBAC -------------------------------------------
 # MDS is embedded in the cp-server broker image, so enabling it adds no new
 # Confluent component - it opens an HTTP listener on the brokers and turns on
@@ -406,8 +413,10 @@ _platform_defaults=(
 # The OpenShift router selects the broker by TLS SNI.
 #
 # Requires CONFLUENT_SASL_ENABLED=true - this listener is internet-facing, so it
-# is SASL_SSL (encrypted) rather than the SASL_PLAINTEXT used inside the cluster.
+# is always SASL_SSL (encrypted), whatever CONFLUENT_SASL_PROTOCOL says.
 # Provisioned by x.4_confluent_add_external_access.sh.'
+    'CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS|PLAIN|# Comma-separated: PLAIN, SCRAM-SHA-512, SCRAM-SHA-256. The first is what the
+# generated client files use; the same users and passwords work for all of them.'
     'CONFLUENT_EXTERNAL_KAFKA_PORT|9094|# Container port for the EXTERNAL listener; advertised on 443 via the routes.'
     'CONFLUENT_EXTERNAL_TLS_SECRET|confluent-kafka-tls|# Holds the generated CA plus the per-broker keystore/truststore.'
     'CONFLUENT_EXTERNAL_CERT_VALIDITY_DAYS|825|'

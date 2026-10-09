@@ -121,7 +121,7 @@ for _s in "${CONFLUENT_LDAP_SECRET}" "${CONFLUENT_KEYCLOAK_SECRET}"; do
     fi
 done
 
-# SASL/SCRAM client credentials for the Kafka wire protocol, minted by
+# SASL client credentials for the Kafka wire protocol, minted by
 # x.2_confluent_add_sasl.sh. Emitted as NAME=PASSWORD pairs, one per line, so a
 # caller can pick the client it needs without a second oc call.
 : "${CONFLUENT_SASL_SECRET:=confluent-sasl}"
@@ -135,6 +135,19 @@ if oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" &>/dev/null; then
         [[ -n "${_v}" ]] && CONFLUENT_SASL_CLIENT_CREDS+="${_k}=${_v}"$'\n' && _sasl_users+=("${_k}")
     done
 fi
+
+# How clients authenticate. Exported under their own names so sourcing this file
+# never overrides the CONFLUENT_SASL_* settings in confluent_vars.sh.
+source "${SCRIPT_DIR}/confluent_kafka_security.sh"
+CONFLUENT_KAFKA_INTERNAL_PROTOCOL=""
+CONFLUENT_KAFKA_INTERNAL_MECHANISM=""
+if oc get pod broker-0 -n "${NS}" &>/dev/null; then
+    read -r CONFLUENT_KAFKA_INTERNAL_PROTOCOL CONFLUENT_KAFKA_INTERNAL_MECHANISM \
+        <<< "$(kafka_pod_internal_security "${NS}" broker-0)"
+    [[ "${CONFLUENT_KAFKA_INTERNAL_MECHANISM}" == "-" ]] && CONFLUENT_KAFKA_INTERNAL_MECHANISM=""
+fi
+CONFLUENT_KAFKA_EXTERNAL_MECHANISMS=""
+[[ -n "${CONFLUENT_BOOTSTRAP_EXTERNAL}" ]] && CONFLUENT_KAFKA_EXTERNAL_MECHANISMS="${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}"
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
 VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_instance_details.sh"
@@ -187,7 +200,14 @@ export CONFLUENT_PLATFORM_PASSWORD="${CONFLUENT_MDS_PASS}"
 # configs/confluent_platform_config/confluent_external_client.properties (SASL_SSL).
 export CONFLUENT_BOOTSTRAP_EXTERNAL="${CONFLUENT_BOOTSTRAP_EXTERNAL}"
 
-# --- Kafka SASL/SCRAM client credentials -------------------------------------
+# --- Kafka client security ---------------------------------------------------
+# What the running brokers expect. The internal pair is read from broker-0
+# itself; the external list is empty unless the EXTERNAL listener is deployed.
+export CONFLUENT_KAFKA_INTERNAL_PROTOCOL="${CONFLUENT_KAFKA_INTERNAL_PROTOCOL}"
+export CONFLUENT_KAFKA_INTERNAL_MECHANISM="${CONFLUENT_KAFKA_INTERNAL_MECHANISM}"
+export CONFLUENT_KAFKA_EXTERNAL_MECHANISMS="${CONFLUENT_KAFKA_EXTERNAL_MECHANISMS}"
+
+# --- Kafka SASL client credentials -------------------------------------------
 # Empty unless x.2_confluent_add_sasl.sh has been run. One NAME=PASSWORD per
 # line, including the platform admin user. Read one with:
 #   echo "\$CONFLUENT_SASL_CLIENT_CREDS" | grep '^app-client=' | cut -d= -f2-
@@ -212,10 +232,11 @@ echo "[INFO] Confluent instance details written to ${VARS_FILE##*/}"
 # passed to the CLI tools with --command-config, so the values are live rather
 # than commented out.
 : "${CONFLUENT_WRITE_SASL_PROPERTIES:=true}"
-: "${CONFLUENT_SASL_MECHANISM:=SCRAM-SHA-512}"
 
 if [[ "${CONFLUENT_WRITE_SASL_PROPERTIES}" != "true" ]]; then
     echo "[INFO] Skipping the SASL client properties file (CONFLUENT_WRITE_SASL_PROPERTIES=false)."
+elif [[ "${CONFLUENT_KAFKA_INTERNAL_PROTOCOL}" != SASL_* ]]; then
+    echo "[INFO] The brokers are not running SASL; skipping the client properties file."
 elif (( ${#_sasl_users[@]} == 0 )); then
     echo "[INFO] No SASL credentials in '${CONFLUENT_SASL_SECRET}'; skipping the client properties file."
 else
@@ -235,6 +256,19 @@ else
             -o jsonpath="{.data.${_default_user}}" 2>/dev/null | base64 --decode || true)"
     fi
 
+    # SASL_SSL: the CA the in-cluster listeners are signed with, next to the
+    # properties file so the truststore path below resolves.
+    _proto="${CONFLUENT_KAFKA_INTERNAL_PROTOCOL}"
+    _mech="${CONFLUENT_KAFKA_INTERNAL_MECHANISM}"
+    _truststore=""
+    if [[ "${_proto}" == "SASL_SSL" ]]; then
+        _truststore="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_internal_ca.crt"
+        oc get secret "${CONFLUENT_INTERNAL_TLS_SECRET}" -n "${NS}" \
+            -o jsonpath='{.data.ca\.crt}' | base64 --decode > "${_truststore}"
+        chmod 644 "${_truststore}"
+    fi
+    _ext_mech="$(kafka_external_primary_mechanism)"
+
     {
         echo "# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
         echo "# Kafka client properties for the SASL cluster in '${NS}'."
@@ -246,10 +280,9 @@ else
         echo "# Regenerate with: scripts/install_confluent_platform/$(basename $0)"
         echo "# Suppress with:   CONFLUENT_WRITE_SASL_PROPERTIES=false"
         echo ""
+        echo "# In-cluster listener: ${_proto} / ${_mech}"
         echo "bootstrap.servers=${CONFLUENT_BOOTSTRAP_INTERNAL}"
-        echo "security.protocol=SASL_PLAINTEXT"
-        echo "sasl.mechanism=${CONFLUENT_SASL_MECHANISM}"
-        echo "sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${_default_user}\" password=\"${_default_pw}\";"
+        kafka_client_properties "${_proto}" "${_mech}" "${_default_user}" "${_default_pw}" "${_truststore}"
         echo ""
         echo "# ---- other clients: swap the jaas line above for one of these ----"
         for _u in "${_sasl_users[@]}"; do
@@ -258,13 +291,13 @@ else
                 -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode || true)"
             [[ -z "${_p}" ]] && continue
             echo "# ${_u}"
-            echo "# sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${_u}\" password=\"${_p}\";"
+            echo "# sasl.jaas.config=$(kafka_client_jaas "${_mech}" "${_u}" "${_p}")"
         done
 
         # watsonx.data "Add component - Apache Kafka" needs the EXTERNAL
-        # listener: its form has no plaintext option, so it always opens TLS and
-        # the SASL_PLAINTEXT listener above cannot answer it. The fields are
-        # spelled out because they are typed into a UI, not read by a client.
+        # listener: it runs outside this cluster, and its form always opens TLS.
+        # The fields are spelled out because they are typed into a UI, not read
+        # by a client. Any mechanism in the list works with the same password.
         echo ""
         echo "# =============================================================================="
         echo "# watsonx.data - Add component > Apache Kafka"
@@ -282,7 +315,7 @@ else
             done
             echo "#"
             echo "# SASL connection  - ON"
-            echo "# SASL mechanism   - ${CONFLUENT_SASL_MECHANISM}"
+            echo "# SASL mechanism   - ${_ext_mech}${${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS#${_ext_mech}}:+  (also accepted: ${${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS#${_ext_mech}}#,})}"
             echo "# Username         - ${_default_user}"
             echo "# API key/Password - ${_default_pw}"
             echo "#"

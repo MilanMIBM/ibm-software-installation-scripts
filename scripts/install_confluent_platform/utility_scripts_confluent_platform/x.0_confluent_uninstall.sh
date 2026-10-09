@@ -238,7 +238,8 @@ run oc delete secret -n "${NS}" --ignore-not-found \
     "${CONFLUENT_MDS_SECRET:-confluent-mds}" \
     "${CONFLUENT_LDAP_SECRET:-confluent-ldap}" \
     "${CONFLUENT_KEYCLOAK_SECRET:-confluent-keycloak}" \
-    "${CONFLUENT_EXTERNAL_TLS_SECRET:-confluent-kafka-tls}"
+    "${CONFLUENT_EXTERNAL_TLS_SECRET:-confluent-kafka-tls}" \
+    "${CONFLUENT_INTERNAL_TLS_SECRET:-confluent-kafka-internal-tls}"
 
 if [[ "${KEEP_DATA}" != "true" ]]; then
     echo "[INFO] Deleting broker PVCs..."

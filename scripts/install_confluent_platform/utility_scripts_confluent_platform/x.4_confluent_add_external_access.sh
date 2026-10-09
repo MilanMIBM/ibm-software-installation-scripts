@@ -41,11 +41,17 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   quorum are unaffected.
 #
 # Security:
-#   The EXTERNAL listener is SASL_SSL, not the SASL_PLAINTEXT used inside the
-#   cluster: once the endpoint is internet-facing, unencrypted traffic is not
-#   acceptable. This script generates a private CA and per-broker certificates
-#   (the cluster has no cert-manager) and emits the CA for clients to trust.
-#   Supply your own with --cert-path/--key-path if you have a real one.
+#   The EXTERNAL listener is always SASL_SSL: once the endpoint is
+#   internet-facing, unencrypted traffic is not acceptable, and the passthrough
+#   routes need the TLS SNI hostname to pick a broker anyway. The mechanisms it
+#   accepts are CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS (default PLAIN; any of
+#   PLAIN, SCRAM-SHA-512, SCRAM-SHA-256, comma-separated), independent of the
+#   in-cluster CONFLUENT_SASL_MECHANISM. The same users and passwords work for
+#   every mechanism.
+#
+#   This script generates a private CA and per-broker certificates (the cluster
+#   has no cert-manager) and emits the CA for clients to trust. Supply your own
+#   with --cert-path/--key-path if you have a real one.
 #
 # Requires CONFLUENT_SASL_ENABLED=true. An internet-facing listener without
 # authentication is not something this script will create.
@@ -84,7 +90,7 @@ while (( $# > 0 )); do
         --yes|-y)    ASSUME_YES=true; shift ;;
         --dry-run)   DRY_RUN=true; shift ;;
         --no-status) RUN_STATUS=false; shift ;;
-        -h|--help)   sed -n '16,62p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '16,71p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Try --help." >&2; exit 1 ;;
     esac
 done
@@ -106,12 +112,17 @@ NS="${PROJECT_CONFLUENT_SERVER}"
 : "${CONFLUENT_EXTERNAL_CERT_VALIDITY_DAYS:=825}"
 : "${CONFLUENT_BROKER_REPLICAS:=3}"
 : "${CONFLUENT_SASL_ENABLED:=false}"
-: "${CONFLUENT_SASL_MECHANISM:=SCRAM-SHA-512}"
 : "${CONFLUENT_SASL_SECRET:=confluent-sasl}"
 : "${CONFLUENT_SASL_CLIENTS:=app-client}"
 : "${CONFLUENT_ROUTE_DOMAIN:=}"
 
 oc get namespace "${NS}" &>/dev/null || { echo "[ERROR] Project '${NS}' does not exist." >&2; exit 1; }
+
+source "${SCRIPT_DIR}/../confluent_kafka_security.sh"
+if ! $DISABLE; then
+    kafka_security_validate || exit 1
+fi
+_ext_mech="$(kafka_external_primary_mechanism)"
 
 _domain="${CONFLUENT_ROUTE_DOMAIN}"
 if [[ -z "${_domain}" ]]; then
@@ -142,6 +153,7 @@ if $DISABLE; then
     echo "  target  : removed"
 else
     echo "  target  : SASL_SSL EXTERNAL listener on per-broker passthrough routes"
+    echo "  auth    : ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}"
     echo "  brokers : ${CONFLUENT_BROKER_REPLICAS}"
     for _h in "${_hosts[@]}"; do echo "            ${_h}:443"; done
 fi
@@ -407,15 +419,21 @@ _first_pw="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
     echo "#     --command-config configs/confluent_platform_config/confluent_external_client.properties --list"
     echo ""
     echo "bootstrap.servers=${_bootstrap}"
-    echo "security.protocol=SASL_SSL"
-    echo "sasl.mechanism=${CONFLUENT_SASL_MECHANISM}"
-    echo "ssl.truststore.type=PEM"
-    echo "ssl.truststore.location=${CA_OUT}"
     if [[ -n "${_first_pw}" ]]; then
-        echo "sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${_first_client}\" password=\"${_first_pw}\";"
+        kafka_client_properties SASL_SSL "${_ext_mech}" "${_first_client}" "${_first_pw}" "${CA_OUT}"
     else
-        echo "# sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"<user>\" password=\"<password>\";"
+        kafka_client_properties SASL_SSL "${_ext_mech}" "<user>" "<password>" "${CA_OUT}" \
+            | sed 's/^sasl.jaas.config=/# sasl.jaas.config=/'
     fi
+    # Every mechanism the listener accepts works with the same credential; only
+    # the mechanism name and login module change.
+    for _m in ${(s:,:)CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}; do
+        [[ "${_m}" == "${_ext_mech}" ]] && continue
+        echo ""
+        echo "# Also accepted - swap these two lines in to use ${_m}:"
+        echo "# sasl.mechanism=${_m}"
+        echo "# sasl.jaas.config=$(kafka_client_jaas "${_m}" "${_first_client}" "${_first_pw:-<password>}")"
+    done
 } > "${OUT}"
 chmod 600 "${OUT}"
 
@@ -424,6 +442,7 @@ echo "[INFO] CA certificate at ${CA_OUT##*/}."
 echo ""
 echo "  bootstrap.servers=${_bootstrap}"
 echo "  security.protocol=SASL_SSL"
+echo "  sasl.mechanism=${_ext_mech}"
 echo ""
 echo "  Test it from here:"
 echo "    kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"

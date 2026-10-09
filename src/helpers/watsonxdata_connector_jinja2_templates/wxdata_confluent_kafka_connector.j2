@@ -1,3 +1,7 @@
+{#- sasl_mechanism takes the Kafka spelling (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512);
+    the connection form wants it lower-case with underscores (scram_sha_512).
+    Defaults match the Confluent EXTERNAL listener: SASL_SSL with PLAIN. -#}
+{%- set _mechanism = sasl_mechanism | default("PLAIN") | upper -%}
 {
     "display_name": {{ display_name | tojson }},
     "type": "kafka",
@@ -15,7 +19,7 @@
         "certificate": {{ certificate | default("") | tojson }},
         "certificate_extension": {{ certificate_extension | default("crt") | tojson }},
         "connection_method": {{ connection_method | default("basic") | tojson }},
-        "sasl_mechanism": {{ sasl_mechanism  | default("scram_sha_512") | tojson }},
+        "sasl_mechanism": {{ _mechanism | lower | replace("-", "_") | tojson }},
         "password": {{ broker_authentication_password |  default("") | tojson }},
         "username":  {{ broker_authentication_user | default("") | tojson }},
         "validate_server_certificate": {{ validate_server_certificate | default(true) | tojson }},
@@ -42,12 +46,12 @@
         {
         "encrypt": false,
         "key": "kafka.security-protocol",
-        "value": {{ sasl_mechanism  | default("SASL_SSL") | tojson }}
+        "value": {{ security_protocol | default("SASL_SSL") | tojson }}
         },
         {
         "encrypt": false,
         "key": "kafka.sasl.mechanism",
-        "value": {{ sasl_mechanism  | default("SCRAM-SHA-512") | tojson }}
+        "value": {{ _mechanism | tojson }}
         }
     ]
 }

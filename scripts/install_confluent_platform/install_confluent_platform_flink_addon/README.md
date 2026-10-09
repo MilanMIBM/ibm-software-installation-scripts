@@ -57,7 +57,7 @@ whenever the Flink settings are present in `confluent_vars.sh`.
 | `x.0_flink_uninstall.sh`                 | Removes everything, in the order that avoids stuck finalizers. `--keep-data`, `--keep-project`, `--dry-run`.                                                                                                                         |
 | `x.2_flink_add_auth_openshift.sh`        | Puts the `cmf` route behind the OpenShift login with an oauth-proxy sidecar, as Control Center is. Browser login or `Authorization: Bearer $(oc whoami -t)`. `--disable`, `--dry-run`.                                               |
 | `x.3_flink_sample_job.sh`                | Runs a sample job. `--application` (JAR, no Kafka needed) or `--sql` (needs a catalog). `--delete`, `--logs`, `--dry-run`.                                                                                                           |
-| `x.4_flink_connect_kafka.sh`             | **Attaches a Kafka cluster.** Auto-discovers the Confluent install, or `--bootstrap` an external one. `--test`, `--replace`, `--allow-network`, `--dry-run`.                                                                         |
+| `x.4_flink_connect_kafka.sh`             | **Attaches a Kafka cluster.** Auto-discovers the Confluent install (protocol, mechanism, CA), or `--bootstrap` an external one. `--test`, `--replace`, `--allow-network`, `--dry-run`.                                                                         |
 | `flink_cmf_connect.sh`                   | Sourced helper. Resolves `CMF_URL` via the route, or opens a port-forward and tears it down on exit.                                                                                                                                 |
 
 ## Attaching Kafka - the add-on path
@@ -79,9 +79,15 @@ SQL create topics. It defaults to empty, and without it a catalog reads fine but
 every `CREATE TABLE` is refused.
 
 With no flags it discovers everything from the Confluent installation in
-`PROJECT_CONFLUENT_SERVER`: bootstrap address, SASL mechanism, the admin
-credential read from the `confluent-sasl` secret, and the Schema Registry
-endpoint. After it runs:
+`PROJECT_CONFLUENT_SERVER`: bootstrap address, the security protocol and SASL
+mechanism the brokers are running (read from `broker-0`, so it follows
+`CONFLUENT_SASL_PROTOCOL` / `CONFLUENT_SASL_MECHANISM`), the CA for `SASL_SSL`,
+the admin credential read from the `confluent-sasl` secret, and the Schema
+Registry endpoint. A `:443` bootstrap is treated as the EXTERNAL listener:
+`SASL_SSL`, the first of `CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS` (PLAIN by
+default) and the external CA. The CA travels inline in the `KafkaDatabase`
+(`ssl.truststore.certificates`), because the CMF-created Flink pods have nothing
+of ours mounted. After it runs:
 
 ```sql
 SELECT * FROM `cp-kafka`.`cp-cluster`.`my-topic`;
@@ -92,8 +98,11 @@ For a Kafka cluster this repo did not install:
 ```bash
 ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh --bootstrap kafka.example.com:9093 \
     --sasl-user app --sasl-password secret \
+    --security-protocol SASL_SSL --sasl-mechanism PLAIN --ca-file ./kafka-ca.pem \
     --schema-registry https://sr.example.com
 ```
+
+`--ca-file` can be left out when the cluster's certificate chains to a public CA.
 
 ### If queries hang
 

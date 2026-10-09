@@ -34,7 +34,8 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   SELECT * FROM `cp-kafka`.`cp-cluster`.`my-topic`;
 #
 # Discovery: with no flags it reads the Confluent installation in
-# PROJECT_CONFLUENT_SERVER - bootstrap address, SASL mechanism, the admin
+# PROJECT_CONFLUENT_SERVER - bootstrap address, the security protocol and SASL
+# mechanism the brokers are actually running, the CA for SASL_SSL, the admin
 # credential from the SASL secret and the Schema Registry endpoint. Every one of
 # those can be overridden, and --bootstrap alone is enough to point Flink at a
 # Kafka cluster this repo did not install.
@@ -50,6 +51,13 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   --schema-registry URL     Schema Registry URL (default: discovered)
 #   --sasl-user NAME          SASL username (default: CONFLUENT_SASL_ADMIN_USER)
 #   --sasl-password PASS      SASL password (default: read from the secret)
+#   --sasl-mechanism M        PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512 (default:
+#                             discovered; for an external bootstrap on :443,
+#                             the first of CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS)
+#   --security-protocol P     SASL_PLAINTEXT or SASL_SSL (default: discovered;
+#                             SASL_SSL for a :443 bootstrap)
+#   --ca-file PATH            PEM CA to trust for SASL_SSL (default: the
+#                             in-cluster or external CA of the discovered install)
 #   --no-sasl                 connect as PLAINTEXT with no credentials
 #   --no-schema-registry      register the cluster without Schema Registry
 #   --catalog NAME            catalog name (default: FLINK_CATALOG)
@@ -66,6 +74,9 @@ SR_URL=""
 SASL_USER=""
 SASL_PASSWORD=""
 USE_SASL=true
+SASL_MECHANISM=""
+SECURITY_PROTOCOL=""
+CA_FILE=""
 USE_SR=true
 CATALOG="${FLINK_CATALOG}"
 DATABASE="${FLINK_KAFKA_DATABASE}"
@@ -87,6 +98,9 @@ while (( $# > 0 )); do
         --schema-registry)     _need_value "$1" "${2:-}"; SR_URL="$2"; shift 2 ;;
         --sasl-user)           _need_value "$1" "${2:-}"; SASL_USER="$2"; shift 2 ;;
         --sasl-password)       _need_value "$1" "${2:-}"; SASL_PASSWORD="$2"; shift 2 ;;
+        --sasl-mechanism)      _need_value "$1" "${2:-}"; SASL_MECHANISM="$2"; shift 2 ;;
+        --security-protocol)   _need_value "$1" "${2:-}"; SECURITY_PROTOCOL="$2"; shift 2 ;;
+        --ca-file)             _need_value "$1" "${2:-}"; CA_FILE="$2"; shift 2 ;;
         --no-sasl)             USE_SASL=false; shift ;;
         --no-schema-registry)  USE_SR=false; shift ;;
         --catalog)             _need_value "$1" "${2:-}"; CATALOG="$2"; shift 2 ;;
@@ -96,7 +110,7 @@ while (( $# > 0 )); do
         --test)                RUN_TEST=true; shift ;;
         --dry-run)             DRY_RUN=true; shift ;;
         -h|--help)
-            sed -n '19,61p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '19,69p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Use --help." >&2; exit 1 ;;
     esac
@@ -107,6 +121,8 @@ if ! command -v confluent &>/dev/null; then
     echo "[ERROR]   brew install confluentinc/tap/cli" >&2
     exit 1
 fi
+
+source "${SCRIPT_DIR}/../../confluent_kafka_security.sh"
 
 eval "${OC_LOGIN}"
 
@@ -190,20 +206,70 @@ if [[ "${USE_SASL}" == "true" ]]; then
 fi
 
 # ------------------------------------------------------------------------------
-# Security protocol
+# Security protocol, mechanism and CA
 # ------------------------------------------------------------------------------
-# The internal listener is SASL_PLAINTEXT: it carries credentials but is not
-# encrypted, which is what the brokers offer inside the cluster. Traffic stays
-# on the pod network. An external bootstrap over the passthrough routes would be
-# SASL_SSL instead - detected here by the :443 the routes advertise.
+# A :443 bootstrap is the EXTERNAL listener on the passthrough routes: always
+# SASL_SSL, with its own mechanism list and CA. Anything else on a discovered
+# cluster is the in-cluster listener, and what the brokers are running is read
+# from broker-0 itself, so a cluster switched with x.2 is matched even if the
+# config file was not. Flags win over both.
+_external=false
+[[ "${BOOTSTRAP}" == *:443 ]] && _external=true
+# Only a bootstrap on this install's own broker routes (broker-N-kafka-<ns>.<domain>)
+# may borrow its CA; any other :443 cluster brings its own via --ca-file, or
+# chains to a public CA.
+_own_routes=false
+[[ "${_external}" == "true" && "${BOOTSTRAP%%,*}" == broker-*-kafka-${KAFKA_NS}.* ]] && _own_routes=true
+
 if [[ "${USE_SASL}" == "true" ]]; then
-    if [[ "${BOOTSTRAP}" == *:443 ]]; then
-        SECURITY_PROTOCOL="SASL_SSL"
-    else
-        SECURITY_PROTOCOL="SASL_PLAINTEXT"
+    _live_proto="" _live_mech=""
+    if [[ "${_discovered}" == "true" ]]; then
+        read -r _live_proto _live_mech <<< "$(kafka_pod_internal_security "${KAFKA_NS}" broker-0)"
+        [[ "${_live_mech}" == "-" ]] && _live_mech=""
     fi
+    if [[ "${_external}" == "true" ]]; then
+        : "${SECURITY_PROTOCOL:=SASL_SSL}"
+        : "${SASL_MECHANISM:=$(kafka_external_primary_mechanism)}"
+    else
+        : "${SECURITY_PROTOCOL:=${_live_proto:-${CONFLUENT_SASL_PROTOCOL}}}"
+        : "${SASL_MECHANISM:=${_live_mech:-${CONFLUENT_SASL_MECHANISM}}}"
+    fi
+    if ! kafka_is_mechanism "${SASL_MECHANISM}"; then
+        echo "[ERROR] SASL mechanism '${SASL_MECHANISM}' - expected PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512." >&2
+        exit 1
+    fi
+    case "${SECURITY_PROTOCOL}" in
+        SASL_PLAINTEXT|SASL_SSL) ;;
+        *) echo "[ERROR] Security protocol '${SECURITY_PROTOCOL}' - expected SASL_PLAINTEXT or SASL_SSL." >&2
+           exit 1 ;;
+    esac
 else
     SECURITY_PROTOCOL="PLAINTEXT"
+fi
+
+# The CA is passed inline (ssl.truststore.certificates) rather than as a file:
+# the Flink pods are created by CMF and have nothing of ours mounted.
+CA_PEM=""
+if [[ "${SECURITY_PROTOCOL}" == "SASL_SSL" ]]; then
+    if [[ -n "${CA_FILE}" ]]; then
+        [[ -f "${CA_FILE}" ]] || { echo "[ERROR] No such file: ${CA_FILE}" >&2; exit 1; }
+        CA_PEM="$(cat "${CA_FILE}")"
+    elif [[ "${_discovered}" == "true" || "${_own_routes}" == "true" ]]; then
+        if [[ "${_own_routes}" == "true" ]]; then
+            _ca_secret="${CONFLUENT_EXTERNAL_TLS_SECRET:-confluent-kafka-tls}"
+        else
+            _ca_secret="${CONFLUENT_INTERNAL_TLS_SECRET}"
+        fi
+        CA_PEM="$(oc get secret "${_ca_secret}" -n "${KAFKA_NS}" \
+            -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 --decode || true)"
+        if [[ -z "${CA_PEM}" ]]; then
+            echo "[ERROR] SASL_SSL needs the brokers' CA, and secret '${_ca_secret}' in '${KAFKA_NS}'" >&2
+            echo "[ERROR] has none. Pass it with --ca-file." >&2
+            exit 1
+        fi
+    fi
+    # No CA at all is legitimate for a cluster whose certificate chains to a
+    # public authority: the JVM's default truststore then applies.
 fi
 
 echo ""
@@ -216,8 +282,9 @@ printf '  %-22s %s\n' \
     "bootstrap"         "${BOOTSTRAP}" \
     "security protocol" "${SECURITY_PROTOCOL}"
 [[ "${USE_SASL}" == "true" ]] && printf '  %-22s %s\n' \
-    "SASL mechanism"    "${CONFLUENT_SASL_MECHANISM}" \
+    "SASL mechanism"    "${SASL_MECHANISM}" \
     "SASL user"         "${SASL_USER}"
+[[ -n "${CA_PEM}" ]] && printf '  %-22s %s\n' "trusted CA" "${CA_FILE:-${_ca_secret}/ca.crt}"
 [[ "${USE_SR}" == "true" ]] && printf '  %-22s %s\n' "schema registry" "${SR_URL}"
 echo ""
 
@@ -354,7 +421,7 @@ SECRET_ID="${FLINK_KAFKA_SECRET}"
 # heredoc: a password containing a quote, backslash or $ would otherwise break
 # the generated python, and would show up in a shell trace.
 _SASL_USER="${SASL_USER}" _SASL_PW="${SASL_PASSWORD}" _USE_SASL="${USE_SASL}" \
-_SASL_MECH="${CONFLUENT_SASL_MECHANISM}" _SECRET_ID="${SECRET_ID}" \
+_SASL_MECH="${SASL_MECHANISM}" _SECRET_ID="${SECRET_ID}" \
 python3 - > "${SECRET_FILE}" <<'PY'
 import json, os
 
@@ -419,7 +486,8 @@ PY
 DATABASE_FILE="${RESOURCE_DIR}/kafka-database.json"
 _DATABASE="${DATABASE}" _BOOTSTRAP="${BOOTSTRAP}" _PROTOCOL="${SECURITY_PROTOCOL}" \
 _ENVIRONMENT="${FLINK_ENVIRONMENT}" \
-_USE_SASL="${USE_SASL}" _SASL_MECH="${CONFLUENT_SASL_MECHANISM}" _SECRET_ID="${SECRET_ID}" \
+_USE_SASL="${USE_SASL}" _SASL_MECH="${SASL_MECHANISM}" _SECRET_ID="${SECRET_ID}" \
+_CA_PEM="${CA_PEM}" \
 python3 - > "${DATABASE_FILE}" <<'PY'
 import json, os
 
@@ -428,6 +496,11 @@ if os.environ["_PROTOCOL"] != "PLAINTEXT":
     conn["security.protocol"] = os.environ["_PROTOCOL"]
 if os.environ["_USE_SASL"] == "true":
     conn["sasl.mechanism"] = os.environ["_SASL_MECH"]
+if os.environ["_CA_PEM"]:
+    # Inline PEM: Kafka clients accept the certificates themselves in place of
+    # a truststore file, which the CMF-created Flink pods do not have.
+    conn["ssl.truststore.type"] = "PEM"
+    conn["ssl.truststore.certificates"] = os.environ["_CA_PEM"]
 
 cluster = {"connectionConfig": conn}
 # Only reference the secret when there is something in it. A database whose

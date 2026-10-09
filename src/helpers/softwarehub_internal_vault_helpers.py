@@ -1,7 +1,8 @@
 """Manage secrets in the IBM Software Hub (Zen) vaults through ``/zen-data/v2/secrets``.
 
 API reference: ``.claude/docs/softwarehub-secrets-api.md``. Used by
-``src/utilities/softwarehub_utils/store_cpd_apikeys_in_vault.sh``.
+``src/utilities/softwarehub_utils/store_cpd_apikeys_in_vault.sh`` and
+``scripts/install_confluent_platform/utility_scripts_confluent_platform/x.5_confluent_add_cert_to_vault.sh``.
 
 Sign in, then work with the secrets the signed-in user owns or is a member of::
 
@@ -27,6 +28,9 @@ Things the API does that its docs don't say (seen on a live cluster):
 * The list also returns secrets the caller is only a member of. A secret's urn is
   ``<owner uid>:<secret_name>``, which is how ``find_secret`` picks the caller's own.
 * ``members`` can only be set on create, and a secret's type can't be changed.
+* A group's ``group_id`` must be sent as a string, though the groups API returns
+  a number; ``members()`` converts it. Sharing with a group that contains the
+  owner (e.g. "All Users", id 10000) is fine.
 """
 
 from __future__ import annotations
@@ -45,6 +49,10 @@ DEFAULT_VAULT_URN = "0000000000:internal"
 SECRET_TYPES = ("certificate", "credentials", "generic", "key", "token", "kerberos_credentials")
 SECRET_NAME_MAX_LENGTH = 110
 SECRETS_PATH = "/zen-data/v2/secrets"
+GROUPS_PATH = "/usermgmt/v4/groups"
+# The built-in group every Software Hub user is implicitly part of.
+ALL_USERS_GROUP_NAME = "All users"
+ALL_USERS_GROUP_ID = 10000
 
 # Keys whose values redact() hides, and those it shortens.
 _HIDDEN_KEYS = frozenset({"secret", "generic", "key", "credentials", "certificate",
@@ -110,12 +118,17 @@ def members(users: Sequence[str | Mapping[str, str]] = (),
 
     A user is ``{"uid", "username", "email"}`` (any of them) or just a username;
     a group is ``{"group_id", "group_name"}`` or just a group id.
+
+    ``group_id`` is sent as a string: the secrets API rejects a number with
+    HTTP 400 ("cannot unmarshal number ... group_id of type string"), although
+    the groups API (/usermgmt/v4/groups) returns it as one.
     """
     out: dict[str, Any] = {}
     if users:
         out["users"] = [{"username": u} if isinstance(u, str) else dict(u) for u in users]
     if groups:
-        out["groups"] = [{"group_id": g} if isinstance(g, str) else dict(g) for g in groups]
+        out["groups"] = [{"group_id": str(g)} if isinstance(g, (str, int)) else
+                         {**g, "group_id": str(g["group_id"])} for g in groups]
     return out
 
 
@@ -239,6 +252,39 @@ class SoftwareHubVault:
             uid = info.get("uid") or (info.get("UserInfo") or {}).get("uid")
             self._uid = str(uid) if uid is not None else None
         return self._uid
+
+    # -- User groups (for a secret's members) --
+
+    def iter_groups(self, *, page_size: int = 100) -> Iterator[dict[str, Any]]:
+        """Every user group (GET /usermgmt/v4/groups): ``{"group_id", "name", "roles", ...}``."""
+        offset = 0
+        while True:
+            page = self._request("GET", GROUPS_PATH, params={"offset": offset, "limit": page_size}) or {}
+            items = page if isinstance(page, list) else page.get("results") or []
+            yield from items
+            offset += len(items)
+            if len(items) < page_size:
+                return
+
+    def find_group(self, name: str) -> dict[str, Any] | None:
+        """The group named NAME (case-insensitive), or None.
+
+        The built-in 'All users' group is also looked up by its fixed id, in
+        case the list leaves it out.
+        """
+        for g in self.iter_groups():
+            if str(g.get("name", "")).casefold() == name.casefold():
+                return g
+        if name.casefold() == ALL_USERS_GROUP_NAME.casefold():
+            try:
+                g = self._request("GET", f"{GROUPS_PATH}/{ALL_USERS_GROUP_ID}") or {}
+            except VaultAPIError:
+                return None
+            g = g.get("results", g) if isinstance(g, Mapping) else g
+            g = g[0] if isinstance(g, list) and g else g
+            if isinstance(g, Mapping) and g.get("group_id") is not None:
+                return dict(g)
+        return None
 
     # -- The secrets API --
 

@@ -240,13 +240,17 @@ fi
 # must exist in Kafka metadata before the brokers come up as SASL, but on a
 # fresh install there is no cluster to register them against yet - so only the
 # secret is created here. 1.1 registers the SCRAM users once the brokers are up,
-# on the still-PLAINTEXT listener, before switching the listeners over.
+# on the still-PLAINTEXT listener, before switching the listeners over. PLAIN
+# reads the same secret directly, so it needs no registration at all.
 : "${CONFLUENT_SASL_ENABLED:=true}"
 : "${CONFLUENT_SASL_ADMIN_USER:=confluent-admin}"
 : "${CONFLUENT_SASL_SECRET:=confluent-sasl}"
 : "${CONFLUENT_SASL_CLIENTS:=app-client}"
+source "${SCRIPT_DIR}/confluent_kafka_security.sh"
 
 if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
+    # Checked here as well as in 1.1 so a typo fails before anything is created.
+    kafka_security_validate || exit 1
     _sasl_args=()
     _sasl_new=0
     for _u in "${CONFLUENT_SASL_ADMIN_USER}" ${=CONFLUENT_SASL_CLIENTS//,/ }; do
@@ -262,6 +266,14 @@ if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
         -n "${NS}" --dry-run=client -o yaml | oc apply -f - >/dev/null
     echo "[INFO] SASL credentials ready in secret '${CONFLUENT_SASL_SECRET}' (${_sasl_new} newly generated)."
     echo "[INFO]   admin: ${CONFLUENT_SASL_ADMIN_USER}   clients: ${CONFLUENT_SASL_CLIENTS}"
+    echo "[INFO]   in-cluster: ${CONFLUENT_SASL_PROTOCOL} / ${CONFLUENT_SASL_MECHANISM}   external: SASL_SSL / ${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}"
+
+    # SASL_SSL encrypts the in-cluster listeners with a private CA. Created here
+    # so the brokers have it on their very first start; 1.1 creates it too if
+    # this step was skipped.
+    if [[ "${CONFLUENT_SASL_PROTOCOL}" == "SASL_SSL" ]]; then
+        kafka_ensure_internal_tls "${NS}" || exit 1
+    fi
 else
     echo "[WARN] CONFLUENT_SASL_ENABLED=false - Kafka will accept unauthenticated clients."
 fi

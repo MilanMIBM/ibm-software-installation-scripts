@@ -162,7 +162,25 @@ confluent_auth_mode_records = [
     },
 ]
 
-confluent_sasl_mechanism_options = ["SCRAM-SHA-512", "SCRAM-SHA-256"]
+confluent_sasl_mechanism_options = ["SCRAM-SHA-512", "SCRAM-SHA-256", "PLAIN"]
+
+confluent_sasl_protocol_records = [
+    {
+        "sasl_protocol_name": "SASL_PLAINTEXT - authenticated, unencrypted in-cluster traffic (default)",
+        "sasl_protocol_id": "SASL_PLAINTEXT",
+    },
+    {
+        "sasl_protocol_name": "SASL_SSL - authenticated and TLS-encrypted (generated in-cluster CA)",
+        "sasl_protocol_id": "SASL_SSL",
+    },
+]
+
+# The EXTERNAL listener is always SASL_SSL (the passthrough routes route on the
+# TLS SNI), so only its mechanisms are selectable. The first selected one is
+# what the generated client files use.
+confluent_external_sasl_mechanism_options = ["PLAIN", "SCRAM-SHA-512", "SCRAM-SHA-256"]
+
+default_confluent_external_sasl_mechanisms = ["PLAIN"]
 
 confluent_mds_user_store_options = ["LDAP", "OAUTH"]
 
@@ -269,10 +287,15 @@ default_confluent_web_ui_auth = [
 
 default_confluent_sasl = [
     {"key": "CONFLUENT_SASL_ENABLED", "value": "true"},
-    {"key": "CONFLUENT_SASL_MECHANISM", "value": "SCRAM-SHA-512"},
+    # In-cluster listeners, inter-broker traffic and every platform component
+    {"key": "CONFLUENT_SASL_PROTOCOL", "value": "SASL_PLAINTEXT"},  # or SASL_SSL
+    {"key": "CONFLUENT_SASL_MECHANISM", "value": "SCRAM-SHA-512"},  # SCRAM-SHA-256, PLAIN
     {"key": "CONFLUENT_SASL_ADMIN_USER", "value": "confluent-admin"},
     {"key": "CONFLUENT_SASL_CLIENTS", "value": "app-client"},  # comma-separated
     {"key": "CONFLUENT_SASL_SECRET", "value": "confluent-sasl"},
+    # CONFLUENT_SASL_PROTOCOL=SASL_SSL only
+    {"key": "CONFLUENT_INTERNAL_TLS_SECRET", "value": "confluent-kafka-internal-tls"},
+    {"key": "CONFLUENT_INTERNAL_CERT_VALIDITY_DAYS", "value": "825"},
 ]
 
 default_confluent_mds = [
@@ -311,6 +334,8 @@ default_confluent_oauth = [
 
 default_confluent_external_access = [
     {"key": "CONFLUENT_EXTERNAL_KAFKA_ENABLED", "value": "true"},  # requires SASL
+    # Always SASL_SSL; comma-separated, the first is the one client files use
+    {"key": "CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS", "value": "PLAIN"},
     {"key": "CONFLUENT_EXTERNAL_KAFKA_PORT", "value": "9094"},
     {"key": "CONFLUENT_EXTERNAL_TLS_SECRET", "value": "confluent-kafka-tls"},
     {"key": "CONFLUENT_EXTERNAL_CERT_VALIDITY_DAYS", "value": "825"},
