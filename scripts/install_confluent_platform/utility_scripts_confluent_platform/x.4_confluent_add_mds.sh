@@ -308,19 +308,61 @@ echo "--------------------------------------------------------------------------
 
 MDS_INTERNAL="http://broker:${CONFLUENT_MDS_PORT}"
 
+_super_pw=""
+case "${_store}" in
+    LDAP)  _super_pw="$(oc get secret "${CONFLUENT_LDAP_SECRET}" -n "${NS}" -o jsonpath="{.data.${CONFLUENT_MDS_SUPER_USER}}" 2>/dev/null | base64 --decode || true)" ;;
+    OAUTH) _super_pw="$(oc get secret "${CONFLUENT_KEYCLOAK_SECRET}" -n "${NS}" -o jsonpath="{.data.${CONFLUENT_MDS_SUPER_USER}}" 2>/dev/null | base64 --decode || true)" ;;
+esac
+
+# MDS is called from inside broker-0, on localhost, so no route or port-forward
+# is needed. The cp-server image ships NO curl and no wget (verified on CP
+# 8.3.2: "curl: command not found"), but it does ship python3, so the request is
+# made with urllib. With curl the failure was silent - exit 127 swallowed by
+# 2>/dev/null - and every MDS call below looked like "MDS is not answering".
+#
+# The super user's credentials go over stdin, never on a command line, so they
+# do not show up in a process listing on this machine or in the pod.
+#
+# Usage: _mds_call METHOD PATH [JSON_BODY] [TIMEOUT_SECONDS]
+# Prints the response body, then a last line HTTP=<code> (HTTP=000 when nothing
+# answered, matching curl's -w '%{http_code}').
+_MDS_PY='
+import base64, sys, urllib.error, urllib.request
+method, url, timeout = sys.argv[1], sys.argv[2], float(sys.argv[3])
+user = sys.stdin.readline().rstrip("\n")
+pw = sys.stdin.readline().rstrip("\n")
+body = sys.stdin.read().encode() or None
+req = urllib.request.Request(url, data=body, method=method)
+if pw:
+    req.add_header("Authorization", "Basic " + base64.b64encode((user + ":" + pw).encode()).decode())
+if body:
+    req.add_header("Content-Type", "application/json")
+try:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        code, out = r.status, r.read()
+except urllib.error.HTTPError as e:
+    code, out = e.code, e.read()
+except Exception:
+    code, out = 0, b""
+sys.stdout.write(out.decode("utf-8", "replace") + "\nHTTP=%03d" % code)
+'
+_mds_call() {
+    printf '%s\n%s\n%s' "${CONFLUENT_MDS_SUPER_USER}" "${_super_pw}" "${3:-}" \
+        | oc exec -i broker-0 -n "${NS}" -- python3 -c "${_MDS_PY}" \
+            "$1" "http://localhost:${CONFLUENT_MDS_PORT}$2" "${4:-30}" 2>/dev/null \
+        || true
+}
+
 # Wait for MDS to answer before binding roles: the brokers have just restarted
 # and the listener comes up after the broker itself is ready.
 echo "[INFO] Waiting for MDS to accept requests..."
-# Any HTTP response means the listener is serving. -sf is deliberately NOT used:
-# with authentication.method=BASIC the unauthenticated probe gets 401, which
-# curl -f turns into a failure, so the loop would always run out the full five
-# minutes even on a perfectly healthy MDS. Treat 200/401/403 alike as "up".
+# Any HTTP response means the listener is serving. 401/403 count as "up": with
+# authentication.method=BASIC a probe whose credentials MDS cannot yet verify
+# against the user store is refused, but the listener is plainly there.
 _ok=false
 for _i in $(seq 1 60); do
-    _code="$(oc exec broker-0 -n "${NS}" -- bash -c \
-        "curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-         http://localhost:${CONFLUENT_MDS_PORT}/security/1.0/features" 2>/dev/null || true)"
-    case "${_code}" in
+    _probe="$(_mds_call GET /security/1.0/features '' 5)"
+    case "${_probe##*HTTP=}" in
         200|401|403) _ok=true; break ;;
     esac
     sleep 5
@@ -333,20 +375,13 @@ else
     echo "[INFO] MDS is up."
 fi
 
-_super_pw=""
-case "${_store}" in
-    LDAP)  _super_pw="$(oc get secret "${CONFLUENT_LDAP_SECRET}" -n "${NS}" -o jsonpath="{.data.${CONFLUENT_MDS_SUPER_USER}}" 2>/dev/null | base64 --decode || true)" ;;
-    OAUTH) _super_pw="$(oc get secret "${CONFLUENT_KEYCLOAK_SECRET}" -n "${NS}" -o jsonpath="{.data.${CONFLUENT_MDS_SUPER_USER}}" 2>/dev/null | base64 --decode || true)" ;;
-esac
-
 # The Kafka cluster id MDS scopes role bindings to. Read from the running
 # cluster rather than assumed, so it stays correct after a reinstall.
 # /v1/metadata/id is authenticated under BASIC, so the super user's credentials
 # are passed; kafka-storage's stored id is the fallback when MDS is not
 # answering yet, since it is the same value and needs no HTTP at all.
-_kafka_id="$(oc exec broker-0 -n "${NS}" -- bash -c \
-    "curl -s --max-time 10 -u '${CONFLUENT_MDS_SUPER_USER}:${_super_pw}' \
-     http://localhost:${CONFLUENT_MDS_PORT}/v1/metadata/id" 2>/dev/null \
+_id_out="$(_mds_call GET /v1/metadata/id '' 10)"
+_kafka_id="$(printf '%s' "${_id_out%$'\n'HTTP=*}" \
     | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])' 2>/dev/null || true)"
 
 if [[ -z "${_kafka_id}" ]]; then
@@ -365,17 +400,11 @@ if $_ok && [[ -n "${_kafka_id}" && -n "${_super_pw}" ]]; then
     # which reads like a credentials problem but is purely the body shape.
     # Verified against CP 8.2 MDS: this form returns 204 and the binding shows
     # up under .../lookup/principals/User:<user>/roleNames.
-    # -f is NOT used: it discards the response body, and MDS explains exactly
-    # what it disliked there. Capture body and status so a failure is diagnosed
-    # rather than guessed at.
-    _grant_out="$(oc exec broker-0 -n "${NS}" -- bash -c "
-        curl -s -w '\nHTTP=%{http_code}' -X POST \
-          -u '${CONFLUENT_MDS_SUPER_USER}:${_super_pw}' \
-          -H 'Content-Type: application/json' \
-          --max-time 30 \
-          -d '{\"clusters\":{\"kafka-cluster\":\"${_kafka_id}\"}}' \
-          'http://localhost:${CONFLUENT_MDS_PORT}/security/1.0/principals/User:${CONFLUENT_MDS_SUPER_USER}/roles/SystemAdmin'
-        " 2>/dev/null || true)"
+    # Body and status are both captured, because MDS explains exactly what it
+    # disliked in the body. A failure is then diagnosed rather than guessed at.
+    _scope="{\"clusters\":{\"kafka-cluster\":\"${_kafka_id}\"}}"
+    _grant_out="$(_mds_call POST \
+        "/security/1.0/principals/User:${CONFLUENT_MDS_SUPER_USER}/roles/SystemAdmin" "${_scope}")"
     _grant_code="${_grant_out##*HTTP=}"
     _grant_body="${_grant_out%$'\n'HTTP=*}"
 
@@ -383,13 +412,9 @@ if $_ok && [[ -n "${_kafka_id}" && -n "${_super_pw}" ]]; then
         20*)
             # 204 only says the write was accepted. Read the binding back, so a
             # silent no-op cannot be reported as success.
-            _roles="$(oc exec broker-0 -n "${NS}" -- bash -c "
-                curl -s --max-time 30 \
-                  -u '${CONFLUENT_MDS_SUPER_USER}:${_super_pw}' \
-                  -H 'Content-Type: application/json' \
-                  -d '{\"clusters\":{\"kafka-cluster\":\"${_kafka_id}\"}}' \
-                  'http://localhost:${CONFLUENT_MDS_PORT}/security/1.0/lookup/principals/User:${CONFLUENT_MDS_SUPER_USER}/roleNames'
-                " 2>/dev/null || true)"
+            _roles_out="$(_mds_call POST \
+                "/security/1.0/lookup/principals/User:${CONFLUENT_MDS_SUPER_USER}/roleNames" "${_scope}")"
+            _roles="${_roles_out%$'\n'HTTP=*}"
             if [[ "${_roles}" == *SystemAdmin* ]]; then
                 echo "[INFO]   granted and verified: ${CONFLUENT_MDS_SUPER_USER} holds SystemAdmin."
             else
