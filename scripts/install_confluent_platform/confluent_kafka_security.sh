@@ -35,6 +35,23 @@
 # name and password authenticate over SCRAM and over PLAIN.
 # ==============================================================================
 
+# ------------------------------------------------------------------------------
+# Settings written by the feat/confluent-sasl-multi-mechanism branch. It named
+# the in-cluster protocol CONFLUENT_SASL_SECURITY_PROTOCOL (and put the whole
+# mechanism list in CONFLUENT_SASL_MECHANISM, which kafka_security_validate
+# explains). Adopted here, before the defaults below, so an older
+# confluent_vars.sh is not silently half-applied.
+# ------------------------------------------------------------------------------
+if [[ -n "${CONFLUENT_SASL_SECURITY_PROTOCOL:-}" ]]; then
+    if [[ -z "${CONFLUENT_SASL_PROTOCOL:-}" ]]; then
+        CONFLUENT_SASL_PROTOCOL="${CONFLUENT_SASL_SECURITY_PROTOCOL}"
+        echo "[WARN] CONFLUENT_SASL_SECURITY_PROTOCOL is deprecated; using it as CONFLUENT_SASL_PROTOCOL=${CONFLUENT_SASL_PROTOCOL}."
+        echo "[WARN] Rename it to CONFLUENT_SASL_PROTOCOL in confluent_vars.sh."
+    elif [[ "${CONFLUENT_SASL_SECURITY_PROTOCOL}" != "${CONFLUENT_SASL_PROTOCOL}" ]]; then
+        echo "[WARN] CONFLUENT_SASL_SECURITY_PROTOCOL=${CONFLUENT_SASL_SECURITY_PROTOCOL} is ignored: CONFLUENT_SASL_PROTOCOL=${CONFLUENT_SASL_PROTOCOL} is set."
+    fi
+fi
+
 : "${CONFLUENT_SASL_PROTOCOL:=SASL_PLAINTEXT}"
 : "${CONFLUENT_SASL_MECHANISM:=SCRAM-SHA-512}"
 : "${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS:=PLAIN,SCRAM-SHA-512}"
@@ -46,9 +63,22 @@
 CONFLUENT_BROKER_TLS_DIR="/etc/confluent/internal-tls"
 CONFLUENT_KAFKA_CA_MOUNT="/etc/confluent/kafka-ca"
 
-# Spaces are tolerated in the lists ("PLAIN, SCRAM-SHA-512") and dropped here.
-CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS="${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS//[[:space:]]/}"
-CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS="${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS//[[:space:]]/}"
+# ------------------------------------------------------------------------------
+# kafka_normalize_mechanisms <list> - the list with spaces dropped ("PLAIN,
+# SCRAM-SHA-512"), names upper-cased (scram-sha-512) and repeats removed. The
+# first occurrence is kept, so the EXTERNAL list's first entry stays its
+# primary mechanism.
+# ------------------------------------------------------------------------------
+kafka_normalize_mechanisms() {
+    local -aU list
+    list=(${(s:,:)${(U)1//[[:space:]]/}})
+    print -r -- "${(j:,:)list}"
+}
+
+CONFLUENT_SASL_PROTOCOL="${(U)CONFLUENT_SASL_PROTOCOL//[[:space:]]/}"
+CONFLUENT_SASL_MECHANISM="${(U)CONFLUENT_SASL_MECHANISM//[[:space:]]/}"
+CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS="$(kafka_normalize_mechanisms "${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS}")"
+CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS="$(kafka_normalize_mechanisms "${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}")"
 
 # ------------------------------------------------------------------------------
 # kafka_security_validate - fail fast on a value the brokers would reject later.
@@ -60,8 +90,23 @@ kafka_security_validate() {
         *)  echo "[ERROR] CONFLUENT_SASL_PROTOCOL='${CONFLUENT_SASL_PROTOCOL}' - expected SASL_PLAINTEXT or SASL_SSL." >&2
             ok=false ;;
     esac
-    if ! kafka_is_mechanism "${CONFLUENT_SASL_MECHANISM}"; then
+    if [[ "${CONFLUENT_SASL_MECHANISM}" == *,* ]]; then
+        # A list here is how the feat/confluent-sasl-multi-mechanism branch
+        # configured mechanisms; it used the strongest one as the platform's.
+        local -a given
+        local pick="" p
+        given=(${(s:,:)CONFLUENT_SASL_MECHANISM})
+        for p in SCRAM-SHA-512 SCRAM-SHA-256 PLAIN; do
+            (( ${given[(Ie)${p}]} )) && { pick="${p}"; break; }
+        done
+        echo "[ERROR] CONFLUENT_SASL_MECHANISM='${CONFLUENT_SASL_MECHANISM}' is a list. It takes the ONE mechanism the" >&2
+        echo "[ERROR] brokers and components use; the list belongs in CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS:" >&2
+        echo "[ERROR]   CONFLUENT_SASL_MECHANISM=${pick:-SCRAM-SHA-512}" >&2
+        echo "[ERROR]   CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS=$(kafka_normalize_mechanisms "${CONFLUENT_SASL_MECHANISM}")" >&2
+        ok=false
+    elif ! kafka_is_mechanism "${CONFLUENT_SASL_MECHANISM}"; then
         echo "[ERROR] CONFLUENT_SASL_MECHANISM='${CONFLUENT_SASL_MECHANISM}' - expected SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN." >&2
+        kafka_mechanism_hint "${CONFLUENT_SASL_MECHANISM}"
         ok=false
     fi
     local var
@@ -73,10 +118,17 @@ kafka_security_validate() {
         for m in ${(s:,:)${(P)var}}; do
             if ! kafka_is_mechanism "${m}"; then
                 echo "[ERROR] ${var} contains '${m}' - expected SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN." >&2
+                kafka_mechanism_hint "${m}"
                 ok=false
             fi
         done
     done
+    if $ok && [[ ",$(kafka_internal_mechanisms)," != *",PLAIN,"* ]]; then
+        # Field finding: StreamSets (watsonx.data) connects to the internal
+        # bootstrap with PLAIN only; SCRAM-SHA-512 failed there.
+        echo "[INFO] The in-cluster listeners do not accept PLAIN. StreamSets (watsonx.data) needs it;"
+        echo "[INFO] add PLAIN to CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS if StreamSets connects in-cluster."
+    fi
     if [[ ",${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS}," != *",${CONFLUENT_SASL_MECHANISM},"* ]]; then
         echo "[INFO] CONFLUENT_SASL_MECHANISM=${CONFLUENT_SASL_MECHANISM} is not in CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS;"
         echo "[INFO] the in-cluster listeners accept it anyway (broker-to-broker traffic and the components use it)."
@@ -92,6 +144,18 @@ kafka_is_mechanism() {
     case "$1" in
         PLAIN|SCRAM-SHA-256|SCRAM-SHA-512) return 0 ;;
         *) return 1 ;;
+    esac
+}
+
+# kafka_mechanism_hint <name> - an extra line for a common wrong name. Kafka's
+# name for SASL/PLAIN is just PLAIN: SASL_PLAIN reaches the brokers as an
+# unknown mechanism and every client fails with "Failed to create SaslClient".
+kafka_mechanism_hint() {
+    case "$1" in
+        SASL_PLAIN)
+            echo "[ERROR] 'SASL_PLAIN' is not a Kafka SASL mechanism; use 'PLAIN' (SASL_PLAINTEXT is a protocol, set in CONFLUENT_SASL_PROTOCOL)." >&2 ;;
+        SASL_PLAINTEXT|SASL_SSL)
+            echo "[ERROR] '$1' is a security protocol, not a mechanism; it belongs in CONFLUENT_SASL_PROTOCOL." >&2 ;;
     esac
 }
 
@@ -143,6 +207,25 @@ kafka_client_properties() {
         print -r -- "ssl.truststore.type=PEM"
         print -r -- "ssl.truststore.location=${truststore}"
     fi
+}
+
+# ------------------------------------------------------------------------------
+# kafka_client_alternatives <user> <password> <mechanism list> [<mechanism to skip>]
+# Commented-out sasl.mechanism + sasl.jaas.config pairs for one user, one per
+# mechanism in the list (in its order, repeats dropped). The two lines must
+# change together: PLAIN with the SCRAM login module, or the reverse, fails to
+# authenticate. Pass the mechanism already written as live settings to skip it.
+# ------------------------------------------------------------------------------
+kafka_client_alternatives() {
+    local user="$1" password="$2" skip="${4:-}" m
+    local -aU mechs
+    mechs=(${(s:,:)3})
+    for m in "${mechs[@]}"; do
+        [[ "${m}" == "${skip}" ]] && continue
+        print -r -- "# ${user} / ${m}"
+        print -r -- "# sasl.mechanism=${m}"
+        print -r -- "# sasl.jaas.config=$(kafka_client_jaas "${m}" "${user}" "${password}")"
+    done
 }
 
 # ------------------------------------------------------------------------------

@@ -291,8 +291,8 @@ else
         echo "# Kafka client properties for the SASL-enabled cluster in '${NS}'."
         echo "# One block per client - copy the one you need into your client config."
         echo "# In-cluster listener: ${CONFLUENT_SASL_PROTOCOL}, accepting $(kafka_internal_mechanisms)."
-        echo "# Each block uses ${CONFLUENT_SASL_MECHANISM}; for another accepted mechanism swap"
-        echo "# sasl.mechanism and the login module (PlainLoginModule / ScramLoginModule)."
+        echo "# Each block uses ${CONFLUENT_SASL_MECHANISM}. To use another accepted mechanism,"
+        echo "# replace BOTH sasl.* lines of the block with one of the pairs listed under it."
         echo ""
         for _u in ${=_client_list}; do
             _p="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode || true)"
@@ -301,6 +301,8 @@ else
             echo "# bootstrap.servers=broker-headless.${NS}.svc.cluster.local:${CONFLUENT_BROKER_INTERNAL_PORT}"
             kafka_client_properties "${CONFLUENT_SASL_PROTOCOL}" "${CONFLUENT_SASL_MECHANISM}" \
                 "${_u}" "${_p}" "${_truststore:+/path/to/confluent_kafka_internal_ca.crt}" | sed 's/^/# /'
+            # One ready-made pair per other accepted mechanism.
+            kafka_client_alternatives "${_u}" "${_p}" "$(kafka_internal_mechanisms)" "${CONFLUENT_SASL_MECHANISM}"
             echo ""
         done
     } > "${OUT}"

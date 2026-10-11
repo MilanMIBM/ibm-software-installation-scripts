@@ -365,7 +365,11 @@ _platform_defaults=(
 # the platform components use. SCRAM users can be added at runtime; PLAIN rolls
 # the brokers on every change and belongs on SASL_SSL.'
     'CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS|PLAIN,SCRAM-SHA-512|# Comma-separated: every mechanism in-cluster clients may use (PLAIN,
-# SCRAM-SHA-512, SCRAM-SHA-256). CONFLUENT_SASL_MECHANISM is always accepted too.'
+# SCRAM-SHA-512, SCRAM-SHA-256). CONFLUENT_SASL_MECHANISM is always accepted too.
+# Known client limit: StreamSets (watsonx.data) connects to the internal
+# bootstrap with PLAIN only - SCRAM-SHA-512 failed there - so keep PLAIN in
+# this list while it is used. Not yet recorded whether StreamSets accepts the
+# internal listener with CONFLUENT_SASL_PROTOCOL=SASL_SSL.'
     'CONFLUENT_SASL_ADMIN_USER|confluent-admin|'
     'CONFLUENT_SASL_CLIENTS|app-client|# Comma-separated. One credential is minted per name, valid for every mechanism.'
     'CONFLUENT_SASL_SECRET|confluent-sasl|'

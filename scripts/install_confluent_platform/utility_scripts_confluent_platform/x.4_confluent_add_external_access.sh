@@ -61,7 +61,11 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # Usage:
 #   ./x.4_confluent_add_external_access.sh [--disable] [--rotate] [--yes]
 #        [--dry-run] [--no-status] [--cert-path P --key-path P]
+#        [--client-config-only]
 #
+#   --client-config-only  only rewrite confluent_external_client.properties and
+#                the CA file from the live cluster; certificates, routes and
+#                brokers are left alone (external access must already be on)
 #   --disable    remove the routes and the EXTERNAL listener
 #   --rotate     regenerate the CA and broker certificates
 #   --cert-path  use an existing PEM certificate instead of generating one
@@ -78,6 +82,7 @@ DRY_RUN=false
 RUN_STATUS=true
 CERT_PATH=""
 KEY_PATH=""
+CLIENT_CONFIG_ONLY=false
 
 _need_value() { [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }; }
 
@@ -90,10 +95,16 @@ while (( $# > 0 )); do
         --yes|-y)    ASSUME_YES=true; shift ;;
         --dry-run)   DRY_RUN=true; shift ;;
         --no-status) RUN_STATUS=false; shift ;;
-        -h|--help)   sed -n '16,71p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --client-config-only) CLIENT_CONFIG_ONLY=true; shift ;;
+        -h|--help)   sed -n '16,75p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Try --help." >&2; exit 1 ;;
     esac
 done
+
+if $CLIENT_CONFIG_ONLY && { $DISABLE || $ROTATE || [[ -n "${CERT_PATH}" ]]; }; then
+    echo "[ERROR] --client-config-only cannot be combined with --disable, --rotate or --cert-path." >&2
+    exit 1
+fi
 
 if [[ -n "${CERT_PATH}" && -z "${KEY_PATH}" ]] || [[ -z "${CERT_PATH}" && -n "${KEY_PATH}" ]]; then
     echo "[ERROR] --cert-path and --key-path must be given together." >&2
@@ -157,7 +168,11 @@ else
     echo "  brokers : ${CONFLUENT_BROKER_REPLICAS}"
     for _h in "${_hosts[@]}"; do echo "            ${_h}:443"; done
 fi
-echo "  restarts: all ${CONFLUENT_BROKER_REPLICAS} brokers (topic data is kept)"
+if $CLIENT_CONFIG_ONLY; then
+    echo "  restarts: none (--client-config-only: local client files only)"
+else
+    echo "  restarts: all ${CONFLUENT_BROKER_REPLICAS} brokers (topic data is kept)"
+fi
 echo ""
 
 # ------------------------------------------------------------------------------
@@ -169,6 +184,96 @@ if ! $DISABLE && [[ "${CONFLUENT_SASL_ENABLED}" != "true" ]]; then
     echo "[ERROR] something this script will do. Run this first:" >&2
     echo "[ERROR]   ${SCRIPT_DIR}/x.2_confluent_add_sasl.sh" >&2
     exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Client configuration, written by step 4 and by --client-config-only
+# ------------------------------------------------------------------------------
+# A function, so $0 is its name here: the script name comes from ZSH_ARGZERO.
+write_client_config() {
+    REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
+    OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_external_client.properties"
+    CA_OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
+    mkdir -p "$(dirname "${OUT}")"
+
+    _bootstrap=""
+    for _h in "${_hosts[@]}"; do _bootstrap+="${_h}:443,"; done
+    _bootstrap="${_bootstrap%,}"
+
+    _first_client="${CONFLUENT_SASL_CLIENTS%%,*}"
+    _first_pw="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
+        -o jsonpath="{.data.${_first_client}}" 2>/dev/null | base64 --decode || true)"
+
+    {
+        echo "# Written by $(basename "${ZSH_ARGZERO}") on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo "# Kafka client properties for EXTERNAL access to the cluster in '${NS}'."
+        echo "#"
+        echo "#   kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
+        echo "#     --command-config configs/confluent_platform_config/confluent_external_client.properties --list"
+        echo ""
+        echo "bootstrap.servers=${_bootstrap}"
+        if [[ -n "${_first_pw}" ]]; then
+            kafka_client_properties SASL_SSL "${_ext_mech}" "${_first_client}" "${_first_pw}" "${CA_OUT}"
+        else
+            kafka_client_properties SASL_SSL "${_ext_mech}" "<user>" "<password>" "${CA_OUT}" \
+                | sed 's/^sasl.jaas.config=/# sasl.jaas.config=/'
+        fi
+        # Every mechanism the listener accepts works with the same credential;
+        # only the mechanism name and login module change.
+        for _m in ${(s:,:)CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}; do
+            [[ "${_m}" == "${_ext_mech}" ]] && continue
+            echo ""
+            echo "# Also accepted - swap these two lines in to use ${_m}:"
+            echo "# sasl.mechanism=${_m}"
+            echo "# sasl.jaas.config=$(kafka_client_jaas "${_m}" "${_first_client}" "${_first_pw:-<password>}")"
+        done
+    } > "${OUT}"
+    chmod 600 "${OUT}"
+
+    echo "[INFO] Client properties written to ${OUT##*/} (mode 600)."
+    echo "[INFO] CA certificate at ${CA_OUT##*/}."
+    echo ""
+    echo "  bootstrap.servers=${_bootstrap}"
+    echo "  security.protocol=SASL_SSL"
+    echo "  sasl.mechanism=${_ext_mech}"
+    echo ""
+    echo "  Test it from here:"
+    echo "    kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
+    echo "      --command-config ${OUT#${REPO_ROOT}/} --list"
+    echo ""
+    echo "  Remove external access:  $(basename "${ZSH_ARGZERO}") --disable"
+}
+
+if $CLIENT_CONFIG_ONLY; then
+    if [[ "${_state}" != "enabled" ]]; then
+        echo "[ERROR] External access is not enabled; run this script without --client-config-only first." >&2
+        exit 1
+    fi
+    if $DRY_RUN; then
+        echo "[INFO] --dry-run: would rewrite confluent_external_client.properties and confluent_kafka_ca.crt only."
+        exit 0
+    fi
+    # Describe what the brokers run, not what confluent_vars.sh says: the vars
+    # may hold a mechanism list that has not been applied yet.
+    _live_ext="$(kafka_pod_listener_mechanisms "${NS}" broker-0 external)"
+    if [[ -n "${_live_ext}" ]]; then
+        CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS="${_live_ext}"
+        _ext_mech="$(kafka_external_primary_mechanism)"
+    fi
+    # The properties file points at this CA, so refresh it from the secret too
+    # (it may be missing on this workstation, or stale after a --rotate).
+    _ca_dir="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)/configs/confluent_platform_config"
+    mkdir -p "${_ca_dir}"
+    _ca_pem="$(oc get secret "${CONFLUENT_EXTERNAL_TLS_SECRET}" -n "${NS}" \
+        -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 --decode 2>/dev/null || true)"
+    if [[ -n "${_ca_pem}" ]]; then
+        print -r -- "${_ca_pem}" > "${_ca_dir}/confluent_kafka_ca.crt"
+        chmod 644 "${_ca_dir}/confluent_kafka_ca.crt"
+    else
+        echo "[WARN] No ca.crt in secret '${CONFLUENT_EXTERNAL_TLS_SECRET}'; keeping the existing CA file, if any."
+    fi
+    write_client_config
+    exit 0
 fi
 
 if $DRY_RUN; then
@@ -398,57 +503,7 @@ echo "--------------------------------------------------------------------------
 echo " Step 4/4: client configuration"
 echo "------------------------------------------------------------------------------"
 
-REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_external_client.properties"
-CA_OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
-mkdir -p "$(dirname "${OUT}")"
-
-_bootstrap=""
-for _h in "${_hosts[@]}"; do _bootstrap+="${_h}:443,"; done
-_bootstrap="${_bootstrap%,}"
-
-_first_client="${CONFLUENT_SASL_CLIENTS%%,*}"
-_first_pw="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
-    -o jsonpath="{.data.${_first_client}}" 2>/dev/null | base64 --decode || true)"
-
-{
-    echo "# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    echo "# Kafka client properties for EXTERNAL access to the cluster in '${NS}'."
-    echo "#"
-    echo "#   kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
-    echo "#     --command-config configs/confluent_platform_config/confluent_external_client.properties --list"
-    echo ""
-    echo "bootstrap.servers=${_bootstrap}"
-    if [[ -n "${_first_pw}" ]]; then
-        kafka_client_properties SASL_SSL "${_ext_mech}" "${_first_client}" "${_first_pw}" "${CA_OUT}"
-    else
-        kafka_client_properties SASL_SSL "${_ext_mech}" "<user>" "<password>" "${CA_OUT}" \
-            | sed 's/^sasl.jaas.config=/# sasl.jaas.config=/'
-    fi
-    # Every mechanism the listener accepts works with the same credential; only
-    # the mechanism name and login module change.
-    for _m in ${(s:,:)CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}; do
-        [[ "${_m}" == "${_ext_mech}" ]] && continue
-        echo ""
-        echo "# Also accepted - swap these two lines in to use ${_m}:"
-        echo "# sasl.mechanism=${_m}"
-        echo "# sasl.jaas.config=$(kafka_client_jaas "${_m}" "${_first_client}" "${_first_pw:-<password>}")"
-    done
-} > "${OUT}"
-chmod 600 "${OUT}"
-
-echo "[INFO] Client properties written to ${OUT##*/} (mode 600)."
-echo "[INFO] CA certificate at ${CA_OUT##*/}."
-echo ""
-echo "  bootstrap.servers=${_bootstrap}"
-echo "  security.protocol=SASL_SSL"
-echo "  sasl.mechanism=${_ext_mech}"
-echo ""
-echo "  Test it from here:"
-echo "    kafka-topics --bootstrap-server ${_hosts[1]}:443 \\"
-echo "      --command-config ${OUT#${REPO_ROOT}/} --list"
-echo ""
-echo "  Remove external access:  $(basename $0) --disable"
+write_client_config
 
 if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
     echo ""

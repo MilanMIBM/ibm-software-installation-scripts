@@ -400,8 +400,18 @@ if [[ "${CONFLUENT_SASL_ENABLED}" == "true" ]]; then
         if [[ -n "$(kafka_scram_mechanisms_in_use)" ]]; then
             echo "[INFO] Registering SCRAM users on the running cluster..."
             if ! kafka_register_scram_users "${NS}" "${SASL_ADMIN_PW}" "${(@f)$(kafka_secret_credentials "${NS}")}"; then
-                echo "[WARN] Could not register SCRAM users. Continuing; if clients fail to"
-                echo "[WARN] authenticate, run x.2_confluent_add_sasl.sh."
+                # Brokers that authenticate to each other with SCRAM cannot
+                # form without these users, so stop while the broker spec is
+                # still untouched. When SCRAM is only offered to clients the
+                # cluster still forms; only SCRAM clients are refused.
+                if [[ "${_mech}" == SCRAM-* ]]; then
+                    echo "[ERROR] Could not register SCRAM users, and the brokers would authenticate to each" >&2
+                    echo "[ERROR] other with ${_mech}. The broker spec was not changed. Check the" >&2
+                    echo "[ERROR] '${CONFLUENT_SASL_ADMIN_USER}' credential in secret '${CONFLUENT_SASL_SECRET}', or run x.2_confluent_add_sasl.sh." >&2
+                    exit 1
+                fi
+                echo "[WARN] Could not register SCRAM users; SCRAM clients will be refused until they are."
+                echo "[WARN] Continuing (the brokers use ${_mech}); run x.2_confluent_add_sasl.sh once the cluster is healthy."
             fi
         fi
     elif [[ "${_mech}" == SCRAM-* ]]; then
@@ -1109,8 +1119,15 @@ EOF
 # never reaches them. Deleting the lagging pods lets them come back on the new
 # spec together. Every other change (credentials, the EXTERNAL listener) is an
 # ordinary rolling update and is left to the StatefulSet.
+#
+# A change of mechanism alone is the exception: when the protocol and CA are
+# unchanged, and each side accepts the mechanism the other presents as a client
+# (the old pod accepts the new one on its plaintext listener, and the new spec
+# still accepts the old one), old and new brokers can replicate during the
+# rollout, so the RollingUpdate is left to do it without an outage.
 if [[ "${_sasl_deferred:-false}" != "true" ]]; then
     _stale=()
+    _new_sec=(${(s:/:)_inter_broker_security})    # protocol mechanism ca
     for _i in $(seq 0 $(( CONFLUENT_BROKER_REPLICAS - 1 ))); do
         oc get pod "broker-${_i}" -n "${NS}" &>/dev/null || continue
         _pod_sig="$(oc get pod "broker-${_i}" -n "${NS}" \
@@ -1121,7 +1138,22 @@ if [[ "${_sasl_deferred:-false}" != "true" ]]; then
             read -r _p _m <<< "$(kafka_pod_internal_security "${NS}" "broker-${_i}")"
             _pod_sig="${_p}/${_m}/-"
         fi
-        [[ "${_pod_sig}" != "${_inter_broker_security}" ]] && _stale+=("broker-${_i}")
+        [[ "${_pod_sig}" == "${_inter_broker_security}" ]] && continue
+
+        _old_sec=(${(s:/:)_pod_sig})
+        if [[ "${_old_sec[1]}" == SASL_* && "${_old_sec[1]}" == "${_new_sec[1]}" \
+              && "${_old_sec[3]:-}" == "${_new_sec[3]:-}" ]]; then
+            # Empty for pods without BROKER_SASL_LISTENERS (pre-annotation
+            # specs), which therefore stay stale.
+            _old_accepts="$(kafka_pod_listener_mechanisms "${NS}" "broker-${_i}" plaintext)"
+            if [[ -n "${_old_accepts}" \
+                  && ",${_old_accepts}," == *",${_new_sec[2]},"* \
+                  && ",${_internal_mechs:-}," == *",${_old_sec[2]},"* ]]; then
+                echo "[INFO] broker-${_i}: inter-broker ${_old_sec[2]} -> ${_new_sec[2]} is compatible; left to the rolling update."
+                continue
+            fi
+        fi
+        _stale+=("broker-${_i}")
     done
     if (( ${#_stale[@]} > 0 )); then
         echo "[INFO] Restarting ${#_stale[@]} broker(s) on the previous inter-broker security: ${_stale[*]}"

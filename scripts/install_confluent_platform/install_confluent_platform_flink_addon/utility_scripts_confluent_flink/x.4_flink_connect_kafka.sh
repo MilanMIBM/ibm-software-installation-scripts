@@ -234,8 +234,11 @@ if [[ "${USE_SASL}" == "true" ]]; then
         : "${SECURITY_PROTOCOL:=${_live_proto:-${CONFLUENT_SASL_PROTOCOL}}}"
         : "${SASL_MECHANISM:=${_live_mech:-${CONFLUENT_SASL_MECHANISM}}}"
     fi
+    # --sasl-mechanism is typed by hand; normalise it like the vars file lists.
+    SASL_MECHANISM="${(U)SASL_MECHANISM//[[:space:]]/}"
     if ! kafka_is_mechanism "${SASL_MECHANISM}"; then
         echo "[ERROR] SASL mechanism '${SASL_MECHANISM}' - expected PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512." >&2
+        kafka_mechanism_hint "${SASL_MECHANISM}"
         exit 1
     fi
     case "${SECURITY_PROTOCOL}" in

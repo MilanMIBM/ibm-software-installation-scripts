@@ -297,6 +297,8 @@ else
         echo "# Suppress with:   CONFLUENT_WRITE_SASL_PROPERTIES=false"
         echo ""
         echo "# In-cluster listener: ${_proto}, accepting ${CONFLUENT_KAFKA_INTERNAL_MECHANISMS}"
+        echo "# Not every client supports every mechanism: StreamSets (watsonx.data)"
+        echo "# connects to this internal bootstrap with PLAIN; SCRAM-SHA-512 failed there."
         echo "bootstrap.servers=${CONFLUENT_BOOTSTRAP_INTERNAL}"
         kafka_client_properties "${_proto}" "${_mech}" "${_default_user}" "${_default_pw}" "${_truststore}"
         # Every accepted mechanism works with the same credential; only the
@@ -309,14 +311,16 @@ else
             echo "# sasl.jaas.config=$(kafka_client_jaas "${_m}" "${_default_user}" "${_default_pw}")"
         done
         echo ""
-        echo "# ---- other clients: swap the jaas line above for one of these ----"
+        echo "# ---- other clients: replace BOTH sasl.* lines above with one pair ----"
+        # Every user can log in with every accepted mechanism, so each pair is
+        # listed, the live mechanism first.
         for _u in "${_sasl_users[@]}"; do
             [[ "${_u}" == "${_default_user}" ]] && continue
             _p="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
                 -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode || true)"
             [[ -z "${_p}" ]] && continue
-            echo "# ${_u}"
-            echo "# sasl.jaas.config=$(kafka_client_jaas "${_mech}" "${_u}" "${_p}")"
+            echo "#"
+            kafka_client_alternatives "${_u}" "${_p}" "${_mech},${CONFLUENT_KAFKA_INTERNAL_MECHANISMS}"
         done
 
         # watsonx.data "Add component - Apache Kafka" needs the EXTERNAL
