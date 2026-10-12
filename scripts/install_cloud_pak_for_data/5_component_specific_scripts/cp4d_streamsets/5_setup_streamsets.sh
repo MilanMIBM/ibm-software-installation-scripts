@@ -137,8 +137,15 @@ if [[ -n "${SERVICE_ID}" ]]; then
       echo "[INFO] ${SERVICE_ID} has no saved password; creating it (or issuing a new password if it exists)."
       "${UTILS}/set_service_id_user_proxies.sh" "${SERVICE_ID}"
     fi
-    # Named, so only this service ID's key is (re)generated.
-    "${UTILS}/generate_service_id_cpd_apikeys.sh" -q "${SERVICE_ID}"
+    # Named, so only this service ID's key is (re)generated. --cpd-url, so a URL
+    # recorded in the file by a run against another cluster isn't used.
+    if ! "${UTILS}/generate_service_id_cpd_apikeys.sh" -q --cpd-url "${CPD_BASE}" "${SERVICE_ID}"; then
+      # Usually a 401: the saved password is from another cluster, or the user is
+      # missing here. This creates the user or issues a new password if so.
+      echo "[WARN] ${SERVICE_ID} could not sign in with its saved password; repairing the account and retrying."
+      "${UTILS}/set_service_id_user_proxies.sh" "${SERVICE_ID}"
+      "${UTILS}/generate_service_id_cpd_apikeys.sh" -q --cpd-url "${CPD_BASE}" "${SERVICE_ID}"
+    fi
     ENGINE_KEY="$(saved_key "${SERVICE_ID}")"
     if [[ -z "${ENGINE_KEY}" ]] || ! key_works "${SERVICE_ID}" "${ENGINE_KEY}"; then
       echo "[ERROR] ${SERVICE_ID} still has no working API key in ${CREDENTIALS_FILE}." >&2

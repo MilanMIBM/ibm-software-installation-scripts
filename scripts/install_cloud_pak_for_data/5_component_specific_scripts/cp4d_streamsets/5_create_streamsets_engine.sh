@@ -365,9 +365,55 @@ oc create secret generic "${ENGINE_NAME}-apikey" -n "${NAMESPACE}" \
 # and the engine starts with just basic/dataformats/dev (CONTAINER_0901 on any
 # other stage). The libraries ship as a plain image (${LIBS_IMAGE}) laid out as
 # streamsets-datacollector-<ver>/streamsets-libs/<lib>, so mount it as an image
-# volume and symlink every library into the engine's streamsets-libs dir; jumpstart
-# then sees them as already installed.
+# volume (or the PVC from 5.1_cache_streamsets_stage_libs.sh) and symlink the
+# environment's libraries into the engine's streamsets-libs dir; jumpstart then
+# sees them as already installed.
 SDC_HOME="/opt/streamsets-datacollector-${IMAGE_TAG##*_}"
+
+# The environment's stage libraries (their IDs are the directory names in the
+# libs image). Only these are linked, so an environment with fewer libraries gets
+# a smaller engine from the same image or cache. Empty (environment not read):
+# every library.
+STAGE_LIBS="$(python3 -c '
+import sys, json
+def find(o):
+    if isinstance(o, dict):
+        if isinstance(o.get("stage_libs"), list):
+            return o["stage_libs"]
+        o = list(o.values())
+    if isinstance(o, list):
+        for v in o:
+            r = find(v)
+            if r is not None:
+                return r
+    return None
+try:
+    libs = find(json.loads(sys.argv[1] or "{}")) or []
+except Exception:
+    libs = []
+print(" ".join(l if isinstance(l, str) else l.get("stage_lib_id", "") for l in libs))
+' "${ENV_JSON}")"
+if [[ -n "${STAGE_LIBS}" ]]; then
+  echo "[INFO] Stage libs     : the environment's ${#${=STAGE_LIBS}} libraries"
+else
+  echo "[WARN] Could not read the environment's stage libraries; linking every library in the image."
+fi
+
+# If 5.1_cache_streamsets_stage_libs.sh has copied the libs image into a shared
+# PVC, mount that instead, so no node has to pull the image before its engine starts.
+STAGELIBS_PVC="sset-stagelibs-$(print -r -- "${IMAGE_TAG:l}" | tr -c 'a-z0-9-' '-' | sed 's/-*$//')"
+if [[ "$(oc get pvc "${STAGELIBS_PVC}" -n "${NAMESPACE}" \
+      -o jsonpath='{.metadata.annotations.streamsets/stagelibs-image}' 2>/dev/null || true)" == "${LIBS_IMAGE}" ]]; then
+  echo "[INFO] Stage libs src : cached in PVC ${STAGELIBS_PVC}"
+  STAGELIBS_VOLUME_YAML="persistentVolumeClaim:
+            claimName: ${STAGELIBS_PVC}
+            readOnly: true"
+else
+  echo "[INFO] Stage libs src : ${LIBS_IMAGE}, pulled by each node (5.1_cache_streamsets_stage_libs.sh caches it once)"
+  STAGELIBS_VOLUME_YAML="image:
+            reference: ${LIBS_IMAGE}
+            pullPolicy: IfNotPresent"
+fi
 
 # Engines can stop answering the control plane while staying "online": after a
 # few flow-editor requests are tunnelled to an engine at once, every sync-up to
@@ -428,10 +474,8 @@ spec:
             items:
               - key: .dockerconfigjson
                 path: config.json
-        - name: stagelibs-image
-          image:
-            reference: ${LIBS_IMAGE}
-            pullPolicy: IfNotPresent
+        - name: stagelibs-source
+          ${STAGELIBS_VOLUME_YAML}
         - name: stage-libs
           emptyDir: {}
         - name: sdc-data
@@ -439,23 +483,34 @@ spec:
         - name: sdc-logs
           emptyDir: {}
       initContainers:
-        # Seed streamsets-libs with the image's built-in libs, then link in the rest.
+        # Seed streamsets-libs with the image's built-in libs, then link in the
+        # environment's other libraries (all of them when STAGE_LIBS is empty).
         - name: link-stage-libs
           image: ${IMAGE}
           imagePullPolicy: IfNotPresent
+          env:
+            - name: STAGE_LIBS
+              value: "${STAGE_LIBS}"
           command: ["sh", "-c"]
           args:
             - |
               set -e
               cp -R ${SDC_HOME}/streamsets-libs/* /target/
               for lib in /stagelibs/streamsets-datacollector-*/streamsets-libs/*; do
-                [ -e "/target/\$(basename "\$lib")" ] || ln -s "\$lib" /target/
+                name="\$(basename "\$lib")"
+                [ -e "/target/\$name" ] && continue
+                case " \$STAGE_LIBS " in
+                  "  "|*" \$name "*) ln -s "\$lib" /target/ ;;
+                esac
+              done
+              for name in \$STAGE_LIBS; do
+                [ -e "/target/\$name" ] || echo "WARNING: stage library \$name is not in the libs image"
               done
               echo "streamsets-libs now has \$(ls /target | wc -l) stage libraries"
               cp -R /data/. /seed-data/
               cp -R /logs/. /seed-logs/
           volumeMounts:
-            - name: stagelibs-image
+            - name: stagelibs-source
               mountPath: /stagelibs
               readOnly: true
             - name: stage-libs
@@ -491,7 +546,7 @@ spec:
             - name: docker-config
               mountPath: /home/default/.docker
               readOnly: true
-            - name: stagelibs-image
+            - name: stagelibs-source
               mountPath: /stagelibs
               readOnly: true
             - name: stage-libs
