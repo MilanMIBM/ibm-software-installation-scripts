@@ -82,3 +82,21 @@ if (( ${#INSTANCE_COMPONENTS[@]} > 0 )); then
         echo "[WARN] Check logs in ~/cpd-cli/work; continuing the step-3 chain regardless."
     fi
 fi
+# Optionally scale up the Software Hub control plane (zen). level_2 is the
+# default size, so only level_3 / level_4 need apply-scale-config.
+case "${SOFTWAREHUB_SCALE:-}" in
+    ""|level_2)
+        echo "[INFO] SOFTWAREHUB_SCALE is '${SOFTWAREHUB_SCALE:-unset}'; skipping apply-scale-config."
+        ;;
+    level_3|level_4)
+        echo "[INFO] Applying Software Hub scale ${SOFTWAREHUB_SCALE} to zen in ${PROJECT_CPD_INST_OPERANDS}"
+        cpd-cli manage apply-scale-config \
+            --scale=${SOFTWAREHUB_SCALE} \
+            --components=zen \
+            --instance_ns=${PROJECT_CPD_INST_OPERANDS}
+        ;;
+    *)
+        echo "Error: SOFTWAREHUB_SCALE='${SOFTWAREHUB_SCALE}' is invalid. Use level_2, level_3 or level_4 in ./cpd_vars.sh."
+        exit 1
+        ;;
+esac
