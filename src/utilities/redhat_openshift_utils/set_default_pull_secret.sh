@@ -56,8 +56,20 @@ Options:
                            alone (default is to re-apply; equivalent to
                            OVERWRITE_CURRENT_SECRET=false)
       --dry-run            Print what would be done, change nothing
+      --server URL         API server to log in to (with --token or
+                           --username; default: OCP_URL, else the current
+                           server)
+      --token TOKEN        Log in with this token instead of OC_LOGIN
+  -u, --username USER      Log in as this user instead of OC_LOGIN
+  -p, --password PASS      Password for --username (without it, oc asks)
   -y, --yes                Skip the confirmation prompt
   -h, --help               Show this help
+
+Login: --token or --username wins. Otherwise OC_LOGIN from ./cpd_vars.sh is
+used, and without that the current oc session.
+
+  set_default_pull_secret.sh --token sha256~... [--server https://api.<cluster>:6443]
+  set_default_pull_secret.sh -u kubeadmin [-p <password>] [--server ...]
 
 Environment defaults (all overridable by the flags above):
   IMAGE_PULL_SECRET / PULL_SECRET_NAME   source secret name
@@ -77,6 +89,10 @@ DRY_RUN=false
 ASSUME_YES=true
 TARGET_MODE=""          # "" (infer), all, cpd, explicit
 POSITIONAL=()
+LOGIN_SERVER=""
+LOGIN_TOKEN=""
+LOGIN_USERNAME=""
+LOGIN_PASSWORD=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -89,6 +105,10 @@ while [[ $# -gt 0 ]]; do
         --overwrite)          OVERWRITE=true; shift ;;
         --dry-run)            DRY_RUN=true; shift ;;
         -y|--yes)             ASSUME_YES=true; shift ;;
+        --server)             LOGIN_SERVER="${2:?--server needs the API URL}"; shift 2 ;;
+        --token)              LOGIN_TOKEN="${2:?--token needs a token}"; shift 2 ;;
+        -u|--username)        LOGIN_USERNAME="${2:?--username needs a username}"; shift 2 ;;
+        -p|--password)        LOGIN_PASSWORD="${2:?--password needs a password}"; shift 2 ;;
         -h|--help)            usage; exit 0 ;;
         -*)                   echo "[ERROR] Unknown option: $1" >&2; usage >&2; exit 1 ;;
         *)                    POSITIONAL+=("$1"); shift ;;
@@ -133,12 +153,34 @@ fi
 TARGET_MODE="${TARGET_MODE:-all}"
 
 # --- Connect -----------------------------------------------------------------
-if [[ -z "${OC_LOGIN:-}" ]]; then
-    echo "[ERROR] OC_LOGIN is not set. Set it in ./cpd_vars.sh before running this script." >&2
+# Credentials on the command line win. Otherwise OC_LOGIN from cpd_vars.sh, and
+# without either, the current oc session is used as is.
+if [[ -n "${LOGIN_TOKEN}" && -n "${LOGIN_USERNAME}" ]]; then
+    echo "[ERROR] Pass either --token or --username, not both." >&2
+    exit 1
+elif [[ -z "${LOGIN_TOKEN}${LOGIN_USERNAME}" && -n "${LOGIN_SERVER}${LOGIN_PASSWORD}" ]]; then
+    echo "[ERROR] --server and --password need --token or --username." >&2
     exit 1
 fi
-
-eval "${OC_LOGIN}"
+if [[ -n "${LOGIN_TOKEN}${LOGIN_USERNAME}" ]]; then
+    _login=(oc login)
+    _server="${LOGIN_SERVER:-${OCP_URL:-}}"
+    [[ -n "${_server}" ]] && _login+=(--server="${_server}")
+    if [[ -n "${LOGIN_TOKEN}" ]]; then
+        _login+=(--token="${LOGIN_TOKEN}")
+    else
+        _login+=(--username="${LOGIN_USERNAME}")
+        # Without --password, oc asks for it.
+        [[ -n "${LOGIN_PASSWORD}" ]] && _login+=(--password="${LOGIN_PASSWORD}")
+    fi
+    "${_login[@]}"
+    unset _login _server
+elif [[ -n "${OC_LOGIN:-}" ]]; then
+    eval "${OC_LOGIN}"
+elif ! oc whoami &>/dev/null; then
+    echo "[ERROR] Not logged in. Set OC_LOGIN in ./cpd_vars.sh, or pass --token or --username." >&2
+    exit 1
+fi
 
 echo "[INFO] Target cluster: $(oc whoami --show-server 2>/dev/null || echo unknown)"
 
