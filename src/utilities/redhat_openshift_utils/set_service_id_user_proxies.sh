@@ -32,6 +32,13 @@ set -euo pipefail
 # page instead of replacing it. If the page then breaks or still shows the
 # provider, the page change and a provider added in this run are rolled back.
 #
+# If something else owns the cluster's login providers (a GitOps tool such as
+# ArgoCD that puts back its own list), a provider added here is soon removed.
+# Point SERVICE_ID_IDP_NAME at an HTPasswd provider enabled there instead, e.g.
+# in cpd_vars.sh. When that provider is also the one people log in with, set
+# SERVICE_ID_HIDE_FROM_LOGIN_PAGE=false, or it disappears from the page for
+# them too.
+#
 # A new provider gets mappingMethod 'claim': a service ID never attaches to a
 # person's account, so a name another login already uses is refused. Use names
 # like 'svc-<app>'.
@@ -77,7 +84,8 @@ set -euo pipefail
 #                                                     name generated users like this
 #   set_service_id_user_proxies.sh --reset svc-a      new password for that user (repeatable)
 #   set_service_id_user_proxies.sh --reset-all        new password for everyone listed
-#   set_service_id_user_proxies.sh --prune            also remove accounts no longer listed,
+#   set_service_id_user_proxies.sh --prune            also remove accounts this script made (in
+#                                                     CREDENTIALS_FILE) that are no longer listed,
 #                                                     from OpenShift and Software Hub
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -87,9 +95,13 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # --- Edit these ---------------------------------------------------------------
 # Changing IDP_NAME after users have logged in orphans their identities, so pick
 # it once per cluster. Letters, digits, '.', '_' and '-' only. Secret names
-# can't contain '_', hence the dashes below.
-IDP_NAME="service_id_user_proxies"
-SECRET_NAME="service-id-user-proxies-htpasswd"
+# can't contain '_', hence the dashes below. Also settable from the environment;
+# for a provider that already exists, the secret it uses is read from the cluster.
+IDP_NAME="${SERVICE_ID_IDP_NAME:-service_id_user_proxies}"
+SECRET_NAME="${SERVICE_ID_SECRET_NAME:-service-id-user-proxies-htpasswd}"
+# Leave the provider off the login page. Set to false (also from the
+# environment) when people log in through the same provider.
+HIDE_FROM_LOGIN_PAGE="${SERVICE_ID_HIDE_FROM_LOGIN_PAGE:-true}"
 # Holds the login page copy, unless the cluster already has its own custom page.
 LOGIN_PAGE_SECRET="login-provider-selection"
 
@@ -140,7 +152,7 @@ while [[ $# -gt 0 ]]; do
         --token)       LOGIN_TOKEN="${2:?--token needs a token}"; shift 2 ;;
         -u|--username) LOGIN_USERNAME="${2:?--username needs a username}"; shift 2 ;;
         -p|--password) LOGIN_PASSWORD="${2:?--password needs a password}"; shift 2 ;;
-        -h|--help)     sed -n '9,81p' "$0"; exit 0 ;;
+        -h|--help)     sed -n '9,89p' "$0"; exit 0 ;;
         -*)            echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
         *)             CLI_USERS+=("$1"); shift ;;
     esac
@@ -376,9 +388,16 @@ done
 unset _u _pw
 
 REMOVED=()
+_others=0
 for _u in "${(@k)CURRENT_LINES}"; do
     (( ${SERVICE_ID_USERS[(Ie)${_u}]} )) && continue
-    if [[ "${PRUNE}" == true ]]; then
+    # Accounts without a saved password weren't made by this script and may
+    # belong to another one sharing the secret (people's logins), so they are
+    # always kept.
+    if [[ -z "${SAVED_PASSWORDS[${_u}]+x}" ]]; then
+        NEW_LINES[${_u}]="${CURRENT_LINES[${_u}]}"
+        (( ++_others ))
+    elif [[ "${PRUNE}" == true ]]; then
         REMOVED+=("${_u}")
         unset "SAVED_PASSWORDS[${_u}]" "SAVED_EXTRAS[${_u}]"
     else
@@ -386,7 +405,8 @@ for _u in "${(@k)CURRENT_LINES}"; do
         NEW_LINES[${_u}]="${CURRENT_LINES[${_u}]}"
     fi
 done
-unset _u
+(( _others > 0 )) && echo "[INFO] ${_others} other account(s) in the secret, not made by this script, left as is."
+unset _u _others
 
 _tmpdir="$(mktemp -d)"
 trap 'rm -rf "${_tmpdir}"' EXIT
@@ -447,7 +467,7 @@ print(found, added)
 PY
 )"
 read -r _loops _added <<< "${_result}"
-if (( _loops == 0 )); then
+if (( _loops == 0 )) && [[ "${HIDE_FROM_LOGIN_PAGE}" == true ]]; then
     echo "[ERROR] No loop over .Providers in login page '${_page_secret}', can't hide '${IDP_NAME}'. Nothing was changed." >&2
     exit 1
 fi
@@ -461,7 +481,7 @@ echo "[INFO] Secret openshift-config/${SECRET_NAME} holds ${#NEW_LINES} user(s).
 # Save before touching OAuth, so a failure below never loses issued passwords.
 mkdir -p "$(dirname "${CREDENTIALS_FILE}")"
 {
-    echo "# username:password for the hidden '${IDP_NAME}' login on $(oc whoami --show-server)"
+    echo "# username:password for service IDs on the '${IDP_NAME}' login on $(oc whoami --show-server)"
     [[ -n "${SAVED_URL_LINE}" ]] && print -r -- "${SAVED_URL_LINE}"
     for _u in "${(@ko)SAVED_PASSWORDS}"; do
         print
@@ -487,13 +507,15 @@ put_login_page() {
     fi
 }
 
-if cmp -s "${_tmpdir}/page.new.html" "${_tmpdir}/page.old.html"; then
+if [[ "${HIDE_FROM_LOGIN_PAGE}" != true ]]; then
+    echo "[INFO] '${IDP_NAME}' stays on the login page (HIDE_FROM_LOGIN_PAGE=false); page left as is."
+elif cmp -s "${_tmpdir}/page.new.html" "${_tmpdir}/page.old.html"; then
     echo "[INFO] Login page '${_page_secret}' already hides '${IDP_NAME}'."
 else
     put_login_page "${_tmpdir}/page.new.html"
     echo "[INFO] Login page '${_page_secret}' updated to hide '${IDP_NAME}'."
 fi
-if [[ -z "${_page_ref}" ]]; then
+if [[ -z "${_page_ref}" && "${HIDE_FROM_LOGIN_PAGE}" == true ]]; then
     # Merge patch on this one key; custom login and error pages, if any, are kept.
     oc patch oauth cluster --type=merge \
         -p "{\"spec\":{\"templates\":{\"providerSelection\":{\"name\":\"${_page_secret}\"}}}}" >/dev/null
@@ -593,15 +615,19 @@ _code="$(curl -sk -o "${_tmpdir}/live.html" -w '%{http_code}' "${TOKEN_LOGIN_URL
 _direct="$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' "${TOKEN_LOGIN_URL}&idp=${IDP_URI}" || true)"
 if [[ "${_code}" == 000 ]]; then
     echo "[WARN] Can't reach https://${OAUTH_HOST} from here, check the login page yourself."
-elif [[ "${_code}" == [45]* ]] \
-    || grep -qF -e "idp=${IDP_URI}&" -e "idp=${IDP_URI}\"" "${_tmpdir}/live.html"; then
+elif [[ "${HIDE_FROM_LOGIN_PAGE}" == true ]] && { [[ "${_code}" == [45]* ]] \
+    || grep -qF -e "idp=${IDP_URI}&" -e "idp=${IDP_URI}\"" "${_tmpdir}/live.html"; }; then
     echo "[ERROR] Login page check failed (HTTP ${_code}, or '${IDP_NAME}' still listed). Rolling back..." >&2
     rollback
     echo "[ERROR] Rolled back the login page and any provider added in this run. The secret and" >&2
     echo "        ${CREDENTIALS_FILE} are kept. Details: oc get co authentication" >&2
     exit 1
 elif [[ "${_direct}" == "302 "*"/login/${IDP_URI}?"* ]]; then
-    echo "[INFO] Login page renders without '${IDP_NAME}', and its direct login answers."
+    if [[ "${HIDE_FROM_LOGIN_PAGE}" == true ]]; then
+        echo "[INFO] Login page renders without '${IDP_NAME}', and its direct login answers."
+    else
+        echo "[INFO] The '${IDP_NAME}' login answers."
+    fi
 else
     echo "[WARN] Login page is fine, but '${IDP_NAME}' is not answering yet (HTTP ${_direct%% *}). Check: oc get co authentication"
 fi
@@ -767,7 +793,11 @@ fi
 
 # --- Summary --------------------------------------------------------------------
 echo "[INFO] ---"
-echo "[INFO] '${IDP_NAME}' is not on the login page. Sign in as a service ID with:"
+if [[ "${HIDE_FROM_LOGIN_PAGE}" == true ]]; then
+    echo "[INFO] '${IDP_NAME}' is not on the login page. Sign in as a service ID with:"
+else
+    echo "[INFO] Sign in as a service ID through '${IDP_NAME}' with:"
+fi
 echo "         CLI      oc login $(oc whoami --show-server) -u <user> -p <password>"
 echo "         Browser  on the \"Log in with\" page, add &idp=${IDP_URI} to the address"
 echo "                  (OpenShift console, or Software Hub > OpenShift authentication)"
