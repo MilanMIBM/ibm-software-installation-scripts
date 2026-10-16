@@ -1,0 +1,65 @@
+# =============================================================================
+# IBM Concert installer runner image (linux/amd64)
+# -----------------------------------------------------------------------------
+# IBM's installer (bin/setup and friends) inspects the machine it runs on:
+# uname -m decides whether Concert buddy and the Workflows MCP server are
+# installed, and it needs bash >= 4 plus GNU sed/coreutils. This image gives it
+# a Linux x86 machine wherever it runs - as a Job in the target cluster
+# (default), or with podman on a workstation.
+#
+# Built by scripts/install_ibm_concert/0_initial_setup/0.2_prepare_installer_runner.sh
+# from a build context that holds this file, entrypoint.sh, the installer
+# archive and a helm tarball.
+# =============================================================================
+ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi:latest
+FROM ${BASE_IMAGE}
+
+# oc: the in-cluster build passes the console downloads service, which works
+# without internet access; local builds use mirror.openshift.com.
+ARG OC_URL=https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz
+ARG CONCERT_VERSION=unknown
+ARG HELM_ARCHIVE=helm-linux-amd64.tar.gz
+ARG CONCERT_ARCHIVE=ibm-concert-x86.tar.gz
+
+LABEL name="concert-installer-runner" \
+      concert.version="${CONCERT_VERSION}" \
+      summary="Runs the IBM Concert installer in a Linux x86 environment"
+
+# ubi9 already ships coreutils-single, sed, gawk, findutils, tar and gzip.
+RUN dnf -y install --nodocs --setopt=install_weak_deps=False \
+        jq openssl python3 gettext procps-ng iputils hostname which diffutils \
+    && (dnf -y install --nodocs --setopt=install_weak_deps=False python3-pyyaml skopeo \
+        || echo "optional packages python3-pyyaml/skopeo unavailable - mustgather/mirroring degrade") \
+    && dnf clean all && rm -rf /var/cache/dnf
+
+RUN curl -fsSL -o /tmp/oc.archive "${OC_URL}" \
+    && tar -xf /tmp/oc.archive -C /usr/local/bin oc \
+    && ln -sf /usr/local/bin/oc /usr/local/bin/kubectl \
+    && rm -f /tmp/oc.archive \
+    && oc version --client
+
+COPY ${HELM_ARCHIVE} /tmp/helm.tar.gz
+RUN tar -xzf /tmp/helm.tar.gz -C /tmp linux-amd64/helm \
+    && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
+    && rm -rf /tmp/helm.tar.gz /tmp/linux-amd64 \
+    && helm version --short
+
+COPY ${CONCERT_ARCHIVE} /opt/concert/ibm-concert.tar.gz
+COPY entrypoint.sh /opt/concert-runner/entrypoint.sh
+COPY oc-wrapper /opt/concert-runner/bin/oc
+
+# OpenShift runs the pod as an arbitrary uid in group 0 (restricted-v2).
+RUN mkdir -p /work /config/files \
+    && chmod 0755 /opt/concert-runner/entrypoint.sh /opt/concert-runner/bin/oc \
+    && ln -sf oc /opt/concert-runner/bin/kubectl \
+    && chgrp -R 0 /work /config /opt/concert /opt/concert-runner \
+    && chmod -R g=u /work /config /opt/concert /opt/concert-runner
+
+ENV CONCERT_VERSION=${CONCERT_VERSION} \
+    CONCERT_WORK_DIR=/work \
+    CONCERT_FILES_DIR=/config/files \
+    HOME=/work/home
+
+USER 1001
+WORKDIR /work
+ENTRYPOINT ["/opt/concert-runner/entrypoint.sh"]

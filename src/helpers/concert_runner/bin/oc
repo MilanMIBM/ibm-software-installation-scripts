@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# =============================================================================
+# oc / kubectl wrapper for IBM's installer scripts (put first on PATH by
+# entrypoint.sh). It pins the short resource names subscription/subscriptions/
+# sub/subs to OLM's subscriptions.operators.coreos.com. On clusters with ACM
+# (apps.open-cluster-management.io) or ODF (postgresql.cnpg.noobaa.io), which
+# define their own Subscription kinds, `oc get subscription X` otherwise
+# resolves to the wrong API group and never finds the operator subscription
+# (cw-istio-configure-k8s.sh then waits 900s and fails).
+# Only the resource argument right after the verb is changed; everything else
+# passes through unchanged to the real binary.
+# =============================================================================
+self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+name="$(basename "$0")"
+real=""
+IFS=: read -r -a _path <<<"${PATH}"
+for d in "${_path[@]}"; do
+    [[ -n "${d}" && "$(cd "${d}" 2>/dev/null && pwd -P)" != "${self_dir}" && -x "${d}/${name}" ]] || continue
+    real="${d}/${name}"; break
+done
+[[ -n "${real}" ]] || { echo "${name}: real binary not found on PATH" >&2; exit 127; }
+
+# Flags that take a separate value (so their value is not mistaken for the verb).
+_valued='^(-n|--namespace|-o|--output|-l|--selector|-c|--container|-f|--filename|--context|--kubeconfig|--server|--token|--field-selector|--template|-p|--patch|--type|--for|--timeout)$'
+args=("$@"); verb=-1
+for i in "${!args[@]}"; do
+    a="${args[$i]}"
+    if (( skip )); then skip=0; continue; fi
+    if [[ "${a}" == -* ]]; then
+        [[ "${a}" =~ ${_valued} ]] && skip=1
+        continue
+    fi
+    if (( verb < 0 )); then verb=$i; continue; fi
+    case "${args[$verb]}" in
+        get|describe|delete|patch|edit|label|annotate|wait|apply|scale) ;;
+        *) break ;;
+    esac
+    case "${a}" in
+        subscription|subscriptions|sub|subs) args[$i]="subscriptions.operators.coreos.com" ;;
+        subscription/*|subscriptions/*|sub/*|subs/*) args[$i]="subscriptions.operators.coreos.com/${a#*/}" ;;
+    esac
+    break
+done
+exec "${real}" "${args[@]}"

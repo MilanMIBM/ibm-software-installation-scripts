@@ -1,6 +1,6 @@
 # ibm-software-installation-scripts
 
-Scripts and config generators for installing **IBM Software Hub / Cloud Pak for Data (and various components)** into a Redhat OpenShift cluster, plus scripts for **Confluent Platform** (with an optional Flink add-on).
+Scripts and config generators for installing **IBM Software Hub / Cloud Pak for Data (and various components)** into a Redhat OpenShift cluster, plus scripts for **Confluent Platform** (with an optional Flink add-on) and **IBM Concert** (Concert, Data Apps, Workflows - see [IBM Concert](#ibm-concert)).
 
 The Cloud Pak for Data workflow has two stages:
 
@@ -17,6 +17,8 @@ The Cloud Pak for Data workflow has two stages:
 | `configs/` | Your generated configs live here (gitignored), one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts. `openshift_config/` holds the credential files written by the user/service ID utilities. |
 | `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), service instance provisioning (`4.5_service_instance_setups/`), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/` |
 | `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README) |
+| `scripts/install_ibm_concert/` | IBM Concert install steps (0 → 4) around IBM's own installer, data store provisioning, plus cleanup/debug scripts under `x_clean_or_debug_concert/` |
+| `concert_workspace/` | IBM Concert installer archives, the extracted installer, runner build context and copied logs (gitignored) |
 | `scripts/*.sh` | Shared script plumbing: `source_env_setup.sh` (config loading), `0.0_make_executable.sh`, and `operator_install_helpers.sh` (idempotency checks so OLM operator installs are safe to re-run) |
 | `src/helpers/` | Jinja2 templates and marimo widgets backing the notebooks, plus Python/zsh helpers: IBM Cloud IAM auth, watsonx.data database registration, IBM License Service, IBM Cloud Secrets Manager, the Software Hub internal vault, and the Software Hub → `cpd-cli` release resolver |
 | `src/cr_yaml_examples/` | Jinja2 custom resource templates rendered by `src/utilities/cpd-cli_utils/create_cr_instance.sh` |
@@ -202,3 +204,38 @@ export FLINK_SQL_VERSION="v1_19"
 ```
 
 ---
+
+## IBM Concert
+
+Installs **IBM Concert 3.1.x** - Hub, Concert, Concert Data Apps and Concert Workflows (plus Secure Coder, VEIAS and the cross-product integration) - onto an existing OpenShift 4.18+ cluster with IBM's own installer (`bin/setup` from the [IBM/Concert GitHub releases](https://github.com/IBM/Concert/releases)). The scripts prepare everything around it and run it unmodified.
+
+Config lives in `configs/concert_config/concert_vars.sh`. Create it with the notebook:
+
+```bash
+marimo run ibm_concert_vars_generation.py
+```
+
+Pick the release, profile (`production` by default, `small`, or `custom` to choose the Hub/Concert scale levels and worker sizing yourself - a live estimate compares resource requests with the workers), product combination, image source (IBM registry, mirrored or air-gapped private registry), where IBM's installer runs, the Hub mode, and which data stores are external, then **Save directly to ./configs/concert_config/**. Every Concert script loads only this file (`ENV_TARGET=concert`); for an interactive shell use `ENV_TARGET=concert source s_env.sh`.
+
+Then run the full install:
+
+```bash
+./scripts/install_ibm_concert/0_x_full_quick_install_script/full_concert_installprocess.sh
+```
+
+| Step | What it does |
+| --- | --- |
+| `0_initial_setup/0.1` | Downloads the installer archive (SHA-256 recorded/verified) and a linux helm, extracts to `concert_workspace/<version>/` |
+| `0_initial_setup/0.2` | Prepares the **runner**: IBM's installer reads the machine it runs on (`uname -m` - an Apple Silicon Mac would silently disable Concert buddy and the Workflows MCP server - plus bash 4 / GNU tools), so it runs as a **Job in the target cluster** by default (image built in-cluster). `CONCERT_RUNNER=container` (podman here) and `native` (Linux x86 bastion) are the alternatives |
+| `1_registry_access_and_mirroring/` | `1.0` optional global pull secret (shared, cpd-cli-free `src/utilities/redhat_openshift_utils/set_global_pull_secret.sh`), `1.1` mirror IBM's images with `oc image mirror` keeping IBM's `/cp/platform-hub` + `/cp/concert` layout (`--phase=save\|load` for air-gap), `1.2`/`1.3` mirror and apply the non-IBM operators/images the data stores and Istio need, `1.4` FaaS insecure-registry entry (only when FaaS is on) |
+| `2_prepare_cluster/` | `2.0` preflight, `2.0.1` worker capacity vs the profile (changes MachineSets only with `CONCERT_AUTOSCALE_APPLY=true`), `2.1` projects, `2.2` Service Mesh 3 (CP4D script, reused) + IBM's Workflows Istio setup, `2.3*` provision the external data stores, `2.4` IBM's data store secrets |
+| `3_install_concert/` | `3.0` renders `params.ini` from `concert_vars.sh`, `3.1` IBM preview (experimental, off), `3.2` runs IBM's installer (refuses if an external store's secret is missing), `3.3` status (`--wait`), `3.4` URLs → `concert_instance_details.sh` |
+| `4_post_install/` | `4.0` rotate the admin password, `4.1` Keycloak users from `concert_users.txt` (or `--from-htpasswd`), `4.2` BYO TLS certificate, `4.3` remote Hub access keys / product registration |
+
+Defaults and why:
+
+- **External data stores**, provisioned into `ibm-concert-datastores`: PostgreSQL 16 (CloudNativePG, HA in production, with `pgvector`), S3 buckets (ODF Multicloud Object Gateway - reused if present), MySQL for Workflows, Redis for Data Apps, Neo4j when VEIAS is selected. IBM decides external vs built-in only by secrets that must exist **before** a product's first install, and the choice cannot be changed afterwards. Each store can be switched to IBM's built-in one or to an existing server in the notebook.
+- **Workflows with Istio** (Service Mesh 3), FaaS off - IBM does not support both together.
+- **Hub `auto`**: a local Hub, or a remote one when its URL and access key are set; `local` ignores remote settings.
+
+`x_clean_or_debug_concert/` has status/debug helpers (`x_fetch_installer_logs.sh`, `x_runner_shell.sh`, `x_concert_mustgather.sh`, `x_delete_stuck_pods_concert.sh`, `x_restart_concert_components.sh`) and teardown (`x_uninstall_concert.sh`, `x_uninstall_datastores.sh` - destroys all data).

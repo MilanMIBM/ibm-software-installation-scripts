@@ -10,6 +10,7 @@ _ENV_SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export CONFIGS_ROOT="$(cd "${_ENV_SETUP_DIR}/.." && pwd)/configs"
 export CONFIG_DIR="${CONFIGS_ROOT}/cp4d_config"
 export CONFLUENT_CONFIG_DIR="${CONFIGS_ROOT}/confluent_platform_config"
+export CONCERT_CONFIG_DIR="${CONFIGS_ROOT}/concert_config"
 export SERVICE_INSTANCE_FILE_DIR="${_ENV_SETUP_DIR}/../service_instances"
 # Ensure payload output dir exists so provisioning scripts can write into it
 mkdir -p "${SERVICE_INSTANCE_FILE_DIR}"

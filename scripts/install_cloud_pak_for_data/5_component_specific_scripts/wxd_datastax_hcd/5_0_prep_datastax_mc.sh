@@ -105,7 +105,7 @@ for DC_NAME in "${DC_NAMES[@]}"; do
         },
         \"metadata\": {
             \"commonAnnotations\": ${COMMON_ANNOTATIONS},
-            \"commonLabels\": {
+            \"labels\": {
                 \"icpdsupport/addOnId\": \"datastax-mc\",
                 \"velero.io/exclude-from-backup\": \"true\",
                 \"icpdsupport/ignore-on-nd-backup\": \"true\",
