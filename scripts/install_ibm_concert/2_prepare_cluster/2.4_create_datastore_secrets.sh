@@ -30,6 +30,17 @@ concert_require_config
 #   dataapps   dataapps-database-creds, dataapps-redis-creds
 #   workflows  cw-secrets (MYSQLDB_* / POSTGRESQL_* / CW_* / RABBITMQ_*)
 #
+# With cross-product integration (ITOM) and external Postgres, also the AI
+# databases IBM's 3.1.0 installer only wires for its built-in Postgres:
+#   hub        app-cfg-oob-secret (IBM's; 4 keys merged in)  ITOM DB
+#              ITOM's deploy-k8s.sh builds itom-secrets from OOB_POSTGRES_USER/
+#              _PASSWORD + KC_DB_URL_HOST/_DATABASE and stops when they are
+#              empty. Keycloak and solis-core load app-cfg-byo-secret after
+#              this secret, so their own database settings are unaffected.
+#   concert    rojacore-secrets (COORDINATORDB_*)            AI coordinator DB
+#              mounted (optional) by ibm-roja-ai-coordinator; nothing else
+#              creates it in external-DB mode.
+#
 # A consumer switched to internal gets its secret removed (only if these
 # scripts created it) - safe before the first install only.
 # ==============================================================================
@@ -131,6 +142,27 @@ if concert_product_enabled hub; then
             "KC_DB_PASSWORD=${kc_pw}" \
             "KC_DB_SCHEMA=public" \
             "KC_DB_URL_PROPERTIES=${props}"
+
+        if concert_product_enabled itom; then
+            # ITOM hard-codes port 5432 and sslmode=require (Context Forge).
+            [[ "${PG_PORT}" == 5432 ]] || concert_warn "ITOM always connects on port 5432 - PostgreSQL listens on ${PG_PORT}."
+            ai_pw="$(_cred PG_PASSWORD_CONCERT_PLATFORM_AI)"
+            # IBM owns this secret (Keycloak bootstrap admin): merge, never replace.
+            # Created here before the first Hub install, the Hub keeps it and only
+            # adds its missing bootstrap keys.
+            oc get secret app-cfg-oob-secret -n "${HUB_NS}" >/dev/null 2>&1 || {
+                oc create secret generic app-cfg-oob-secret -n "${HUB_NS}" >/dev/null
+                oc label secret app-cfg-oob-secret -n "${HUB_NS}" ibmsupport/app=solis-hub >/dev/null
+            }
+            patch_dir="$(concert_private_tmpdir)"
+            jq -n --arg u concert_platform_ai --arg p "${ai_pw}" --arg h "${PG_HOST}" \
+                  --arg d "${CONCERT_DS_PG_DB_PLATFORM_AI:-platform_ai}" \
+                '{data: {OOB_POSTGRES_USER: ($u|@base64), OOB_POSTGRES_PASSWORD: ($p|@base64),
+                         KC_DB_URL_HOST: ($h|@base64), KC_DB_URL_DATABASE: ($d|@base64)}}' > "${patch_dir}/patch.json"
+            oc patch secret app-cfg-oob-secret -n "${HUB_NS}" --type=merge --patch-file="${patch_dir}/patch.json" >/dev/null
+            rm -rf "${patch_dir}"
+            concert_info "ITOM database merged into ${HUB_NS}/app-cfg-oob-secret."
+        fi
     else
         _remove_managed "${HUB_NS}" app-cfg-byo-secret
         _remove_managed "${HUB_NS}" app-cfg-byo-tls
@@ -154,6 +186,16 @@ if concert_product_enabled concert; then
     else
         _remove_managed "${C_NS}" concert-appdb-creds
         _remove_managed "${C_NS}" concert-configdb-creds
+    fi
+
+    if concert_ds_consumer_active CONCERT_DB && concert_product_enabled itom; then
+        co_pw="$(_cred PG_PASSWORD_CONCERT_COORDINATOR)"
+        concert_apply_secret "${C_NS}" rojacore-secrets \
+            "COORDINATORDB_HOST=${PG_HOST}" "COORDINATORDB_PORT=${PG_PORT}" \
+            "COORDINATORDB_DBNAME=${CONCERT_DS_PG_DB_COORDINATOR:-concert_coordinator}" \
+            "COORDINATORDB_USER=concert_coordinator" "COORDINATORDB_PASSWORD=${co_pw}"
+    else
+        _remove_managed "${C_NS}" rojacore-secrets
     fi
 
     if concert_ds_consumer_active CONCERT_S3 && [[ "$(concert_ds_server_provider S3)" == provision ]]; then

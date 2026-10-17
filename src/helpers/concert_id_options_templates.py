@@ -28,7 +28,11 @@ concert_preset_records = [
     {
         "preset_name": "Concert + Data Apps + Workflows (Default)",
         "preset_id": "concert-dataapps-workflows",
-        "products": ["CONCERT_INSTALL_CONCERT", "CONCERT_INSTALL_DATAAPPS", "CONCERT_INSTALL_WORKFLOWS"],
+        "products": [
+            "CONCERT_INSTALL_CONCERT",
+            "CONCERT_INSTALL_DATAAPPS",
+            "CONCERT_INSTALL_WORKFLOWS",
+        ],
     },
     {
         "preset_name": "Concert + Workflows",
@@ -66,12 +70,36 @@ default_concert_preset = "concert-dataapps-workflows"
 
 # Rows of the product table; selection = installed
 concert_product_records = [
-    {"product_id": "CONCERT_INSTALL_CONCERT", "product": "IBM Concert", "notes": "namespace PROJECT_CONCERT"},
-    {"product_id": "CONCERT_INSTALL_DATAAPPS", "product": "Concert Data Apps", "notes": "x86 only"},
-    {"product_id": "CONCERT_INSTALL_WORKFLOWS", "product": "Concert Workflows", "notes": "Helm chart rna-core; Istio or FaaS"},
-    {"product_id": "CONCERT_INSTALL_SECURECODER", "product": "Secure Coder (add-on)", "notes": "needs Concert; Mend needs watsonx SaaS creds"},
-    {"product_id": "CONCERT_INSTALL_VEIAS", "product": "VEIAS (add-on)", "notes": "needs Concert + Neo4j (provisioned automatically)"},
-    {"product_id": "CONCERT_INSTALL_OPTIMIZE", "product": "Concert Optimize - Turbonomic (add-on)", "notes": "t8c-operator in PROJECT_CONCERT_OPTIMIZE, attached to the Hub (5_install_optimize)"},
+    {
+        "product_id": "CONCERT_INSTALL_CONCERT",
+        "product": "IBM Concert",
+        "notes": "namespace PROJECT_CONCERT",
+    },
+    {
+        "product_id": "CONCERT_INSTALL_DATAAPPS",
+        "product": "Concert Data Apps",
+        "notes": "x86 only",
+    },
+    {
+        "product_id": "CONCERT_INSTALL_WORKFLOWS",
+        "product": "Concert Workflows",
+        "notes": "Helm chart rna-core; Istio or FaaS",
+    },
+    {
+        "product_id": "CONCERT_INSTALL_SECURECODER",
+        "product": "Secure Coder (add-on)",
+        "notes": "needs Concert; Mend needs watsonx SaaS creds",
+    },
+    {
+        "product_id": "CONCERT_INSTALL_VEIAS",
+        "product": "VEIAS (add-on)",
+        "notes": "needs Concert + Neo4j (provisioned automatically)",
+    },
+    {
+        "product_id": "CONCERT_INSTALL_OPTIMIZE",
+        "product": "Concert Optimize - Turbonomic (add-on)",
+        "notes": "t8c-operator in PROJECT_CONCERT_OPTIMIZE, attached to the Hub (5_install_optimize)",
+    },
 ]
 
 # ------------------------------------------------------------------------------
@@ -198,15 +226,27 @@ concert_scale_level_requests = {
 _concert_levels = ("level_1", "level_2", "level_3", "level_3_resilience", "level_4")
 concert_scale_level_optional_requests = {
     "hub": {
-        "embedded_db": {level: (0.13, 0.12) for level in ("level_1", "level_2", "level_3")},
+        "embedded_db": {
+            level: (0.13, 0.12) for level in ("level_1", "level_2", "level_3")
+        },
     },
     "concert": {
         "minio": {level: (3.07, 1.5) for level in _concert_levels},
         "appdb_configdb": {level: (2.04, 1.0) for level in _concert_levels},
-        "veias": {"level_1": (1.02, 0.5), "level_2": (2.05, 1.0), "level_3": (5.12, 2.5),
-                  "level_3_resilience": (5.12, 2.5), "level_4": (6.14, 3.0)},
-        "buddy": {"level_1": (1.02, 1.0), "level_2": (2.05, 2.0), "level_3": (5.12, 5.0),
-                  "level_3_resilience": (5.12, 5.0), "level_4": (6.14, 6.0)},
+        "veias": {
+            "level_1": (1.02, 0.5),
+            "level_2": (2.05, 1.0),
+            "level_3": (5.12, 2.5),
+            "level_3_resilience": (5.12, 2.5),
+            "level_4": (6.14, 3.0),
+        },
+        "buddy": {
+            "level_1": (1.02, 1.0),
+            "level_2": (2.05, 2.0),
+            "level_3": (5.12, 5.0),
+            "level_3_resilience": (5.12, 5.0),
+            "level_4": (6.14, 6.0),
+        },
     },
     "dataapps": {
         "postgres": {"level_1": (1.02, 0.5)},
@@ -250,20 +290,38 @@ concert_custom_sizing_keys = (
 # ------------------------------------------------------------------------------
 
 concert_runner_records = [
-    {"runner_name": "In-cluster Job (Default) - runs where Concert runs", "runner_id": "cluster"},
+    {
+        "runner_name": "In-cluster Job (Default) - runs where Concert runs",
+        "runner_id": "cluster",
+    },
     {"runner_name": "Podman container on this workstation", "runner_id": "container"},
     {"runner_name": "Native on a Linux x86 bastion", "runner_id": "native"},
 ]
 
 concert_image_source_records = [
-    {"image_source_name": "IBM Entitled Registry - cp.icr.io (Default)", "image_source_id": "entitled"},
-    {"image_source_name": "Mirrored private registry (connected mirror host)", "image_source_id": "mirrored"},
-    {"image_source_name": "Air-gapped private registry (mirror to disk, transfer, load)", "image_source_id": "airgap"},
+    {
+        "image_source_name": "IBM Entitled Registry - cp.icr.io (Default)",
+        "image_source_id": "entitled",
+    },
+    {
+        "image_source_name": "Mirrored private registry (connected mirror host)",
+        "image_source_id": "mirrored",
+    },
+    {
+        "image_source_name": "Air-gapped private registry (mirror to disk, transfer, load)",
+        "image_source_id": "airgap",
+    },
 ]
 
 concert_hub_mode_records = [
-    {"hub_mode_name": "Auto (Default) - local Hub, or a remote Hub when its URL + access key are set", "hub_mode_id": "auto"},
-    {"hub_mode_name": "Local only - always install a Hub on this cluster", "hub_mode_id": "local"},
+    {
+        "hub_mode_name": "Auto (Default) - local Hub, or a remote Hub when its URL + access key are set",
+        "hub_mode_id": "auto",
+    },
+    {
+        "hub_mode_name": "Local only - always install a Hub on this cluster",
+        "hub_mode_id": "local",
+    },
 ]
 
 # ------------------------------------------------------------------------------
@@ -271,31 +329,111 @@ concert_hub_mode_records = [
 # ------------------------------------------------------------------------------
 
 concert_datastore_consumer_records = [
-    {"consumer_id": "KEYCLOAK", "consumer": "Hub / Keycloak database", "server": "POSTGRES", "external_default": True},
-    {"consumer_id": "CONCERT_DB", "consumer": "Concert appdb + configdb (pgvector)", "server": "POSTGRES", "external_default": True},
-    {"consumer_id": "CONCERT_S3", "consumer": "Concert landing zone + evidence locker buckets", "server": "S3", "external_default": True},
-    {"consumer_id": "CONCERT_NEO4J", "consumer": "Concert graph (VEIAS) - always external", "server": "NEO4J", "external_default": True},
-    {"consumer_id": "DATAAPPS_DB", "consumer": "Data Apps database", "server": "POSTGRES", "external_default": True},
-    {"consumer_id": "DATAAPPS_REDIS", "consumer": "Data Apps Redis cache", "server": "REDIS", "external_default": True},
-    {"consumer_id": "WORKFLOWS_MYSQL", "consumer": "Workflows MySQL (pliant)", "server": "MYSQL", "external_default": True},
-    {"consumer_id": "WORKFLOWS_POSTGRES", "consumer": "Workflows AI PostgreSQL", "server": "POSTGRES", "external_default": True},
-    {"consumer_id": "WORKFLOWS_S3", "consumer": "Workflows object storage", "server": "S3", "external_default": True},
-    {"consumer_id": "WORKFLOWS_RABBITMQ", "consumer": "Workflows RabbitMQ (messaging, not storage)", "server": "RABBITMQ", "external_default": False},
+    {
+        "consumer_id": "KEYCLOAK",
+        "consumer": "Hub / Keycloak database",
+        "server": "POSTGRES",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "CONCERT_DB",
+        "consumer": "Concert appdb + configdb (pgvector)",
+        "server": "POSTGRES",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "CONCERT_S3",
+        "consumer": "Concert landing zone + evidence locker buckets",
+        "server": "S3",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "CONCERT_NEO4J",
+        "consumer": "Concert graph (VEIAS) - always external",
+        "server": "NEO4J",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "DATAAPPS_DB",
+        "consumer": "Data Apps database",
+        "server": "POSTGRES",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "DATAAPPS_REDIS",
+        "consumer": "Data Apps Redis cache",
+        "server": "REDIS",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "WORKFLOWS_MYSQL",
+        "consumer": "Workflows MySQL (pliant)",
+        "server": "MYSQL",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "WORKFLOWS_POSTGRES",
+        "consumer": "Workflows AI PostgreSQL",
+        "server": "POSTGRES",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "WORKFLOWS_S3",
+        "consumer": "Workflows object storage",
+        "server": "S3",
+        "external_default": True,
+    },
+    {
+        "consumer_id": "WORKFLOWS_RABBITMQ",
+        "consumer": "Workflows RabbitMQ (messaging, not storage)",
+        "server": "RABBITMQ",
+        "external_default": False,
+    },
 ]
 
 concert_datastore_provider_records = [
-    {"provider_name": "Provision in this cluster (Default)", "provider_id": "provision"},
-    {"provider_name": "Use an existing server (fill its connection values)", "provider_id": "existing"},
+    {
+        "provider_name": "Provision in this cluster (Default)",
+        "provider_id": "provision",
+    },
+    {
+        "provider_name": "Use an existing server (fill its connection values)",
+        "provider_id": "existing",
+    },
 ]
 
 # Servers we can provision; RabbitMQ is "existing" only
 concert_datastore_server_records = [
-    {"server_id": "POSTGRES", "server_name": "PostgreSQL 16 - CloudNativePG cluster", "provisionable": True},
-    {"server_id": "S3", "server_name": "S3 - ODF Multicloud Object Gateway buckets", "provisionable": True},
-    {"server_id": "MYSQL", "server_name": "MySQL 8.4 - Red Hat image StatefulSet", "provisionable": True},
-    {"server_id": "REDIS", "server_name": "Redis 7 - Red Hat image StatefulSet (ACL + TLS)", "provisionable": True},
-    {"server_id": "NEO4J", "server_name": "Neo4j 5 community - StatefulSet", "provisionable": True},
-    {"server_id": "RABBITMQ", "server_name": "RabbitMQ - existing server only", "provisionable": False},
+    {
+        "server_id": "POSTGRES",
+        "server_name": "PostgreSQL 16 - CloudNativePG cluster",
+        "provisionable": True,
+    },
+    {
+        "server_id": "S3",
+        "server_name": "S3 - ODF Multicloud Object Gateway buckets",
+        "provisionable": True,
+    },
+    {
+        "server_id": "MYSQL",
+        "server_name": "MySQL 8.4 - Red Hat image StatefulSet",
+        "provisionable": True,
+    },
+    {
+        "server_id": "REDIS",
+        "server_name": "Redis 7 - Red Hat image StatefulSet (ACL + TLS)",
+        "provisionable": True,
+    },
+    {
+        "server_id": "NEO4J",
+        "server_name": "Neo4j 5 community - StatefulSet",
+        "provisionable": True,
+    },
+    {
+        "server_id": "RABBITMQ",
+        "server_name": "RabbitMQ - existing server only",
+        "provisionable": False,
+    },
 ]
 
 # ------------------------------------------------------------------------------
@@ -316,7 +454,10 @@ default_concert_runner = [
     {"key": "CONCERT_RUNNER", "value": "cluster"},
     {"key": "CONCERT_RUNNER_IMAGE_SOURCE", "value": ""},
     {"key": "CONCERT_RUNNER_IMAGE", "value": ""},
-    {"key": "CONCERT_RUNNER_BASE_IMAGE", "value": "registry.access.redhat.com/ubi9/ubi:latest"},
+    {
+        "key": "CONCERT_RUNNER_BASE_IMAGE",
+        "value": "registry.access.redhat.com/ubi9/ubi:latest",
+    },
     {"key": "CONCERT_RUNNER_PVC_SIZE", "value": "5Gi"},
     {"key": "CONCERT_RUNNER_KEEP_ADMIN", "value": "false"},
     {"key": "CONCERT_RUN_TIMEOUT", "value": "10800"},
@@ -342,7 +483,7 @@ default_concert_products = [
     {"key": "CONCERT_INSTALL_VEIAS", "value": "false"},
     {"key": "CONCERT_INSTALL_OPTIMIZE", "value": "false"},
     {"key": "CONCERT_ENABLE_CONCERT_GRAPH", "value": "false"},
-    {"key": "CONCERT_ENABLE_CROSS_PRODUCT_INTEGRATION", "value": "false"},
+    {"key": "CONCERT_ENABLE_CROSS_PRODUCT_INTEGRATION", "value": "true"},
 ]
 
 default_concert_hub = [
@@ -385,7 +526,10 @@ default_concert_storage = [
     {"key": "CONCERT_STG_CLASS_CONCERT", "value": "${CONCERT_STG_CLASS_BLOCK}"},
     # Concert buddy volumes are ReadWriteMany: needs a file class. ODF/FDF:
     # *-ceph-rbd -> *-cephfs; other block classes stay as-is (preflight checks).
-    {"key": "CONCERT_STG_CLASS_FILE_CONCERT", "value": "${CONCERT_STG_CLASS_BLOCK/ceph-rbd/cephfs}"},
+    {
+        "key": "CONCERT_STG_CLASS_FILE_CONCERT",
+        "value": "${CONCERT_STG_CLASS_BLOCK/ceph-rbd/cephfs}",
+    },
     {"key": "CONCERT_STG_CLASS_DATAAPPS", "value": "${CONCERT_STG_CLASS_BLOCK}"},
     {"key": "CONCERT_STG_CLASS_WORKFLOWS", "value": "${CONCERT_STG_CLASS_BLOCK}"},
     {"key": "CONCERT_STG_CLASS_DATASTORES", "value": "${CONCERT_STG_CLASS_BLOCK}"},
@@ -483,7 +627,10 @@ default_concert_optimize = [
 default_concert_ds_postgres = [
     {"key": "CONCERT_DS_PG_OPERATOR_CHANNEL", "value": "stable-v1"},
     {"key": "CONCERT_DS_PG_OPERATOR_SOURCE", "value": "certified-operators"},
-    {"key": "CONCERT_DS_PG_IMAGE", "value": "ghcr.io/cloudnative-pg/postgresql:16-standard-bookworm"},
+    {
+        "key": "CONCERT_DS_PG_IMAGE",
+        "value": "ghcr.io/cloudnative-pg/postgresql:16-standard-bookworm",
+    },
     {"key": "CONCERT_DS_PG_MAX_CONNECTIONS", "value": "500"},
     {"key": "CONCERT_DS_PG_SECURE", "value": "true"},
     {"key": "CONCERT_DS_PG_DB_KEYCLOAK", "value": "keycloak"},
@@ -530,7 +677,10 @@ default_concert_ds_other = [
     {"key": "CONCERT_DS_REDIS_PORT", "value": "6379"},
     {"key": "CONCERT_DS_REDIS_USER", "value": ""},
     {"key": "CONCERT_DS_REDIS_PASSWORD", "value": ""},
-    {"key": "CONCERT_DS_NEO4J_IMAGE", "value": "docker.io/library/neo4j:5.26-community"},
+    {
+        "key": "CONCERT_DS_NEO4J_IMAGE",
+        "value": "docker.io/library/neo4j:5.26-community",
+    },
     {"key": "CONCERT_DS_NEO4J_HOST", "value": ""},
     {"key": "CONCERT_DS_NEO4J_PORT", "value": "7687"},
     {"key": "CONCERT_DS_NEO4J_USERNAME", "value": ""},

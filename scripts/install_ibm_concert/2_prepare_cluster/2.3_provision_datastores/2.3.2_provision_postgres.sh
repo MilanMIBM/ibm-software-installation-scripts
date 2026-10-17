@@ -30,6 +30,10 @@ concert_require_config
 #   Concert              concert_app        appdb, configdb (names fixed) + vector
 #   Data Apps            concert_dataapps   ${CONCERT_DS_PG_DB_DATAAPPS}
 #   Workflows AI         concert_workflows  ${CONCERT_DS_PG_DB_WORKFLOWS}
+#   ITOM (AI gateway)    concert_platform_ai ${CONCERT_DS_PG_DB_PLATFORM_AI} + vector
+#   Concert coordinator  concert_coordinator ${CONCERT_DS_PG_DB_COORDINATOR} + vector
+# The last two only with cross-product integration (ITOM): IBM's 3.1.0
+# installer wires them only for its built-in Postgres, so 2.4 hands them over.
 # Concert 3.1 (rojacore) connects to appdb with the role name cut at the first
 # underscore ("concert_app" -> "concert") while configdb keeps the full name, so
 # appdb also gets a login alias "concert": same password, member of concert_app,
@@ -124,6 +128,10 @@ if concert_ds_consumer_active CONCERT_DB; then
 fi
 concert_ds_consumer_active DATAAPPS_DB        && _add concert_dataapps  "${CONCERT_DS_PG_DB_DATAAPPS:-dataapps}" ""
 concert_ds_consumer_active WORKFLOWS_POSTGRES && _add concert_workflows "${CONCERT_DS_PG_DB_WORKFLOWS:-pliant_ai}" ""
+if concert_product_enabled itom; then
+    concert_ds_consumer_active KEYCLOAK   && _add concert_platform_ai "${CONCERT_DS_PG_DB_PLATFORM_AI:-platform_ai}" vector
+    concert_ds_consumer_active CONCERT_DB && _add concert_coordinator "${CONCERT_DS_PG_DB_COORDINATOR:-concert_coordinator}" vector
+fi
 
 cat > "${STAGE}/init.sh" <<'SH'
 #!/bin/bash
