@@ -45,6 +45,11 @@ fi
 concert_product_enabled concert   && CONCERT_URL="$(_route "${PROJECT_CONCERT}" concert)"
 concert_product_enabled dataapps  && DATAAPPS_URL="$(_route "${PROJECT_CONCERT_DATAAPPS}" dataapps)"
 concert_product_enabled workflows && WORKFLOWS_URL="$(_route "${PROJECT_CONCERT_WORKFLOWS}" solis-gw)"
+# Optimize comes later (step 5, which re-runs this script), so no route yet is fine.
+OPTIMIZE_URL=""
+if concert_product_enabled optimize; then
+    OPTIMIZE_URL="$(_route "$(concert_optimize_namespace)" "${CONCERT_OPTIMIZE_ROUTE}" || true)"
+fi
 
 # _kc_login_ok <password>: Keycloak accepts CONCERT_ADMIN_USERNAME/<password>
 # (password grant on concert-realm; the password goes via stdin, not argv).
@@ -84,6 +89,8 @@ export CONCERT_HUB_URL="${HUB_URL}"
 export CONCERT_URL="${CONCERT_URL}"
 export CONCERT_DATAAPPS_URL="${DATAAPPS_URL}"
 export CONCERT_WORKFLOWS_URL="${WORKFLOWS_URL}"
+# Optimize (Turbonomic) gateway; its local admin is CONCERT_OPTIMIZE_ADMIN_* in concert_vars.sh
+export CONCERT_OPTIMIZE_URL="${OPTIMIZE_URL}"
 # Keycloak (Hub). CONCERT_KEYCLOAK_URL opens the admin console of the *master*
 # realm: log in there with CONCERT_KEYCLOAK_ADMIN_* (IBM's temporary bootstrap
 # admin), not with CONCERT_UI_*, which exists only in concert-realm
@@ -105,6 +112,7 @@ chmod 700 "${OUT}"
 concert_info "Wrote ${OUT}"
 printf '  %-22s %s\n' "Hub (gateway, no UI)" "${HUB_URL:--}" "Concert" "${CONCERT_URL:--}" \
     "Concert Data Apps" "${DATAAPPS_URL:--}" "Concert Workflows" "${WORKFLOWS_URL:--}" \
+    "Optimize gateway" "${OPTIMIZE_URL:--}" \
     "Concert admin user" "${CONCERT_ADMIN_USERNAME} (\$CONCERT_UI_PASSWORD, ${PW_SOURCE})" \
     "Keycloak console" "${HUB_URL:+${HUB_URL}/sys/internal/kc/admin/} (master realm)" \
     "Keycloak admin" "${KC_ADMIN_USER:--} (\$CONCERT_KEYCLOAK_ADMIN_PASSWORD; IBM's temporary bootstrap admin)" \

@@ -71,6 +71,7 @@ concert_product_records = [
     {"product_id": "CONCERT_INSTALL_WORKFLOWS", "product": "Concert Workflows", "notes": "Helm chart rna-core; Istio or FaaS"},
     {"product_id": "CONCERT_INSTALL_SECURECODER", "product": "Secure Coder (add-on)", "notes": "needs Concert; Mend needs watsonx SaaS creds"},
     {"product_id": "CONCERT_INSTALL_VEIAS", "product": "VEIAS (add-on)", "notes": "needs Concert + Neo4j (provisioned automatically)"},
+    {"product_id": "CONCERT_INSTALL_OPTIMIZE", "product": "Concert Optimize - Turbonomic (add-on)", "notes": "t8c-operator in PROJECT_CONCERT_OPTIMIZE, attached to the Hub (5_install_optimize)"},
 ]
 
 # ------------------------------------------------------------------------------
@@ -217,11 +218,21 @@ concert_scale_level_optional_requests = {
 #   workflows  rna-core values.yaml defaults (~36 pods)
 #   istio      istiod (0.5 / 2 Gi) + one sidecar per Workflows pod (100m / 128Mi)
 #   runner     the installer Job while it runs
+#   optimize   Turbonomic 8.21.2 in Concert mode: `helm template` of the
+#              t8c-operator 42.116 chart with 5.4's values (33 workloads,
+#              memory requests only - none requests CPU). Extra probes add
+#              ~0.4 Gi each. IBM's minimum spec for Turbonomic is 4 vCPU / 32 GB.
 concert_fixed_requests = {
     "workflows": (6.9, 9.2),
     "istio": (4.1, 6.5),
     "runner": (0.25, 0.5),
+    "optimize": (0.0, 13.0),
 }
+
+# Turbonomic volumes besides the database (CONCERT_OPTIMIZE_DB_STORAGE_SIZE),
+# in Gi, from `helm template` of the 42.116 chart with 5.4's values: Kafka 50,
+# rsyslog 2 x 30, Prometheus 8, topology-processor 3, api/api-certs/auth/Consul 1 each.
+concert_optimize_other_storage_gi = 125
 
 # Keys the custom panel sets (removed from the editable sizing list in custom)
 concert_custom_sizing_keys = (
@@ -329,6 +340,7 @@ default_concert_products = [
     {"key": "CONCERT_INSTALL_WORKFLOWS", "value": "true"},
     {"key": "CONCERT_INSTALL_SECURECODER", "value": "false"},
     {"key": "CONCERT_INSTALL_VEIAS", "value": "false"},
+    {"key": "CONCERT_INSTALL_OPTIMIZE", "value": "false"},
     {"key": "CONCERT_ENABLE_CONCERT_GRAPH", "value": "false"},
     {"key": "CONCERT_ENABLE_CROSS_PRODUCT_INTEGRATION", "value": "false"},
 ]
@@ -353,6 +365,8 @@ default_concert_namespaces = [
     {"key": "PROJECT_CONCERT_SECURECODER", "value": "ibm-concert-securecoder"},
     {"key": "PROJECT_CONCERT_INSTALLER", "value": "ibm-concert-installer"},
     {"key": "PROJECT_CONCERT_DATASTORES", "value": "ibm-concert-datastores"},
+    # IBM's Turbonomic docs and t8c-operator samples use "turbonomic"
+    {"key": "PROJECT_CONCERT_OPTIMIZE", "value": "turbonomic"},
 ]
 
 # Profile-driven values are appended from concert_profile_presets
@@ -375,6 +389,7 @@ default_concert_storage = [
     {"key": "CONCERT_STG_CLASS_DATAAPPS", "value": "${CONCERT_STG_CLASS_BLOCK}"},
     {"key": "CONCERT_STG_CLASS_WORKFLOWS", "value": "${CONCERT_STG_CLASS_BLOCK}"},
     {"key": "CONCERT_STG_CLASS_DATASTORES", "value": "${CONCERT_STG_CLASS_BLOCK}"},
+    {"key": "CONCERT_STG_CLASS_OPTIMIZE", "value": "${CONCERT_STG_CLASS_BLOCK}"},
 ]
 
 # Istio pin = IBM's cw-istio-configure-k8s.sh default; channel = the repo's
@@ -427,6 +442,42 @@ default_concert_admin = [
     {"key": "CONCERT_ADMIN_USERNAME", "value": "concertadmin"},
     {"key": "CONCERT_ADMIN_PASSWORD", "value": ""},
     {"key": "CONCERT_ADMIN_NEW_PASSWORD", "value": ""},
+]
+
+# Concert Optimize = Turbonomic, installed by 5_install_optimize (not by IBM's
+# Concert installer). The version follows IBM's Concert platform version
+# matrix: Hub 3.0.3 (bundled with Concert 3.1.0) <-> Turbonomic 8.21.2; the
+# operator manifests come from github.com/IBM/t8c-operator at that tag.
+#   ADMIN_*         Turbonomic's local administrator (5.3 creates it; the
+#                   notebook generates the password, kept across saves)
+#   LICENSE_FILE    the Turbonomic license from Passport Advantage (5.3 adds
+#                   it); relative paths are read from configs/concert_config/
+#   DB_STORAGE_SIZE the Turbonomic database volume; IBM's chart default is
+#                   500Gi - it starts smaller and can grow (never shrink)
+#   PROBES          extra Turbonomic probes to enable, comma-separated chart
+#                   keys (vcenter,aws,azure,kubeturbo,...); IBM's sample CR
+#                   enables only instana, prometheus and metrics-processor
+#   SCC             restricted = fsGroup from the namespace's UID range (the
+#                   t8c-operator README's first option); anyuid = its fallback
+#   ROUTE_HOSTNAME  empty = optimize-<namespace>.<apps domain>
+#   ROUTE_TERMINATION reencrypt = the router's certificate (like Concert's
+#                   routes); passthrough = the gateway's own (fallback, see 5.4)
+#   HUB_URL         empty = the local Hub's in-cluster gateway, or the remote Hub
+#   OAUTH2_AUDIENCE IBM's t8c-operator samples use CONCERT; IBM's Optimize docs
+#                   page shows the Hub URL there instead (unverified)
+default_concert_optimize = [
+    {"key": "CONCERT_OPTIMIZE_VERSION", "value": "8.21.2"},
+    {"key": "CONCERT_OPTIMIZE_IMAGE_REPOSITORY", "value": "icr.io/cpopen/turbonomic"},
+    {"key": "CONCERT_OPTIMIZE_ADMIN_USERNAME", "value": "administrator"},
+    {"key": "CONCERT_OPTIMIZE_ADMIN_PASSWORD", "value": ""},
+    {"key": "CONCERT_OPTIMIZE_LICENSE_FILE", "value": ""},
+    {"key": "CONCERT_OPTIMIZE_DB_STORAGE_SIZE", "value": "100Gi"},
+    {"key": "CONCERT_OPTIMIZE_PROBES", "value": ""},
+    {"key": "CONCERT_OPTIMIZE_SCC", "value": "restricted"},
+    {"key": "CONCERT_OPTIMIZE_ROUTE_HOSTNAME", "value": ""},
+    {"key": "CONCERT_OPTIMIZE_ROUTE_TERMINATION", "value": "reencrypt"},
+    {"key": "CONCERT_OPTIMIZE_HUB_URL", "value": ""},
+    {"key": "CONCERT_OPTIMIZE_OAUTH2_AUDIENCE", "value": "CONCERT"},
 ]
 
 default_concert_ds_postgres = [

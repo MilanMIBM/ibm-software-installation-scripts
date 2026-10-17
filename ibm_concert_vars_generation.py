@@ -41,6 +41,7 @@ def _():
         concert_fixed_requests,
         concert_hub_mode_records,
         concert_image_source_records,
+        concert_optimize_other_storage_gi,
         concert_preset_records,
         concert_product_records,
         concert_profile_presets,
@@ -58,6 +59,7 @@ def _():
         default_concert_hub,
         default_concert_images,
         default_concert_namespaces,
+        default_concert_optimize,
         default_concert_preset,
         default_concert_products,
         default_concert_profile,
@@ -84,6 +86,7 @@ def _():
         concert_fixed_requests,
         concert_hub_mode_records,
         concert_image_source_records,
+        concert_optimize_other_storage_gi,
         concert_preset_records,
         concert_product_records,
         concert_profile_presets,
@@ -101,6 +104,7 @@ def _():
         default_concert_hub,
         default_concert_images,
         default_concert_namespaces,
+        default_concert_optimize,
         default_concert_preset,
         default_concert_products,
         default_concert_profile,
@@ -192,6 +196,17 @@ def generate_password(length=20):
         pw = "".join(secrets.choice(alphabet) for _ in range(length))
         if any(c.isdigit() for c in pw) and any(c.isupper() for c in pw):
             return pw
+
+
+@app.function
+def generate_turbonomic_password(length=20):
+    # Upper, lower, digit and one of - _ . : meets the usual complexity rules
+    # and stays safe in form posts and the single-quoted export
+    while True:
+        pw = list(generate_password(length - 1))
+        if any(c.islower() for c in pw):
+            pw.insert(secrets.randbelow(length), secrets.choice("-_."))
+            return "".join(pw)
 
 
 @app.function
@@ -571,6 +586,7 @@ def _(
     concert_ds_s3_records,
     concert_hub_records,
     concert_images_records,
+    concert_optimize_records,
     concert_release_records_kv,
     concert_runner_records_kv,
     concert_securecoder_records,
@@ -591,6 +607,7 @@ def _(
             "*MySQL, Redis, Neo4j, RabbitMQ* ***(optional)***": concert_ds_other_records,
             "*AI (watsonx.ai / vLLM)* ***(optional)***": concert_ai_records,
             "*Secure Coder (Mend)* ***(optional)***": concert_securecoder_records,
+            "*Optimize - Turbonomic* ***(when selected in Products)***": concert_optimize_records,
             "*Admin Password Rotation* ***(optional)***": concert_admin_records,
         },
         multiple=True,
@@ -1010,6 +1027,7 @@ def _(
     default_concert_hub,
     default_concert_images,
     default_concert_namespaces,
+    default_concert_optimize,
     default_concert_release,
     default_concert_runner,
     default_concert_securecoder,
@@ -1082,6 +1100,22 @@ def _(
         "Admin password rotation (4_post_install/4.0 changes the password to this value):",
         default_concert_admin,
     )
+    # Keep a saved Turbonomic admin password: 5.3 logs in with it on every run
+    concert_optimize_records = _kv(
+        "Optimize / Turbonomic (version = IBM's matrix for Hub 3.0.3; license file from Passport Advantage, "
+        "relative to configs/concert_config/; probes = extra Turbonomic probes, e.g. vcenter,aws,kubeturbo; "
+        "SCC restricted|anyuid; empty route hostname / Hub URL = automatic):",
+        [
+            dict(
+                r,
+                value=existing_config_value(r["key"])
+                or generate_turbonomic_password(),
+            )
+            if r["key"] == "CONCERT_OPTIMIZE_ADMIN_PASSWORD"
+            else r
+            for r in default_concert_optimize
+        ],
+    )
     return (
         concert_admin_records,
         concert_ai_records,
@@ -1091,6 +1125,7 @@ def _(
         concert_hub_records,
         concert_images_records,
         concert_namespaces_records,
+        concert_optimize_records,
         concert_release_records_kv,
         concert_runner_records_kv,
         concert_securecoder_records,
@@ -1116,6 +1151,7 @@ def _(
     concert_hub_records,
     concert_images_records,
     concert_namespaces_records,
+    concert_optimize_records,
     concert_profile_presets,
     concert_release_records_kv,
     concert_runner_records_kv,
@@ -1141,6 +1177,7 @@ def _(
     default_concert_hub,
     default_concert_images,
     default_concert_namespaces,
+    default_concert_optimize,
     default_concert_products,
     default_concert_release,
     default_concert_runner,
@@ -1270,6 +1307,9 @@ def _(
     concert_ds_other = ordered_values(
         default_concert_ds_other, concert_ds_other_records
     )
+    concert_optimize = ordered_values(
+        default_concert_optimize, concert_optimize_records
+    )
     return (
         concert_admin,
         concert_ai,
@@ -1281,6 +1321,7 @@ def _(
         concert_hub,
         concert_images,
         concert_namespaces,
+        concert_optimize,
         concert_products,
         concert_release,
         concert_runner,
@@ -1297,6 +1338,8 @@ def _(
     concert_ds_providers,
     concert_fixed_requests,
     concert_hub,
+    concert_optimize,
+    concert_optimize_other_storage_gi,
     concert_products,
     concert_scale_level_optional_requests,
     concert_scale_level_requests,
@@ -1391,6 +1434,18 @@ def _(
                     *concert_fixed_requests["istio"],
                 )
             )
+    if _p["CONCERT_INSTALL_OPTIMIZE"]:
+        _rows.append(
+            (
+                "Optimize - Turbonomic (memory requests only)",
+                *concert_fixed_requests["optimize"],
+            )
+        )
+        _db_gi = quantity_gi(concert_optimize.get("CONCERT_OPTIMIZE_DB_STORAGE_SIZE"))
+        _notes.append(
+            "Turbonomic requests almost no CPU, but IBM's minimum for it is 4 vCPU / 32 GB - leave that headroom. "
+            f"Its volumes: database {_db_gi:g} Gi + ~{concert_optimize_other_storage_gi} Gi (Kafka, rsyslog, Prometheus, ...)."
+        )
 
     # Provisioned data stores (existing servers live elsewhere)
     _active = {
@@ -1533,6 +1588,7 @@ def _(
     concert_hub,
     concert_images,
     concert_namespaces,
+    concert_optimize,
     concert_products,
     concert_release,
     concert_runner,
@@ -1586,7 +1642,8 @@ def _(
         _warnings.append("The admin password is shorter than 12 characters.")
 
     # Products and hub
-    if not (_concert or _dataapps or _workflows) and _remote_hub:
+    _optimize = _p["CONCERT_INSTALL_OPTIMIZE"]
+    if not (_concert or _dataapps or _workflows or _optimize) and _remote_hub:
         _errors.append("Nothing to install: no product selected and the Hub is remote.")
     if _p["CONCERT_INSTALL_SECURECODER"] and not _concert:
         _errors.append("Secure Coder requires Concert.")
@@ -1623,6 +1680,75 @@ def _(
             _warnings.append(
                 "FaaS adds the Workflows route to image.config insecureRegistries - every node gets the change (MachineConfigPool rollout)."
             )
+
+    # Optimize (Turbonomic)
+    if _optimize:
+        _o = concert_optimize
+        if concert_images["CONCERT_IMAGE_SOURCE"] != "entitled":
+            _errors.append(
+                "Optimize pulls Turbonomic from icr.io/cpopen - mirrored/air-gapped Turbonomic is not supported by these scripts yet."
+            )
+        if not re.fullmatch(r"\d+\.\d+\.\d+", _o["CONCERT_OPTIMIZE_VERSION"]):
+            _errors.append(
+                "CONCERT_OPTIMIZE_VERSION must be a Turbonomic release such as 8.21.2 (a t8c-operator tag)."
+            )
+        elif _o["CONCERT_OPTIMIZE_VERSION"] != "8.21.2":
+            _warnings.append(
+                f"Optimize {_o['CONCERT_OPTIMIZE_VERSION']}: IBM's version matrix pairs Hub 3.0.3 (Concert 3.1.0) with Turbonomic 8.21.2."
+            )
+        _turbo_user = _o["CONCERT_OPTIMIZE_ADMIN_USERNAME"]
+        _turbo_pw = _o["CONCERT_OPTIMIZE_ADMIN_PASSWORD"]
+        if not _turbo_user or not _turbo_pw:
+            _errors.append(
+                "Optimize needs CONCERT_OPTIMIZE_ADMIN_USERNAME and CONCERT_OPTIMIZE_ADMIN_PASSWORD (Turbonomic's local administrator)."
+            )
+        elif len(_turbo_pw) < 12:
+            _warnings.append("The Turbonomic admin password is shorter than 12 characters.")
+        if _o["CONCERT_OPTIMIZE_SCC"] not in ("restricted", "anyuid"):
+            _errors.append("CONCERT_OPTIMIZE_SCC must be restricted or anyuid.")
+        if _o["CONCERT_OPTIMIZE_ROUTE_TERMINATION"] not in ("reencrypt", "passthrough"):
+            _errors.append("CONCERT_OPTIMIZE_ROUTE_TERMINATION must be reencrypt or passthrough.")
+        if quantity_gi(_o["CONCERT_OPTIMIZE_DB_STORAGE_SIZE"]) <= 0:
+            _errors.append(
+                "CONCERT_OPTIMIZE_DB_STORAGE_SIZE must be a size such as 100Gi."
+            )
+        if _o["CONCERT_OPTIMIZE_PROBES"] and not re.fullmatch(
+            r"[a-z0-9-]+(,[a-z0-9-]+)*", _o["CONCERT_OPTIMIZE_PROBES"].replace(" ", "")
+        ):
+            _errors.append(
+                "CONCERT_OPTIMIZE_PROBES is a comma-separated list of Turbonomic chart keys (e.g. vcenter,aws,kubeturbo)."
+            )
+        if _o["CONCERT_OPTIMIZE_ROUTE_HOSTNAME"] and not re.fullmatch(
+            r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", _o["CONCERT_OPTIMIZE_ROUTE_HOSTNAME"]
+        ):
+            _errors.append("CONCERT_OPTIMIZE_ROUTE_HOSTNAME is not a valid host name.")
+        if _o["CONCERT_OPTIMIZE_HUB_URL"] and not _o[
+            "CONCERT_OPTIMIZE_HUB_URL"
+        ].startswith("https://"):
+            _errors.append("CONCERT_OPTIMIZE_HUB_URL must start with https://.")
+        _license = _o["CONCERT_OPTIMIZE_LICENSE_FILE"]
+        if not _license:
+            _warnings.append(
+                "Optimize: no Turbonomic license file - add it later with 5_install_optimize/5.3 --license=<file> (Passport Advantage license keys)."
+            )
+        else:
+            _license_path = os.path.expanduser(_license)
+            if not os.path.isabs(_license_path):
+                _license_path = os.path.join(
+                    os.path.dirname(__file__), "configs", "concert_config", _license_path
+                )
+            if not os.path.isfile(_license_path):
+                _warnings.append(
+                    f"Optimize: license file {_license_path} not found on this workstation."
+                )
+        if _remote_hub and not concert_hub["CONCERT_REMOTE_HUB_OC_LOGIN"].strip():
+            _warnings.append(
+                "Optimize with a remote Hub: attaching it (5.5) needs CONCERT_REMOTE_HUB_OC_LOGIN for the Hub cluster."
+            )
+        _warnings.append(
+            f"Optimize: CONCERT_OPTIMIZE_OAUTH2_AUDIENCE='{_o['CONCERT_OPTIMIZE_OAUTH2_AUDIENCE']}' - IBM's t8c-operator samples use CONCERT, "
+            "IBM's Optimize docs page the Hub URL; unverified which one the Hub expects."
+        )
 
     # Images and runner
     _source = concert_images["CONCERT_IMAGE_SOURCE"]
@@ -1876,6 +2002,7 @@ def _(
     concert_hub,
     concert_images,
     concert_namespaces,
+    concert_optimize,
     concert_products,
     concert_release,
     concert_runner,
@@ -1914,6 +2041,7 @@ def _(
                 "concert_ai": concert_ai,
                 "concert_securecoder": concert_securecoder,
                 "concert_admin": concert_admin,
+                "concert_optimize": concert_optimize,
                 "concert_ds_consumers": concert_ds_consumers,
                 "concert_ds_providers": concert_ds_providers,
                 "concert_ds_postgres": concert_ds_postgres,

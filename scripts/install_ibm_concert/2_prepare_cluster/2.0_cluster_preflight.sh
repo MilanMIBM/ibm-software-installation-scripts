@@ -26,6 +26,8 @@ concert_require_config
 #   - runner prerequisites (internal registry, console downloads service)
 #   - Istio: no foreign 'default' control plane; FaaS/Istio exclusivity
 #   - data store prerequisites (catalogs, ODF) and known unverified values
+#   - Optimize (Turbonomic): image source, other Turbonomic instances sharing
+#     the Xl CRD, license file, t8c-operator tag
 # `set -e` is deliberately off: every check must run.
 # ==============================================================================
 
@@ -37,7 +39,7 @@ _ok()   { print -r -- "[ OK ] $*"; }
 _fail() { print -r -- "[FAIL] $*"; _fails+=("$*"); }
 _warn() { print -r -- "[WARN] $*"; _warns+=("$*"); }
 
-concert_info "Products: $(concert_selected_products | xargs) | runner: ${CONCERT_RUNNER:-cluster} | images: ${CONCERT_IMAGE_SOURCE} | profile: ${CONCERT_PROFILE}"
+concert_info "Products: $(concert_selected_products | xargs)$(concert_product_enabled optimize && print -r -- ' optimize') | runner: ${CONCERT_RUNNER:-cluster} | images: ${CONCERT_IMAGE_SOURCE} | profile: ${CONCERT_PROFILE}"
 
 # --- Platform -------------------------------------------------------------------
 ver="$(oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null)"
@@ -60,8 +62,10 @@ fi
 
 # --- Storage --------------------------------------------------------------------
 typeset -A _sc_seen
-for v in CONCERT_STG_CLASS_BLOCK CONCERT_STG_CLASS_HUB CONCERT_STG_CLASS_CONCERT CONCERT_STG_CLASS_FILE_CONCERT \
-         CONCERT_STG_CLASS_DATAAPPS CONCERT_STG_CLASS_WORKFLOWS CONCERT_STG_CLASS_DATASTORES; do
+_sc_vars=(CONCERT_STG_CLASS_BLOCK CONCERT_STG_CLASS_HUB CONCERT_STG_CLASS_CONCERT CONCERT_STG_CLASS_FILE_CONCERT
+          CONCERT_STG_CLASS_DATAAPPS CONCERT_STG_CLASS_WORKFLOWS CONCERT_STG_CLASS_DATASTORES)
+concert_product_enabled optimize && _sc_vars+=(CONCERT_STG_CLASS_OPTIMIZE)
+for v in "${_sc_vars[@]}"; do
     sc="${(P)v:-}"
     [[ -z "${sc}" || -n "${_sc_seen[${sc}]:-}" ]] && continue
     _sc_seen[${sc}]=1
@@ -168,6 +172,39 @@ for c in "${CONCERT_DS_CONSUMERS[@]}"; do
     [[ "$(concert_ds_server_provider "${s}")" == provision ]] || continue
     [[ "${s}" == RABBITMQ ]] && _fail "${c}: RabbitMQ cannot be provisioned - set CONCERT_DS_RABBITMQ_PROVIDER=existing with its values, or CONCERT_DS_WORKFLOWS_RABBITMQ=internal."
 done
+
+# --- Optimize (Turbonomic) ------------------------------------------------------
+if concert_product_enabled optimize; then
+    if [[ "${CONCERT_IMAGE_SOURCE:-entitled}" == entitled ]]; then
+        _ok "Optimize: Turbonomic ${CONCERT_OPTIMIZE_VERSION:-?} images from ${CONCERT_OPTIMIZE_IMAGE_REPOSITORY:-icr.io/cpopen/turbonomic}"
+    else
+        _fail "Optimize pulls Turbonomic from icr.io/cpopen - mirrored/air-gapped Turbonomic is not supported by these scripts yet."
+    fi
+    if oc get csv -A -o jsonpath='{range .items[*]}{.spec.customresourcedefinitions.owned[*].name}{"\n"}{end}' 2>/dev/null \
+        | tr ' ' '\n' | awk '$0 == "xls.charts.helm.k8s.io" {f = 1} END {exit !f}'; then
+        _warn "An OLM operator owns the Xl CRD (another Turbonomic) - 5.1 leaves the CRD alone, so its version decides what this cluster can deploy."
+    fi
+    _other_xl="$(oc get xl -A --no-headers 2>/dev/null | awk -v ns="$(concert_optimize_namespace)" '$1 != ns {print $1 "/" $2}' | xargs)"
+    [[ -n "${_other_xl}" ]] && _warn "Other Turbonomic instances on this cluster (${_other_xl}) share the cluster-wide Xl CRD that 5.1 updates."
+    _lic="$(concert_optimize_license_path)"
+    if [[ -z "${_lic}" ]]; then
+        _warn "Optimize: no CONCERT_OPTIMIZE_LICENSE_FILE - Turbonomic stays unlicensed until 5.3 --license=<file>."
+    elif [[ -f "${_lic}" ]]; then
+        _ok "Optimize license file ${_lic}"
+    else
+        _fail "Optimize license file not found: ${_lic}"
+    fi
+    if [[ -f "$(concert_optimize_manifest_dir)/SHA256SUMS" ]]; then
+        _ok "t8c-operator ${CONCERT_OPTIMIZE_VERSION} manifests already downloaded"
+    elif curl -fsS --max-time 10 -o /dev/null "https://raw.githubusercontent.com/IBM/t8c-operator/${CONCERT_OPTIMIZE_VERSION:-}/deploy/operator.yaml"; then
+        _ok "t8c-operator ${CONCERT_OPTIMIZE_VERSION} manifests reachable on GitHub"
+    else
+        _fail "Cannot fetch the t8c-operator ${CONCERT_OPTIMIZE_VERSION:-<unset>} manifests from GitHub (is CONCERT_OPTIMIZE_VERSION a t8c-operator tag?)."
+    fi
+    if concert_remote_hub_enabled && [[ -z "${CONCERT_REMOTE_HUB_OC_LOGIN:-}" ]]; then
+        _warn "Optimize with a remote Hub: attaching it (5.5) needs CONCERT_REMOTE_HUB_OC_LOGIN."
+    fi
+fi
 
 # --- Remote Hub -----------------------------------------------------------------
 if concert_remote_hub_enabled; then

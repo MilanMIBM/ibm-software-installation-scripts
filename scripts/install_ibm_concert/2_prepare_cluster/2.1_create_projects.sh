@@ -121,5 +121,10 @@ for _c in "${CONCERT_DS_CONSUMERS[@]}"; do
     fi
 done
 
+# Optimize (Turbonomic) - installed by 5_install_optimize, not IBM's installer
+if concert_product_enabled optimize; then
+    setup_project "$(concert_product_namespace optimize)"
+fi
+
 # --- Additional non-standard projects
 # setup_project "my-custom-namespace"

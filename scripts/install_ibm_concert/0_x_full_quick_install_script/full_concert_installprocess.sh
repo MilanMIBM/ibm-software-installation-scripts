@@ -41,13 +41,17 @@ DO_CREATE_PROJECTS="${DO_CREATE_PROJECTS:-true}"              # 2.1 projects
 DO_SERVICE_MESH="${DO_SERVICE_MESH:-auto}"                    # 2.2 only when Workflows Istio is on
 DO_DATASTORES="${DO_DATASTORES:-true}"                        # 2.3 provision data stores
 DO_DATASTORE_SECRETS="${DO_DATASTORE_SECRETS:-true}"          # 2.4 IBM data store secrets
-DO_INSTALL_CONCERT="${DO_INSTALL_CONCERT:-true}"              # 3.x render, setup, wait, details
+DO_INSTALL_CONCERT="${DO_INSTALL_CONCERT:-auto}"              # 3.x render, setup, wait, details (auto: something for IBM's installer)
+DO_INSTALL_OPTIMIZE="${DO_INSTALL_OPTIMIZE:-auto}"            # 5.x Optimize / Turbonomic (auto: CONCERT_INSTALL_OPTIMIZE)
 DO_ADMIN_PASSWORD="${DO_ADMIN_PASSWORD:-auto}"                # 4.0 only when CONCERT_ADMIN_NEW_PASSWORD is set
 DO_KEYCLOAK_USERS="${DO_KEYCLOAK_USERS:-auto}"                # 4.1 only when concert_users.txt exists
 
 [[ "${DO_APPLY_MIRROR_CONFIG}" == auto ]] && { [[ "${CONCERT_IMAGE_SOURCE}" != entitled ]] && DO_APPLY_MIRROR_CONFIG=true || DO_APPLY_MIRROR_CONFIG=false; }
 [[ "${DO_FAAS_REGISTRY}" == auto ]] && { concert_product_enabled faas && DO_FAAS_REGISTRY=true || DO_FAAS_REGISTRY=false; }
 [[ "${DO_SERVICE_MESH}" == auto ]] && { concert_product_enabled istio && DO_SERVICE_MESH=true || DO_SERVICE_MESH=false; }
+# Remote Hub + Optimize only: nothing for IBM's installer to do
+[[ "${DO_INSTALL_CONCERT}" == auto ]] && { [[ -n "$(concert_selected_products)" ]] && DO_INSTALL_CONCERT=true || DO_INSTALL_CONCERT=false; }
+[[ "${DO_INSTALL_OPTIMIZE}" == auto ]] && { concert_product_enabled optimize && DO_INSTALL_OPTIMIZE=true || DO_INSTALL_OPTIMIZE=false; }
 [[ "${DO_ADMIN_PASSWORD}" == auto ]] && { [[ -n "${CONCERT_ADMIN_NEW_PASSWORD:-}" ]] && DO_ADMIN_PASSWORD=true || DO_ADMIN_PASSWORD=false; }
 [[ "${DO_KEYCLOAK_USERS}" == auto ]] && { [[ -f "${CONCERT_CONFIG_DIR}/concert_users.txt" ]] && DO_KEYCLOAK_USERS=true || DO_KEYCLOAK_USERS=false; }
 
@@ -97,6 +101,8 @@ run_step "${DO_DATASTORE_SECRETS}" "2.4 data store secrets" \
 
 run_step "${DO_INSTALL_CONCERT}" "3 install IBM Concert" \
     "${SCRIPTS_ROOT}/3_install_concert/3_full_step_3_installprocess-concert.sh"
+run_step "${DO_INSTALL_OPTIMIZE}" "5 install Concert Optimize (Turbonomic)" \
+    "${SCRIPTS_ROOT}/5_install_optimize/5_full_step_5_install_optimize.sh"
 
 run_step "${DO_ADMIN_PASSWORD}" "4.0 rotate admin password" \
     "${SCRIPTS_ROOT}/4_post_install/4.0_change_admin_password.sh"

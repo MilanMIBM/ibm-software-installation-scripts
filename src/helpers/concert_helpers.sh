@@ -15,6 +15,8 @@
 #     (cluster Job | workstation podman | native Linux bastion)
 #   - data stores: consumer/server switches, generated credentials, secrets
 #   - waits (generic, rollouts, MachineConfigPools), operator installs
+#   - Optimize (Turbonomic): namespace, Hub URL, route host, the Xl CR,
+#     IBM's manage-product.sh on the Hub's cluster
 #
 # Notes:
 #   - Must be SOURCED, not executed. Guarded via _CONCERT_HELPERS_LOADED.
@@ -91,6 +93,11 @@ concert_private_tmpdir() {
 
 concert_b64d() { base64 --decode 2>/dev/null; }
 
+concert_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+    else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
 # concert_write_dockerconfig <file> <registry>=<USER_VAR>:<PASSWORD_VAR>...
 # Writes a docker config JSON (auths) for the given registries. Credentials are
 # read from the named variables inside python, so they never reach argv.
@@ -134,7 +141,9 @@ concert_graph_enabled() {
     concert_is_true "${CONCERT_INSTALL_VEIAS:-false}" || concert_is_true "${CONCERT_ENABLE_CONCERT_GRAPH:-false}"
 }
 
-# concert_product_enabled hub|concert|dataapps|workflows|securecoder|veias|faas|istio|itom
+# concert_product_enabled hub|concert|dataapps|workflows|securecoder|veias|faas|istio|itom|optimize
+# optimize (Turbonomic) is installed by 5_install_optimize, not IBM's installer,
+# so it is not in concert_selected_products / concert_product_namespaces.
 concert_product_enabled() {
     case "$1" in
         hub)         concert_local_hub_enabled ;;
@@ -146,6 +155,7 @@ concert_product_enabled() {
         faas)        concert_product_enabled workflows && concert_is_true "${CONCERT_WORKFLOWS_ENABLE_FAAS:-false}" ;;
         istio)       concert_product_enabled workflows && concert_is_true "${CONCERT_WORKFLOWS_ENABLE_ISTIO:-false}" ;;
         itom)        concert_local_hub_enabled && concert_is_true "${CONCERT_ENABLE_CROSS_PRODUCT_INTEGRATION:-false}" ;;
+        optimize)    concert_is_true "${CONCERT_INSTALL_OPTIMIZE:-false}" ;;
         *)           return 1 ;;
     esac
 }
@@ -169,6 +179,7 @@ concert_product_namespace() {
         securecoder) print -r -- "${PROJECT_CONCERT_SECURECODER:-}" ;;
         installer)   print -r -- "${PROJECT_CONCERT_INSTALLER:-}" ;;
         datastores)  print -r -- "${PROJECT_CONCERT_DATASTORES:-}" ;;
+        optimize)    print -r -- "${PROJECT_CONCERT_OPTIMIZE:-turbonomic}" ;;
     esac
 }
 
@@ -818,4 +829,290 @@ spec:
 EOF
     concert_info "Waiting for ${pkg} CSV in ${ns}..."
     cp4d_wait_for_csv "${ns}" "${csv_prefix}" 900
+}
+
+# =============================================================================
+# Optimize (Turbonomic) - scripts/install_ibm_concert/5_install_optimize
+# =============================================================================
+# Concert Optimize is IBM Turbonomic. IBM's Concert installer does not deploy
+# it: the t8c-operator does, from one Xl custom resource, and IBM's
+# manage-product.sh attaches it to the Hub. The Xl follows IBM's
+# platform-gateway sample for the t8c-operator tag
+# (deploy/samples/platform/gw/charts_platform_gw_v1_xl_cr.yaml), adapted to
+# OpenShift: no LoadBalancer/nginx Ingress - an OpenShift Route (5.4) fronts
+# the concert-gateway service instead.
+CONCERT_OPTIMIZE_XL="xl-release"
+CONCERT_OPTIMIZE_ROUTE="optimize"
+# Name fixed by IBM's charts: nginx and concert-gateway both mount it
+CONCERT_OPTIMIZE_TLS_SECRET="nginx-ingressgateway-certs"
+CONCERT_OPTIMIZE_CA_SECRET="optimize-gateway-ca"
+CONCERT_OPTIMIZE_MODE_ANNOTATION="concert.ibm.com/optimize-mode"
+CONCERT_OPTIMIZE_HASH_ANNOTATION="concert.ibm.com/optimize-spec-hash"
+CONCERT_OPTIMIZE_LICENSE_ANNOTATION="concert.ibm.com/optimize-license-sha256"
+
+concert_optimize_namespace()    { concert_product_namespace optimize; }
+concert_optimize_manifest_dir() { print -r -- "${CONCERT_WORKSPACE}/optimize/${CONCERT_OPTIMIZE_VERSION:-8.21.2}"; }
+
+# Hub URL for concert-gateway: the local Hub's in-cluster gateway (the HUB_URL
+# IBM's installer gives Concert's and Data Apps' gateways), or the remote Hub.
+concert_optimize_hub_url() {
+    if [[ -n "${CONCERT_OPTIMIZE_HUB_URL:-}" ]]; then
+        print -r -- "${CONCERT_OPTIMIZE_HUB_URL%/}"
+    elif concert_remote_hub_enabled; then
+        print -r -- "${CONCERT_REMOTE_HUB_URL%/}"
+    else
+        print -r -- "https://ibm-solis-hub-gw-svc.${PROJECT_CONCERT_HUB}.svc.cluster.local:11443"
+    fi
+}
+
+concert_optimize_route_host() {
+    if [[ -n "${CONCERT_OPTIMIZE_ROUTE_HOSTNAME:-}" ]]; then
+        print -r -- "${CONCERT_OPTIMIZE_ROUTE_HOSTNAME}"
+        return 0
+    fi
+    local domain
+    domain="$(concert_apps_domain)"
+    [[ -n "${domain}" ]] || return 1
+    print -r -- "${CONCERT_OPTIMIZE_ROUTE}-$(concert_optimize_namespace).${domain}"
+}
+
+# Relative license paths are read from configs/concert_config/.
+concert_optimize_license_path() {
+    local f="${1:-${CONCERT_OPTIMIZE_LICENSE_FILE:-}}"
+    [[ -n "${f}" ]] || return 0
+    f="${~f}"
+    [[ "${f}" == /* ]] || f="${CONCERT_CONFIG_DIR}/${f}"
+    print -r -- "${f}"
+}
+
+# Start of the namespace's UID range: restricted-v2 only admits an fsGroup in
+# it, and the charts default to 2000 (t8c-operator README, OpenShift section).
+concert_optimize_fsgroup() {
+    local range
+    range="$(oc get namespace "$(concert_optimize_namespace)" \
+        -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.uid-range}' 2>/dev/null || true)"
+    [[ -n "${range}" ]] || return 1
+    print -r -- "${range%%/*}"
+}
+
+concert_optimize_xl_annotation() {
+    oc get xl "${CONCERT_OPTIMIZE_XL}" -n "$(concert_optimize_namespace)" \
+        -o jsonpath="{.metadata.annotations.${1//./\\.}}" 2>/dev/null || true
+}
+
+# concert_optimize_render_cr <standalone|concert> <out.json> [<fsGroup>]
+# Writes the Xl (JSON, which oc apply reads as YAML) and prints its spec hash.
+#   concert     IBM's platform-gateway sample: productList turbonomic, the
+#               concert-gateway towards the Hub, Turbonomic's UI off (the
+#               platform provides it), Concert JWT header auth on the API.
+#   standalone  the same without the Concert parts - the plain Turbonomic IBM's
+#               Optimize page installs first, so the admin can be created (5.3)
+#               before Concert header authentication is switched on (5.4).
+# Probes: the sample's set (instana, prometheus, metrics-processor) plus
+# CONCERT_OPTIMIZE_PROBES; every other probe stays off.
+concert_optimize_render_cr() {
+    local ns
+    ns="$(concert_optimize_namespace)"
+    CO_MODE="$1" CO_OUT="$2" CO_FSGROUP="${3:-}" CO_NS="${ns}" \
+    CO_HUB_URL="$(concert_optimize_hub_url)" \
+    CO_REPOSITORY="${CONCERT_OPTIMIZE_IMAGE_REPOSITORY:-icr.io/cpopen/turbonomic}" \
+    CO_VERSION="${CONCERT_OPTIMIZE_VERSION:-8.21.2}" \
+    CO_STORAGE_CLASS="${CONCERT_STG_CLASS_OPTIMIZE:-${CONCERT_STG_CLASS_BLOCK:-}}" \
+    CO_DB_SIZE="${CONCERT_OPTIMIZE_DB_STORAGE_SIZE:-100Gi}" \
+    CO_AUDIENCE="${CONCERT_OPTIMIZE_OAUTH2_AUDIENCE:-CONCERT}" \
+    CO_PROBES="${CONCERT_OPTIMIZE_PROBES:-}" \
+    CO_MANAGED_BY="${CONCERT_MANAGED_BY}" CO_XL="${CONCERT_OPTIMIZE_XL}" \
+    CO_MODE_KEY="${CONCERT_OPTIMIZE_MODE_ANNOTATION}" CO_HASH_KEY="${CONCERT_OPTIMIZE_HASH_ANNOTATION}" \
+    python3 -I - <<'PY'
+import hashlib, json, os
+
+e = os.environ
+ns, hub = e["CO_NS"], e["CO_HUB_URL"]
+concert = e["CO_MODE"] == "concert"
+
+# deploy/samples/platform/gw/charts_platform_gw_v1_xl_cr.yaml (t8c-operator 8.21.2)
+probes_on = {"instana", "metrics-processor", "prometheus"}
+probes_off = """actionscript actionstream-kafka appdynamics aws azure datadog dynatrace gcp
+    ibmcloud hpe3par horizon hyperflex hyperv ibmstorage-flashsystem jvm kubeturbo mssql
+    mysql netapp newrelic nutanix oneview oci oracle powervm prometheus-mysql-exporter
+    prometurbo pure scaleio servicenow snmp tomcat ucs vcenter vmax vmm wmi udt websphere
+    weblogic xen""".split()
+probes_on |= {p.strip() for p in e["CO_PROBES"].split(",") if p.strip()}
+
+glob = {
+    "repository": e["CO_REPOSITORY"],
+    "tag": e["CO_VERSION"],
+    "enableExternalSecrets": False,
+    "pullPolicy": "IfNotPresent",
+    "productList": "turbonomic",
+    "telemetry": {"enabled": False},
+    # Volumes outlive the Helm release (an Xl delete or reinstall keeps the
+    # database); only deleting the namespace removes them.
+    "storageAnnotations": {"helm.sh/resource-policy": "keep"},
+}
+if e["CO_STORAGE_CLASS"]:
+    glob["storageClassName"] = e["CO_STORAGE_CLASS"]
+if e["CO_FSGROUP"]:
+    # Helm merges this over the chart's securityContext, which keeps its
+    # seccompProfile RuntimeDefault (the CRD would prune one sent here).
+    glob["securityContext"] = {"runAsNonRoot": True, "fsGroup": int(e["CO_FSGROUP"])}
+
+gateway = {"enabled": concert}
+nginx = {"httpsRedirect": True, "nginxIsPrimaryIngress": False, "insecureHttpOnly": False}
+if concert:
+    gateway["hubURL"] = hub
+    nginx["concertHubUrl"] = hub
+
+spec = {
+    "global": glob,
+    "solisgateway": {"enabled": False},
+    "concert-gateway": gateway,
+    "ui": {"enabled": False},
+    # Turbonomic's own nginx stays (concert-gateway proxies to it); the
+    # chart's OpenShift route is replaced by 5.4's reencrypt Route.
+    "nginxingress": {"enabled": True},
+    "nginx": nginx,
+    "openshiftingress": {"enabled": False},
+    "db": {"persistence": {"size": e["CO_DB_SIZE"]}},
+    "grafana": {"enabled": False},
+}
+for p in sorted(set(probes_off) | probes_on):
+    spec[p] = {"enabled": p in probes_on}
+if concert:
+    spec["properties"] = {
+        "api": {
+            "basePrefixUrl": "/turbonomic",
+            "headerAuthenticationEnabled": True,
+            "requestHeaderSize": "20000",
+            "vendor_latest_version": False,
+            "vendor_public_key_url": f"https://concert-gateway.{ns}.svc.cluster.local/gw/auth/jwtcert",
+            "vendor_public_key_skip_ssl_verification": True,
+            "vendor_request_jwt_cookie": "ibm-platform-session",
+            "vendor_request_jwt_token": "X-Auth-Token",
+            "vendor_service_user_role": "User",
+            "vendor_skip_instance_id_check": True,
+            "vendor_supported_admin_role": "Admin",
+            "vendor_supported_advisor_role": "Advisor",
+            "vendor_supported_automator_role": "Automator",
+            "vendor_supported_deployer_role": "Deployer",
+            "vendor_supported_parker_automator_role": "Parking Automator",
+            "vendor_supported_parker_role": "Parking Administrator",
+            "vendor_supported_observer_role": "Observer",
+            "vendor_supported_siteadmin_role": "ServiceAdmin,ServiceOwner,Site Administrator",
+            "allowTargetManagementInIntegrationMode": True,
+        },
+        "global": {
+            "concertEnabled": True,
+            "deploymentMode": "SERVER",
+            "oauth2": {"audience": e["CO_AUDIENCE"]},
+            "solisEnabled": False,
+        },
+    }
+
+digest = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
+cr = {
+    "apiVersion": "charts.helm.k8s.io/v1",
+    "kind": "Xl",
+    "metadata": {
+        "name": e["CO_XL"],
+        "namespace": ns,
+        "labels": {"app.kubernetes.io/managed-by": e["CO_MANAGED_BY"]},
+        "annotations": {e["CO_MODE_KEY"]: e["CO_MODE"], e["CO_HASH_KEY"]: digest},
+    },
+    "spec": spec,
+}
+with open(e["CO_OUT"], "w") as f:
+    json.dump(cr, f, indent=2)
+print(digest)
+PY
+}
+
+# Digest of the Helm manifest the t8c-operator (operator-sdk helm-operator, no
+# observedGeneration) last deployed - it changes once a new spec is rolled out.
+concert_optimize_release_digest() {
+    oc get xl "${CONCERT_OPTIMIZE_XL}" -n "$(concert_optimize_namespace)" \
+        -o jsonpath='{.status.deployedRelease.manifest}' 2>/dev/null \
+        | python3 -I -c 'import hashlib, sys; d = sys.stdin.buffer.read(); print(hashlib.sha256(d).hexdigest() if d else "")' \
+        || true
+}
+
+# concert_optimize_wait_xl_deployed <timeout-s>
+# The helm-operator reports the release in .status.conditions (Deployed /
+# ReleaseFailed); a failed release is shown, not waited out.
+concert_optimize_wait_xl_deployed() {
+    local timeout="$1" ns start=${SECONDS} deployed failed
+    ns="$(concert_optimize_namespace)"
+    while true; do
+        deployed="$(oc get xl "${CONCERT_OPTIMIZE_XL}" -n "${ns}" -o jsonpath='{.status.conditions[?(@.type=="Deployed")].status}' 2>/dev/null || true)"
+        failed="$(oc get xl "${CONCERT_OPTIMIZE_XL}" -n "${ns}" -o jsonpath='{range .status.conditions[?(@.type=="ReleaseFailed")]}{.status}{" "}{.message}{end}' 2>/dev/null || true)"
+        # An upgrade can fail while the previous release still counts as Deployed.
+        if [[ "${failed}" == True\ * ]]; then
+            concert_error "The t8c-operator could not deploy ${CONCERT_OPTIMIZE_XL}: ${failed#True }"
+            return 1
+        fi
+        [[ "${deployed}" == True ]] && return 0
+        if (( SECONDS - start >= timeout )); then
+            concert_error "Xl ${ns}/${CONCERT_OPTIMIZE_XL} not deployed after ${timeout}s (oc logs deploy/t8c-operator -n ${ns})."
+            return 1
+        fi
+        concert_info "Waiting for the t8c-operator to deploy ${CONCERT_OPTIMIZE_XL} ($(( SECONDS - start ))s)"
+        sleep 15
+    done
+}
+
+# concert_optimize_wait_deployments <timeout-s> <deployment>...
+# Waits until each Deployment exists and has all replicas ready.
+concert_optimize_wait_deployments() {
+    local timeout="$1" ns d start=${SECONDS} want ready
+    local -a pending
+    shift
+    ns="$(concert_optimize_namespace)"
+    while true; do
+        pending=()
+        for d in "$@"; do
+            want="$(oc get deployment "${d}" -n "${ns}" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+            ready="$(oc get deployment "${d}" -n "${ns}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+            [[ -n "${want}" && "${want}" != 0 && "${ready:-0}" -ge "${want}" ]] || pending+=("${d}")
+        done
+        (( ${#pending} == 0 )) && return 0
+        if (( SECONDS - start >= timeout )); then
+            concert_error "Not ready after ${timeout}s in ${ns}: ${pending[*]}"
+            return 1
+        fi
+        concert_info "Waiting for ${pending[*]} in ${ns} ($(( SECONDS - start ))s)"
+        sleep 20
+    done
+}
+
+# concert_hub_product_url <product-id>: instance URL the LOCAL Hub has for it
+# (empty when not attached).
+concert_hub_product_url() {
+    oc get configmap solis-account-instances-cm -n "${PROJECT_CONCERT_HUB}" \
+        -o jsonpath='{.data.0000-0000-0000-0000\.json}' 2>/dev/null \
+        | jq -r --arg p "$1" '[.[]? | select(.product_id == $p) | .instance_url][0] // empty' 2>/dev/null || true
+}
+
+# concert_hub_manage_product add|remove <product-id> [<instance-url> <kc-entrypoint-url>]
+# IBM's manage-product.sh (concert-hub/bin) in the runner on the cluster that
+# runs the Hub: this one, or CONCERT_REMOTE_HUB_OC_LOGIN's for a remote Hub
+# (that cluster needs 0.2 once - see 4_post_install/4.3). Restarts the Hub,
+# which IBM's attach step requires.
+concert_hub_manage_product() {
+    local action="$1" product="$2" url="${3:-}" kc_url="${4:-}" hub_ns rc=0
+    local -a args=("--action=${action}" --deployment-type=k8s "--product-id=${product}" --restart-hub=true)
+    [[ -n "${url}" ]] && args+=("--instance-url=${url}")
+    [[ -n "${kc_url}" ]] && args+=("--kc-entrypoint-url=${kc_url}")
+    if concert_remote_hub_enabled; then
+        concert_require_vars CONCERT_REMOTE_HUB_OC_LOGIN
+        hub_ns="${CONCERT_REMOTE_HUB_NAMESPACE:-ibm-platform-hub}"
+        eval "${CONCERT_REMOTE_HUB_OC_LOGIN}"
+    else
+        hub_ns="${PROJECT_CONCERT_HUB}"
+    fi
+    concert_run --name "${action}-${product}" --timeout 900 -- \
+        concert-hub/bin/manage-product.sh "${args[@]}" "--namespace=${hub_ns}" || rc=$?
+    if concert_remote_hub_enabled; then
+        eval "${OC_LOGIN}"
+    fi
+    return ${rc}
 }

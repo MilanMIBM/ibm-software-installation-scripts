@@ -88,6 +88,13 @@ export IBM_ENTITLEMENT_KEY={{ shell_value("IBM_ENTITLEMENT_KEY", ibm_entitlement
 # ------------------------------------------------------------------------------
 {{ export_block(concert_admin) }}
 # ------------------------------------------------------------------------------
+# Concert Optimize - Turbonomic (5_install_optimize, when CONCERT_INSTALL_OPTIMIZE)
+# ------------------------------------------------------------------------------
+# Version from IBM's Concert platform matrix (Hub 3.0.3 <-> Turbonomic 8.21.2).
+# OAUTH2_AUDIENCE: IBM's t8c-operator samples use CONCERT, IBM's Optimize docs
+# page the Hub URL - unverified which the Hub expects.
+{{ export_block(concert_optimize) }}
+# ------------------------------------------------------------------------------
 # Data stores
 # ------------------------------------------------------------------------------
 # Consumers: external = a store outside IBM's built-in one (provisioned or
