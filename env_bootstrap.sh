@@ -50,8 +50,9 @@ if [[ -z "${_CP4D_PREP_DONE:-}" ]]; then
     unset _prep_needed
 fi
 
-# Already loaded? Nothing to do.
-[[ -n "${_CP4D_ENV_LOADED:-}" ]] && return 0
+# Already loaded for this ENV_TARGET? Nothing to do. (_CP4D_ENV_LOADED holds the
+# loaded target, "all" when ENV_TARGET is unset; a different target reloads.)
+[[ "${_CP4D_ENV_LOADED:-}" == "${ENV_TARGET:-all}" ]] && return 0
 
 # The shared env setup lives under scripts/.
 _ENV_SETUP="${_CP4D_REPO_ROOT}/scripts/source_env_setup.sh"
