@@ -19,6 +19,8 @@
 #   - Must be SOURCED, not executed: it exports variables into the caller.
 #   - Safe to source multiple times (source_env_setup.sh guards itself via
 #     _CP4D_ENV_LOADED).
+#   - Loads only the config for the calling script's product (see "Which
+#     config to load" below); override with ENV_TARGET or --env-target.
 #   - This file lives at the repo root and is the search marker, so moving the
 #     numbered step scripts around never breaks env loading.
 # =============================================================================
@@ -48,6 +50,43 @@ if [[ -z "${_CP4D_PREP_DONE:-}" ]]; then
             || echo "[WARN] 0.0_make_executable.sh failed; continuing" >&2
     fi
     unset _prep_needed
+fi
+
+# Which config to load. Precedence:
+#   1. --env-target <name|path|all> (or --env-target=...) in the calling
+#      script's arguments; removed from "$@" before the script parses them.
+#   2. ENV_TARGET from the environment / caller (e.g. ENV_TARGET=confluent ./x.sh).
+#   3. Inferred from the calling script's location:
+#        scripts/install_cloud_pak_for_data/, src/utilities/  -> cpd
+#        scripts/install_confluent_platform/                  -> confluent
+#        scripts/install_ibm_concert/                         -> concert
+#      Anything else loads every config, as before.
+# "all" loads every configs/*/*_vars.sh. The inferred value is not exported, so
+# a child script in another product folder still infers its own target.
+_argv=()
+while (( $# )); do
+    case "$1" in
+        --env-target)
+            [[ -n "${2:-}" ]] || { echo "[ERROR] --env-target needs a config name, path or 'all'" >&2; unset _argv; return 1 2>/dev/null || exit 1; }
+            export ENV_TARGET="$2"; shift 2 ;;
+        --env-target=*)
+            export ENV_TARGET="${1#--env-target=}"; shift ;;
+        *)  _argv+=("$1"); shift ;;
+    esac
+done
+set -- "${_argv[@]}"
+unset _argv
+
+if [[ -z "${ENV_TARGET:-}" ]]; then
+    # The running script: $ZSH_ARGZERO for ./x.sh or zsh x.sh, else the caller's SCRIPT_DIR.
+    _caller="${ZSH_ARGZERO:A}"
+    [[ "${_caller}" == "${_CP4D_REPO_ROOT}"/* ]] || _caller="${SCRIPT_DIR:-}/"
+    case "${_caller#${_CP4D_REPO_ROOT}/}" in
+        scripts/install_cloud_pak_for_data/*|src/utilities/*) ENV_TARGET=cpd ;;
+        scripts/install_confluent_platform/*)                 ENV_TARGET=confluent ;;
+        scripts/install_ibm_concert/*)                        ENV_TARGET=concert ;;
+    esac
+    unset _caller
 fi
 
 # Already loaded for this ENV_TARGET? Nothing to do. (_CP4D_ENV_LOADED holds the

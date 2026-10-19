@@ -55,7 +55,7 @@ _source_if_exists() {
 # ------------------------------------------------------------------------------
 # Config loading
 # ------------------------------------------------------------------------------
-# Default (ENV_TARGET unset): source every configs/*/*_vars.sh and
+# ENV_TARGET unset or "all": source every configs/*/*_vars.sh and
 # configs/*/*_instance_details.sh, CP4D first. Names
 # defined in more than one file (OCP_URL, OC_LOGIN, STG_CLASS_BLOCK, ...) then
 # resolve to whichever file sorted last.
@@ -67,8 +67,10 @@ _source_if_exists() {
 # so a script targeting a different cluster gets exactly the values in its own
 # config, with nothing from cpd_vars.sh able to override them. ENV_TARGET may be
 # a bare name (confluent -> confluent_vars.sh, looked up in every configs/*/
-# subfolder) or a path to a config file.
-if [[ -n "${ENV_TARGET:-}" ]]; then
+# subfolder) or a path to a config file. Scripts normally get ENV_TARGET from
+# env_bootstrap.sh, which infers it from the script's folder (cpd, confluent,
+# concert) unless ENV_TARGET or --env-target is given.
+if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
     _env_log "ENV_TARGET='${ENV_TARGET}' - sourcing only that config"
     _target_file="${ENV_TARGET}"
     for _d in "${CONFIGS_ROOT}"/*(N/); do
@@ -87,15 +89,19 @@ if [[ -n "${ENV_TARGET:-}" ]]; then
     export ENV_TARGET_FILE="$(cd "$(dirname "${_target_file}")" && pwd)/$(basename "${_target_file}")"
     _env_log "ENV_TARGET_FILE=${ENV_TARGET_FILE}"
 
-    # Companion instance-details file (e.g. confluent_vars.sh ->
-    # confluent_instance_details.sh), written by the get_instance_details
-    # scripts. Sourced when present so live endpoints are available too.
-    _target_details="${ENV_TARGET_FILE%_vars.sh}_instance_details.sh"
-    [[ "${_target_details}" != "${ENV_TARGET_FILE}" ]] && _source_if_exists "${_target_details}"
+    # Companion instance-details files next to it (e.g. confluent_vars.sh ->
+    # confluent_instance_details.sh, confluent_flink_instance_details.sh),
+    # written by the get_instance_details scripts. Sourced when present so
+    # live endpoints are available too.
+    if [[ "${ENV_TARGET_FILE}" == *_vars.sh ]]; then
+        for _target_details in "${ENV_TARGET_FILE%_vars.sh}"*_instance_details.sh(N); do
+            _source_if_exists "${_target_details}"
+        done
+    fi
 
     unset _target_file _target_details _d
 else
-    _env_log "ENV_TARGET unset - sourcing all configs/*/*_vars.sh and *_instance_details.sh (CP4D first)"
+    _env_log "ENV_TARGET ${ENV_TARGET:-unset} - sourcing all configs/*/*_vars.sh and *_instance_details.sh (CP4D first)"
     _source_if_exists "${CONFIG_DIR}/cpd_vars.sh"
     _source_if_exists "${CONFIG_DIR}/cpd_instance_details.sh"
     for _f in "${CONFIG_DIR}"/*.sh(N) "${CONFIGS_ROOT}"/*/*.sh(N); do

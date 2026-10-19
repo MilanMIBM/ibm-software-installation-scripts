@@ -177,7 +177,7 @@ Auth, connectors, external access and uninstall live under `utility_scripts_conf
 
 Kafka SASL mechanisms are set per listener: `CONFLUENT_SASL_MECHANISM` is the one the brokers and components use, `CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS` lists what in-cluster clients may use, and `CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS` what the EXTERNAL listener accepts. StreamSets (watsonx.data) connects to the internal bootstrap with PLAIN only (SCRAM-SHA-512 failed there), so keep `PLAIN` in the internal list while it is used.
 
-When both configs exist, Confluent values override CP4D ones; set `ENV_TARGET=<name|path>` to load only a single config.
+Each script loads only its own product's config, chosen from the folder it lives in (`install_cloud_pak_for_data/` and `src/utilities/` → `cpd`, `install_confluent_platform/` → `confluent`, `install_ibm_concert/` → `concert`). Override per run with `--env-target <name|path|all>` or `ENV_TARGET=<name|path|all>`; `all` loads every config as before.
 
 ### Version presets
 
