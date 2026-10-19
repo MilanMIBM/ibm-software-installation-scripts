@@ -29,7 +29,8 @@ _source_if_exists() {
 # ------------------------------------------------------------------------------
 # Config loading
 # ------------------------------------------------------------------------------
-# Default (ENV_TARGET unset): source every configs/*/*.sh, CP4D first. Names
+# Default (ENV_TARGET unset): source every configs/*/*_vars.sh and
+# configs/*/*_instance_details.sh, CP4D first. Names
 # defined in more than one file (OCP_URL, OC_LOGIN, STG_CLASS_BLOCK, ...) then
 # resolve to whichever file sorted last.
 #
@@ -69,6 +70,9 @@ else
     _source_if_exists "${CONFIG_DIR}/cpd_vars.sh"
     _source_if_exists "${CONFIG_DIR}/cpd_instance_details.sh"
     for _f in "${CONFIG_DIR}"/*.sh(N) "${CONFIGS_ROOT}"/*/*.sh(N); do
+        # Only config files - other scripts dropped into configs/ (e.g. the
+        # Turbonomic onboarding script downloaded from Concert) must not run.
+        [[ "$_f" == *_vars.sh || "$_f" == *_instance_details.sh ]] || continue
         _source_if_exists "$_f"
     done
 fi
