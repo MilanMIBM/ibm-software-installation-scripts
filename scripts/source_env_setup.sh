@@ -112,6 +112,14 @@ fi
 unset _f _sourced
 unset -f _source_if_exists
 
+# Caller overrides (set by s_env.sh KEY=VALUE args): applied after the configs
+# so they win, and before the login wrapping below so OCP_URL etc. take effect.
+for _o in ${_ENV_OVERRIDES[@]:+"${_ENV_OVERRIDES[@]}"}; do
+    export "${_o}"
+    _env_log "override: ${_o%%=*}"
+done
+unset _o
+
 # ------------------------------------------------------------------------------
 # Login only when needed
 # ------------------------------------------------------------------------------
