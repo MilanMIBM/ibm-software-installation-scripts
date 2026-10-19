@@ -192,4 +192,8 @@ configs/*
 /cpd-cli-workspace
 # IBM Concert installer archives, extracted installer, runner build context and logs
 /concert_workspace
+# OADP backup/restore: S3 bucket credentials and restore target cluster logins
+/src/utilities/oadp_backup_restore_cp4d_utils/backup_bucket_configs/
+/src/utilities/oadp_backup_restore_cp4d_utils/restore_target_configs/
 .DS_Store
+/state

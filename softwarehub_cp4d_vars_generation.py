@@ -804,12 +804,12 @@ def _():
 
 
 @app.cell
-def _(render_template_from_environment, run_button, save_to_config_dir_button):
+def _(render_template_from_environment, run_button):
     rendered_variables_file_cpd = (
         render_template_from_environment(
             template_path="src/helpers/config_file_jinja2_templates/cpd_variable_template.sh.j2"
         )
-        if run_button.value or save_to_config_dir_button.value
+        if run_button.value
         else ""
     )
     return (rendered_variables_file_cpd,)
@@ -957,18 +957,12 @@ def _(
 
 
 @app.cell
-def _(
-    install_options_addon,
-    render_template_from_environment,
-    run_button,
-    save_to_config_dir_button,
-):
+def _(install_options_addon, render_template_from_environment, run_button):
     rendered_variables_file_inst_options = (
         render_template_from_environment(
             template_path="src/helpers/config_file_jinja2_templates/install_options_template.sh.j2"
         )
-        if (run_button.value or save_to_config_dir_button.value)
-        and install_options_addon.value
+        if run_button.value and install_options_addon.value
         else ""
     )
     return (rendered_variables_file_inst_options,)
@@ -995,23 +989,32 @@ def _(
     inst_options_filename,
     inst_options_template_editor,
     install_options_addon,
+    render_template_from_environment,
     save_to_config_dir_button,
 ):
+    # Save what is in the editors so manual edits are kept; only fall back to
+    # rendering the templates when "Generate" has not been clicked yet.
     _save_result = None
-    if save_to_config_dir_button.value and cpd_vars_template_editor.value:
+    if save_to_config_dir_button.value:
         _config_dir = os.path.join(os.path.dirname(__file__), "configs", "cp4d_config")
         os.makedirs(_config_dir, exist_ok=True)
 
+        _cpd_vars_content = cpd_vars_template_editor.value or render_template_from_environment(
+            template_path="src/helpers/config_file_jinja2_templates/cpd_variable_template.sh.j2"
+        )
         _cpd_vars_path = os.path.join(_config_dir, cpd_vars_filename)
         with open(_cpd_vars_path, "w") as _f:
-            _f.write(cpd_vars_template_editor.value)
+            _f.write(_cpd_vars_content)
 
         _saved = [_cpd_vars_path]
 
-        if install_options_addon.value and inst_options_template_editor.value:
+        if install_options_addon.value:
+            _inst_opts_content = inst_options_template_editor.value or render_template_from_environment(
+                template_path="src/helpers/config_file_jinja2_templates/install_options_template.sh.j2"
+            )
             _inst_opts_path = os.path.join(_config_dir, inst_options_filename)
             with open(_inst_opts_path, "w") as _f:
-                _f.write(inst_options_template_editor.value)
+                _f.write(_inst_opts_content)
             _saved.append(_inst_opts_path)
 
         _save_result = mo.callout(

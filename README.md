@@ -22,7 +22,7 @@ The Cloud Pak for Data workflow has two stages:
 | `scripts/*.sh` | Shared script plumbing: `source_env_setup.sh` (config loading), `0.0_make_executable.sh`, and `operator_install_helpers.sh` (idempotency checks so OLM operator installs are safe to re-run) |
 | `src/helpers/` | Jinja2 templates and marimo widgets backing the notebooks, plus Python/zsh helpers: IBM Cloud IAM auth, watsonx.data database registration, IBM License Service, IBM Cloud Secrets Manager, the Software Hub internal vault, and the Software Hub → `cpd-cli` release resolver |
 | `src/cr_yaml_examples/` | Jinja2 custom resource templates rendered by `src/utilities/cpd-cli_utils/create_cr_instance.sh` |
-| `src/utilities/` | Extras: `cpd-cli` maintenance (upgrade, OLM image, workspace cleanup, premium features, CR create/delete), IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group/htpasswd/service ID helpers, Software Hub checks and API key vault storage |
+| `src/utilities/` | Extras: `cpd-cli` maintenance (upgrade, OLM image, workspace cleanup, premium features, CR create/delete), IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group/htpasswd/service ID helpers, Software Hub checks and API key vault storage, OADP tenant backup/restore |
 | `env_bootstrap.sh` | Sourced by every script to find the repo root and load `configs/` (via `scripts/source_env_setup.sh`) |
 | `s_env.sh` | `source s_env.sh` in your shell to load the configs and log in to the cluster with `oc` |
 | `service_instances/` | Output folder for payloads written by the `4.5_service_instance_setups/` provisioning scripts (gitignored) |
@@ -140,6 +140,8 @@ After the base install is up:
 `src/utilities/ibmcloud_secrets_manager_variable_management/` can upload your generated configs to IBM Cloud Secrets Manager and rebuild them from there later (run either script with `--help`).
 
 `src/utilities/cpd-cli_utils/` covers `cpd-cli` upkeep: upgrading to a Software Hub version, refreshing/toggling the OLM utils image, cleaning the workspace, enabling premium features, and creating/deleting CR instances from `src/cr_yaml_examples/`.
+
+`src/utilities/oadp_backup_restore_cp4d_utils/` backs up a Software Hub instance to an off-cluster S3 bucket with `cpd-cli oadp tenant-backup` and restores it onto another cluster (bucket and restore target configs are generated into gitignored subfolders there; see its [README](src/utilities/oadp_backup_restore_cp4d_utils/README.md)).
 
 ### Users, service IDs and API keys
 
