@@ -63,14 +63,16 @@ fi
 #      Anything else loads every config, as before.
 # "all" loads every configs/*/*_vars.sh. The inferred value is not exported, so
 # a child script in another product folder still infers its own target.
+# _CP4D_ENV_TARGET_WHY says which rule picked it, for the env summary.
+_CP4D_ENV_TARGET_WHY="ENV_TARGET"
 _argv=()
 while (( $# )); do
     case "$1" in
         --env-target)
             [[ -n "${2:-}" ]] || { echo "[ERROR] --env-target needs a config name, path or 'all'" >&2; unset _argv; return 1 2>/dev/null || exit 1; }
-            export ENV_TARGET="$2"; shift 2 ;;
+            export ENV_TARGET="$2"; _CP4D_ENV_TARGET_WHY="--env-target"; shift 2 ;;
         --env-target=*)
-            export ENV_TARGET="${1#--env-target=}"; shift ;;
+            export ENV_TARGET="${1#--env-target=}"; _CP4D_ENV_TARGET_WHY="--env-target"; shift ;;
         *)  _argv+=("$1"); shift ;;
     esac
 done
@@ -81,10 +83,12 @@ if [[ -z "${ENV_TARGET:-}" ]]; then
     # The running script: $ZSH_ARGZERO for ./x.sh or zsh x.sh, else the caller's SCRIPT_DIR.
     _caller="${ZSH_ARGZERO:A}"
     [[ "${_caller}" == "${_CP4D_REPO_ROOT}"/* ]] || _caller="${SCRIPT_DIR:-}/"
+    _CP4D_ENV_TARGET_WHY="no target for this script's folder"
     case "${_caller#${_CP4D_REPO_ROOT}/}" in
-        scripts/install_cloud_pak_for_data/*|src/utilities/*) ENV_TARGET=cpd ;;
-        scripts/install_confluent_platform/*)                 ENV_TARGET=confluent ;;
-        scripts/install_ibm_concert/*)                        ENV_TARGET=concert ;;
+        scripts/install_cloud_pak_for_data/*) ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder scripts/install_cloud_pak_for_data/" ;;
+        src/utilities/*)                      ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder src/utilities/" ;;
+        scripts/install_confluent_platform/*) ENV_TARGET=confluent; _CP4D_ENV_TARGET_WHY="script folder scripts/install_confluent_platform/" ;;
+        scripts/install_ibm_concert/*)        ENV_TARGET=concert;   _CP4D_ENV_TARGET_WHY="script folder scripts/install_ibm_concert/" ;;
     esac
     unset _caller
 fi
