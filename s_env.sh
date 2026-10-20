@@ -4,7 +4,7 @@
 #     source s_env.sh [TARGET] [KEY=VALUE ...]
 #
 #   TARGET     config to load (same as ENV_TARGET): a bare name (cpd, confluent,
-#              concert) or a path to a *_vars.sh file. Omitted: uses ENV_TARGET
+#              concert, datastax_mc) or a path to a *_vars.sh file. Omitted: uses ENV_TARGET
 #              from the shell if set, otherwise loads every config.
 #   KEY=VALUE  variables to override after the config is loaded (and before the
 #              login commands are built, so e.g. OCP_URL=... is honoured).

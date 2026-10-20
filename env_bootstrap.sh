@@ -60,6 +60,7 @@ fi
 #        scripts/install_cloud_pak_for_data/, src/utilities/  -> cpd
 #        scripts/install_confluent_platform/                  -> confluent
 #        scripts/install_ibm_concert/                         -> concert
+#        scripts/install_datastax_mc_standalone/              -> datastax_mc
 #      Anything else loads every config, as before.
 # "all" loads every configs/*/*_vars.sh. The inferred value is not exported, so
 # a child script in another product folder still infers its own target.
@@ -89,6 +90,7 @@ if [[ -z "${ENV_TARGET:-}" ]]; then
         src/utilities/*)                      ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder src/utilities/" ;;
         scripts/install_confluent_platform/*) ENV_TARGET=confluent; _CP4D_ENV_TARGET_WHY="script folder scripts/install_confluent_platform/" ;;
         scripts/install_ibm_concert/*)        ENV_TARGET=concert;   _CP4D_ENV_TARGET_WHY="script folder scripts/install_ibm_concert/" ;;
+        scripts/install_datastax_mc_standalone/*) ENV_TARGET=datastax_mc; _CP4D_ENV_TARGET_WHY="script folder scripts/install_datastax_mc_standalone/" ;;
     esac
     unset _caller
 fi

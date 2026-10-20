@@ -1,6 +1,6 @@
 # ibm-software-installation-scripts
 
-Scripts and config generators for installing **IBM Software Hub / Cloud Pak for Data (and various components)** into a Redhat OpenShift cluster, plus scripts for **Confluent Platform** (with an optional Flink add-on) and **IBM Concert** (Concert, Data Apps, Workflows - see [IBM Concert](#ibm-concert)).
+Scripts and config generators for installing **IBM Software Hub / Cloud Pak for Data (and various components)** into a Redhat OpenShift cluster, plus scripts for **Confluent Platform** (with an optional Flink add-on), **IBM Concert** (Concert, Data Apps, Workflows - see [IBM Concert](#ibm-concert)) and a standalone **DataStax Mission Control** (see [DataStax Mission Control](#datastax-mission-control-standalone)).
 
 The Cloud Pak for Data workflow has two stages:
 
@@ -18,14 +18,16 @@ The Cloud Pak for Data workflow has two stages:
 | `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), service instance provisioning (`4.5_service_instance_setups/`), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/` |
 | `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README) |
 | `scripts/install_ibm_concert/` | IBM Concert install steps (0 → 4) around IBM's own installer, data store provisioning, optional Concert Optimize / Turbonomic (5), plus cleanup/debug scripts under `x_clean_or_debug_concert/` |
+| `scripts/install_datastax_mc_standalone/` | DataStax Mission Control on OpenShift with Helm, independent of CP4D: config generator (0), cluster prep (1), install (2), internode NetworkPolicy (3), uninstall under `x_clean_or_debug_datastax_mc/`. DataStax's OpenShift Helm values templates are in `src/helpers/datastax_mc_helm_values_templates/` |
 | `concert_workspace/` | IBM Concert installer archives, the extracted installer, runner build context and copied logs (gitignored) |
 | `scripts/*.sh` | Shared script plumbing: `source_env_setup.sh` (config loading), `0.0_make_executable.sh`, and `operator_install_helpers.sh` (idempotency checks so OLM operator installs are safe to re-run) |
-| `src/helpers/` | Jinja2 templates and marimo widgets backing the notebooks, plus Python/zsh helpers: IBM Cloud IAM auth, watsonx.data database registration, IBM License Service, IBM Cloud Secrets Manager, the Software Hub internal vault, and the Software Hub → `cpd-cli` release resolver |
+| `src/helpers/` | Jinja2 templates and marimo widgets backing the notebooks, plus Python/zsh helpers: IBM Cloud IAM auth, watsonx.data database registration, IBM License Service, IBM Cloud Secrets Manager, the Software Hub internal vault, the Software Hub → `cpd-cli` release resolver, and DataStax Mission Control's Helm values templates and shell helpers |
 | `src/cr_yaml_examples/` | Jinja2 custom resource templates rendered by `src/utilities/cpd-cli_utils/create_cr_instance.sh` |
 | `src/utilities/` | Extras: `cpd-cli` maintenance (upgrade, OLM image, workspace cleanup, premium features, CR create/delete), IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group/htpasswd/service ID helpers, Software Hub checks and API key vault storage, OADP tenant backup/restore |
 | `env_bootstrap.sh` | Sourced by every script to find the repo root and load `configs/` (via `scripts/source_env_setup.sh`) |
 | `s_env.sh` | `source s_env.sh` in your shell to load the configs and log in to the cluster with `oc` |
 | `service_instances/` | Output folder for payloads written by the `4.5_service_instance_setups/` provisioning scripts (gitignored) |
+| `datastax_mc_workspace/` | The pinned Helm 3 that Mission Control needs, when the `helm` on PATH is outside 3.14 - 3.18 (gitignored) |
 | `cpd-cli-workspace/` | Health check results and logs that `cpd-cli` writes when run from the repo root (gitignored) |
 
 ---
@@ -177,7 +179,7 @@ Auth, connectors, external access and uninstall live under `utility_scripts_conf
 
 Kafka SASL mechanisms are set per listener: `CONFLUENT_SASL_MECHANISM` is the one the brokers and components use, `CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS` lists what in-cluster clients may use, and `CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS` what the EXTERNAL listener accepts. StreamSets (watsonx.data) connects to the internal bootstrap with PLAIN only (SCRAM-SHA-512 failed there), so keep `PLAIN` in the internal list while it is used.
 
-Each script loads only its own product's config, chosen from the folder it lives in (`install_cloud_pak_for_data/` and `src/utilities/` → `cpd`, `install_confluent_platform/` → `confluent`, `install_ibm_concert/` → `concert`). Override per run with `--env-target <name|path|all>` or `ENV_TARGET=<name|path|all>`; `all` loads every config as before.
+Each script loads only its own product's config, chosen from the folder it lives in (`install_cloud_pak_for_data/` and `src/utilities/` → `cpd`, `install_confluent_platform/` → `confluent`, `install_ibm_concert/` → `concert`, `install_datastax_mc_standalone/` → `datastax_mc`). Override per run with `--env-target <name|path|all>` or `ENV_TARGET=<name|path|all>`; `all` loads every config as before.
 
 ### Version presets
 
@@ -243,3 +245,54 @@ Defaults and why:
 - **Optimize off** by default. When selected, it runs in its own namespace (`turbonomic`) on the Concert cluster. It needs the cluster to pull from `icr.io/cpopen` (no mirrored/air-gapped mode yet), a Turbonomic license from Passport Advantage (`CONCERT_OPTIMIZE_LICENSE_FILE`), and IBM's minimum of 4 vCPU / 32 GB on top of Concert. Concert Observe (Instana) is not covered: it installs with `stanctl` onto its own Linux hosts.
 
 `x_clean_or_debug_concert/` has status/debug helpers (`x_fetch_installer_logs.sh`, `x_runner_shell.sh`, `x_concert_mustgather.sh`, `x_delete_stuck_pods_concert.sh`, `x_restart_concert_components.sh`) and teardown (`x_uninstall_concert.sh`, `x_uninstall_optimize.sh` - keeps Turbonomic's volumes unless `--delete-namespace`, `x_uninstall_datastores.sh` - destroys all data).
+
+---
+
+## DataStax Mission Control (standalone)
+
+Installs **DataStax Mission Control** (chart `oci://icr.io/mission-control-helm/mission-control`, 1.21.2 by default) onto OpenShift 4.8+ with Helm, following DataStax's [OpenShift guide](https://docs.datastax.com/en/mission-control/install/install-mc-openshift.html). It is independent of Cloud Pak for Data: it has its own config, cluster login and namespace, and never reads `cpd_vars.sh` at run time. CP4D's built-in DataStax service is handled separately, under `5_component_specific_scripts/wxd_datastax_hcd/`.
+
+Create the config in `configs/datastax_mc_config/datastax_mc_vars.sh`:
+
+```bash
+# blank cluster login / entitlement key to fill in
+./scripts/install_datastax_mc_standalone/0_initial_setup/0.0_generate_datastax_mc_config.sh --empty
+# or copy OCP_URL, the login, IBM_ENTITLEMENT_KEY and STG_CLASS_BLOCK from a CP4D config
+./scripts/install_datastax_mc_standalone/0_initial_setup/0.0_generate_datastax_mc_config.sh --from-cpd [path/to/cpd_vars.sh]
+```
+
+Both generate a random admin password and MinIO credentials. `--force` replaces an existing file (a timestamped `.bak` is kept); `--plane data`, `--namespace` and `--admin-email` preset those values. The Helm release is always `mission-control`: DataStax's OpenShift values hard-code service names for it. Review the file afterwards. Then run the full install:
+
+```bash
+./scripts/install_datastax_mc_standalone/0_x_full_quick_install_script/full_datastax_mc_installprocess.sh
+```
+
+| Step | What it does |
+| --- | --- |
+| `0_initial_setup/0.1` | Uses `helm` from PATH when it is 3.14 - 3.18 (DataStax's supported range), otherwise downloads `MC_HELM_VERSION` (checksum verified) into `datastax_mc_workspace/tools/` |
+| `1_prepare_cluster/1.0` | cert-manager Operator for Red Hat OpenShift (the CP4D `1.0` script, reused), a ≥ 1.18.5 version check, and `--enable-certificate-owner-ref` on `CertManager/cluster` so deleted Certificates take their secrets with them |
+| `1.1` | Read-only preflight: OpenShift version, Helm, chart reachable, entitlement key, cert-manager, `openshift-dns/dns-default`, storage class, platform nodes, plane-specific settings |
+| `1.2` | Namespace, `<release>-registry` pull secret (`cp` + entitlement key), and the key in the cluster-wide pull secret (shared `set_global_pull_secret.sh`). The global secret is needed because the OpenShift values turn off Mission Control's pull secret copying into project namespaces |
+| `1.3` | Labels nodes `mission-control.datastax.com/role=platform`, which every component is pinned to (`MC_PLATFORM_NODES`: `all-workers`, `existing` or a node list) |
+| `1.4` | SCCs by `MC_SCC_MODE`: `nonroot-v2` (default), `restricted-v2` or `custom` (DataStax's example SCC) |
+| `2_install_mission_control/2.0` | Renders the Helm values: DataStax's OpenShift file for the plane with its tokens filled in, then this repo's overrides, then the restricted-v2 layer, then `MC_EXTRA_VALUES_FILES` |
+| `2.1` | Object storage secret, a server-side dry run of every rendered object (a rejected manifest stops here, before Helm leaves a half-installed failed release), then `helm upgrade --install` (install and upgrade are the same command; extra args go to helm, e.g. `--dry-run=server`) |
+| `2.2` / `2.3` / `2.4` | Passthrough Route to the UI, status (`--wait`), and `datastax_mc_instance_details.sh` with `DATASTAX_MC_URL` / `_USERNAME` / `_PASSWORD` |
+| `3_post_install/3.1` | **Run after creating a project (UI or `--create SLUG`), before creating its first database cluster.** Lets the project's service accounts use `nonroot-v2` (HCD/DSE pods run as UID 999, and Mission Control's operators cannot grant SCCs) and copies the pull secret in. `--remove SLUG` undoes it |
+| `3.2` | **Data API** (HTTP/JSON, for astrapy and other Data API clients) for a datacenter: a `DataApi` resource, an edge Route, keyspaces (`--keyspace`, default `default_keyspace`), and `datastax_mc_dataapi_instance_details.sh` with the same `DATASTAX_HCD_*` names as the CP4D scripts, plus a ready-made `DATASTAX_HCD_TOKEN`. `--remove` deletes it |
+| `3.3` | **CQL gateway** for drivers outside the cluster: a `CqlConnectivity` in Ingress mode under the cluster's apps domain (passthrough Routes, routed by TLS SNI, so no extra DNS), plus its **Secure Connect Bundle** in `configs/datastax_mc_config/scb/` and `datastax_mc_cql_instance_details.sh`. Drivers use the bundle with local DC `dc1` (the gateway's own); apps inside OpenShift can skip the gateway and use the in-cluster contact point it also writes. `--remove` deletes it |
+| `3_post_install/3.0` | Optional NetworkPolicy for project namespaces: internode ports 7000/7001 only from database pods (plus `--allow-cidr` for other clusters). DataStax requires this on shared clusters |
+
+Choices worth knowing:
+
+- **Observability storage** (`MC_OBSERVABILITY_STORE`): `minio` (default) runs the chart's in-cluster MinIO for Loki and Mimir. `s3` uses any S3-compatible endpoint (`MC_S3_*`; leave `MC_S3_ENDPOINT` empty for AWS), and the buckets must already exist. DataStax's control plane file assumes AWS S3.
+- **Where DataStax's OpenShift file doesn't match chart 1.21.2**, the overrides correct it (details in `2.0_render_values.sh`):
+  - Loki schema: boltdb-shipper v11 becomes the chart's tsdb v13.
+  - Loki affinities: the file writes them as strings, which the API rejects; they are re-set as maps.
+  - Object storage credentials: they now reach every Mimir and Loki component through `global.extraEnvFrom`.
+  - Dex: its HTTPS issuer and TLS volume are restored.
+- **SCCs**: the 1.4 grant matters most for Loki. The chart's own SCC binding names a `loki` service account, but Loki runs as `mission-control-loki`. Chart 1.21.2 also grants `anyuid` (SCC priority 10) to its other service accounts, and that outranks `restricted-v2` and the custom SCC. So with those modes, most pods are likely still admitted under `anyuid`; `2.3` lists the SCC each pod actually got. `restricted-v2` renders DataStax's null-UID overrides for the operators, UI, Dex and the Vector aggregator. Loki, Mimir, MinIO and kube-state-metrics pin their UIDs regardless and keep `nonroot-v2`.
+- **Data plane** (`MC_PLANE=data`): set `MC_VECTOR_AGGREGATOR_URL` to the control plane's aggregator.
+- **Login**: `MC_ADMIN_EMAIL` with `MC_ADMIN_PASSWORD` (a Dex static password, bcrypt-hashed at render time with `htpasswd`, or the python `bcrypt` module as a fallback).
+
+Interactive shell: `source s_env.sh datastax_mc`. Teardown: `x_clean_or_debug_datastax_mc/x_uninstall_mission_control.sh`. It refuses while `MissionControlCluster` resources exist (`--force` overrides) and deletes PVCs unless `--keep-pvcs`. Use `--delete-namespace`, `--delete-crds` (only `clusterconfigs.datastax.com`, as DataStax does) and `--unlabel-nodes` to go further.
