@@ -26,7 +26,9 @@ TIMEOUT=60
 # Channel names are OLM channel identifiers (e.g. "2.25"), not CSV version strings.
 # For unmapped versions, the default channel is resolved from the marketplace.
 case "${VERSION}" in
-  5.3.0|5.3.1) CHANNEL_VERSION="stable-2.25" ;;
+  # Software Hub 5.4.0 still pins RHOAI 2.25 (IBM docs, prep-cluster-openshift-ai);
+  # the marketplace default is now stable-3.x, which is a major-version jump.
+  5.3.0|5.3.1|5.4.0) CHANNEL_VERSION="stable-2.25" ;;
   *)
     echo "[INFO] No fixed RHOAI channel mapping for CP4D VERSION=${VERSION}, resolving latest stable from marketplace..."
     CHANNEL_VERSION=$(oc get packagemanifest rhods-operator \

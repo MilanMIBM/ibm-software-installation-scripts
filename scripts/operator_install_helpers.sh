@@ -178,8 +178,28 @@ cp4d_reconcile_subscription_channel() {
         return 0
     fi
 
-    local current_family="${current%%-*}" target_family="${target_channel%%-*}"
-    local current_major="${${current#*-}%%.*}" target_major="${${target_channel#*-}%%.*}"
+    # Split "<family>-<version>" on the LAST dash so multi-dash families
+    # (support-required-upgrade-3.5) parse correctly. A channel with no dash is
+    # either a bare version (GPU Operator's "v26.3": empty family) or a bare
+    # family ("stable": no version) - treating "v26.3" as a family made every
+    # GPU minor bump (v26.3 -> v26.7) look like a cross-family migration.
+    local current_family current_major target_family target_major
+    _cp4d_split_channel() {
+        local ch="$1" ver
+        if [[ "${ch}" == *-* ]]; then
+            REPLY_FAMILY="${ch%-*}"; ver="${ch##*-}"
+        elif [[ "${ch}" == (v|)[0-9]* ]]; then
+            REPLY_FAMILY=""; ver="${ch}"
+        else
+            REPLY_FAMILY="${ch}"; ver=""
+        fi
+        REPLY_MAJOR="${ver%%.*}"
+    }
+    _cp4d_split_channel "${current}"
+    current_family="${REPLY_FAMILY}" current_major="${REPLY_MAJOR}"
+    _cp4d_split_channel "${target_channel}"
+    target_family="${REPLY_FAMILY}" target_major="${REPLY_MAJOR}"
+    unset REPLY_FAMILY REPLY_MAJOR
 
     if [[ "${current_family}" != "${target_family}" || "${current_major}" != "${target_major}" ]]; then
         echo "incompatible"
