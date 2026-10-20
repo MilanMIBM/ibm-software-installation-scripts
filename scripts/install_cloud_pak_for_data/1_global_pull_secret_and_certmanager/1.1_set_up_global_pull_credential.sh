@@ -14,6 +14,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
 # ---
+
+# Also create 'ibm-entitlement-key' in every PROJECT_* namespace, with the same
+# contents as the distributed pull secret, and link it to every service account
+# there. Some CP4D operands and operator-generated pods reference that name
+# literally, whatever IMAGE_PULL_SECRET is set to. Set to false here, or export
+# CREATE_ENTITLEMENT_KEY_SECRET=false, to skip it.
+CREATE_ENTITLEMENT_KEY="${CREATE_ENTITLEMENT_KEY_SECRET:-true}"
+ENTITLEMENT_SECRET_NAME="ibm-entitlement-key"
+
 eval "${CPDM_OC_LOGIN}"
 
 _has_icr=false
@@ -124,10 +133,16 @@ print(json.dumps({'data': {'.dockerconfigjson': base64.b64encode(data.encode()).
 
     # --------------------------------------------------------------------------
     # Distribute the global pull secret to every PROJECT_* namespace as a
-    # dockerconfigjson secret named ${IMAGE_PULL_SECRET}.
+    # dockerconfigjson secret named ${IMAGE_PULL_SECRET}, plus a copy named
+    # ibm-entitlement-key when CREATE_ENTITLEMENT_KEY is on.
     # --------------------------------------------------------------------------
     _secret_name="${IMAGE_PULL_SECRET:-pull-secret}"
     _dockercfg_b64="$(printf '%s' "${_patched}" | base64 | tr -d '\n')"
+
+    _ns_secret_names=("${_secret_name}")
+    if [[ "${CREATE_ENTITLEMENT_KEY}" == true && "${_secret_name}" != "${ENTITLEMENT_SECRET_NAME}" ]]; then
+        _ns_secret_names+=("${ENTITLEMENT_SECRET_NAME}")
+    fi
 
     # Collect all PROJECT_* variable values (zsh: ${(k)parameters} lists names).
     _project_ns=()
@@ -145,19 +160,42 @@ print(json.dumps({'data': {'.dockerconfigjson': base64.b64encode(data.encode()).
                 echo "[INFO] Namespace ${_ns} does not exist yet - skipping pull-secret copy."
                 continue
             fi
-            _ns_patch_file="$(mktemp)"
-            cat > "${_ns_patch_file}" <<EOF
+            for _name in "${_ns_secret_names[@]}"; do
+                _ns_patch_file="$(mktemp)"
+                cat > "${_ns_patch_file}" <<EOF
 {
   "apiVersion": "v1",
   "kind": "Secret",
-  "metadata": { "name": "${_secret_name}", "namespace": "${_ns}" },
+  "metadata": { "name": "${_name}", "namespace": "${_ns}" },
   "type": "kubernetes.io/dockerconfigjson",
   "data": { ".dockerconfigjson": "${_dockercfg_b64}" }
 }
 EOF
-            oc apply -f "${_ns_patch_file}"
-            rm -f "${_ns_patch_file}"
-            echo "[INFO] Applied pull-secret '${_secret_name}' to namespace ${_ns}."
+                oc apply -f "${_ns_patch_file}"
+                rm -f "${_ns_patch_file}"
+                echo "[INFO] Applied pull-secret '${_name}' to namespace ${_ns}."
+            done
+
+            # Link the entitlement key to every service account, not just
+            # 'default': CP4D pods mostly run under their own service accounts.
+            # Only accounts that exist now are covered - re-run this script, or
+            # src/utilities/redhat_openshift_utils/set_namespace_pull_secret.sh,
+            # after operators/operands have created theirs.
+            if [[ "${CREATE_ENTITLEMENT_KEY}" == true ]]; then
+                _linked=0
+                for _sa in ${(f)"$(oc get sa -n "${_ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)"}; do
+                    if oc get sa "${_sa}" -n "${_ns}" -o jsonpath='{range .imagePullSecrets[*]}{.name}{"\n"}{end}' 2>/dev/null \
+                            | grep -qx "${ENTITLEMENT_SECRET_NAME}"; then
+                        continue
+                    fi
+                    if oc secrets link "${_sa}" "${ENTITLEMENT_SECRET_NAME}" --for=pull -n "${_ns}"; then
+                        (( ++_linked ))
+                    else
+                        echo "[WARN] Could not link '${ENTITLEMENT_SECRET_NAME}' to sa/${_sa} in ${_ns}." >&2
+                    fi
+                done
+                echo "[INFO] Linked '${ENTITLEMENT_SECRET_NAME}' to ${_linked} new service account(s) in ${_ns}."
+            fi
         done
     fi
 fi
