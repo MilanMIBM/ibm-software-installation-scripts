@@ -60,6 +60,15 @@ set -euo pipefail
 #                                 change offline backups. OADP_SNAPSHOT_MOVE_DATA=true in the config
 #                                 does the same (and survives --recreate-dpa).
 #     --no-snapshot-move-data     turn it off again
+#     --resources <preset>        CPU/memory requests for Velero, the node agents and the OADP operator
+#                                 (limits stay at the defaults: Velero 1 CPU/4Gi, node agent 1/32Gi,
+#                                 operator 1/512Mi):
+#                                   minimal  Velero 100m/154Mi, node agent 50m/154Mi, operator 50m/77Mi
+#                                   small    40% below medium: 600m/154Mi, 300m/154Mi, 300m/77Mi (default)
+#                                   medium   the cpd-cli / OADP defaults: 1/256Mi, 500m/256Mi, 500m/128Mi
+#                                 A new DPA and subscription always get the preset. An existing one is
+#                                 only changed when --resources or OADP_RESOURCE_PRESET (config) is given,
+#                                 and not while a Velero backup or restore runs: the change restarts Velero.
 #     -h, --help
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -86,6 +95,8 @@ UPGRADE=false
 # Empty: leave the DPA's setting alone. OADP_SNAPSHOT_MOVE_DATA in the loaded
 # config only applies when the env is loaded, so it is picked up further down.
 SNAPSHOT_MOVE_DATA=""
+# Empty: OADP_RESOURCE_PRESET from the config, else small (picked up after the env load).
+RESOURCE_PRESET=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bucket)                BUCKET="${2:?--bucket needs a config name or path}"; shift 2 ;;
@@ -102,6 +113,7 @@ while [[ $# -gt 0 ]]; do
         --upgrade)               UPGRADE=true; shift ;;
         --snapshot-move-data)    SNAPSHOT_MOVE_DATA=true; shift ;;
         --no-snapshot-move-data) SNAPSHOT_MOVE_DATA=false; shift ;;
+        --resources)             RESOURCE_PRESET="${2:?--resources needs minimal, small or medium}"; shift 2 ;;
         -h|--help)               oadp_usage "$0"; exit 0 ;;
         *)                       echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
     esac
@@ -129,6 +141,22 @@ if [[ "${PLUGIN_IMAGE_FALLBACK}" != "true" && "${PLUGIN_IMAGE_FALLBACK}" != "fal
     echo "[ERROR] OADP_PLUGIN_IMAGE_FALLBACK must be true or false (got '${PLUGIN_IMAGE_FALLBACK}')." >&2
     exit 1
 fi
+# Given explicitly (option or config), the preset is also applied to an existing
+# DPA/subscription; the default only goes into ones created here.
+RESOURCE_PRESET_EXPLICIT=true
+[[ -z "${RESOURCE_PRESET}" ]] && RESOURCE_PRESET="${OADP_RESOURCE_PRESET:-}"
+[[ -z "${RESOURCE_PRESET}" ]] && { RESOURCE_PRESET=small; RESOURCE_PRESET_EXPLICIT=false; }
+typeset -A RES
+case "${RESOURCE_PRESET}" in
+    minimal) RES=(velero_cpu 100m velero_mem 154Mi agent_cpu 50m  agent_mem 154Mi operator_cpu 50m  operator_mem 77Mi) ;;
+    small)   RES=(velero_cpu 600m velero_mem 154Mi agent_cpu 300m agent_mem 154Mi operator_cpu 300m operator_mem 77Mi) ;;
+    medium)  RES=(velero_cpu 1    velero_mem 256Mi agent_cpu 500m agent_mem 256Mi operator_cpu 500m operator_mem 128Mi) ;;
+    *)       echo "[ERROR] --resources / OADP_RESOURCE_PRESET must be minimal, small or medium (got '${RESOURCE_PRESET}')." >&2; exit 1 ;;
+esac
+# The OADP operator's own limits; a subscription resources override replaces
+# requests and limits together, so they are restated.
+OPERATOR_RESOURCES_JSON="{\"requests\":{\"cpu\":\"${RES[operator_cpu]}\",\"memory\":\"${RES[operator_mem]}\"},\"limits\":{\"cpu\":\"1\",\"memory\":\"512Mi\"}}"
+
 oadp_registry_flags
 LOG_FILE="$(oadp_log_file install-${${OCP_URL#*://api.}%%[.:]*})"
 echo "[INFO] cpd-cli output is also written to ${LOG_FILE}"
@@ -171,6 +199,7 @@ source "${REPO_ROOT}/scripts/operator_install_helpers.sh"
 OADP_PACKAGE=redhat-oadp-operator
 OADP_SUBSCRIPTION=redhat-oadp-operator
 OADP_CSV_PREFIX='oadp-operator\.'
+SUB_CREATED=false
 
 if [[ "$(cp4d_csv_phase "${OADP_PROJECT}" "${OADP_CSV_PREFIX}")" == "Succeeded" ]]; then
     echo "[SKIP] OADP operator already installed in ${OADP_PROJECT}"
@@ -195,6 +224,9 @@ else
     _sub_channel="$(oc get subscriptions.operators.coreos.com "${OADP_SUBSCRIPTION}" -n "${OADP_PROJECT}" -o jsonpath='{.spec.channel}' 2>/dev/null || true)"
     _sub_start="$(oc get subscriptions.operators.coreos.com "${OADP_SUBSCRIPTION}" -n "${OADP_PROJECT}" -o jsonpath='{.spec.startingCSV}' 2>/dev/null || true)"
     if [[ -z "${_sub_channel}" ]]; then
+        # medium is the operator's own default: no override then.
+        _sub_config=""
+        [[ "${RESOURCE_PRESET}" != "medium" ]] && _sub_config="  config: {\"resources\": ${OPERATOR_RESOURCES_JSON}}"
         cat <<EOF | oc apply -f -
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
@@ -207,7 +239,9 @@ spec:
   name: ${OADP_PACKAGE}
   source: redhat-operators
   sourceNamespace: openshift-marketplace
+${_sub_config}
 EOF
+        SUB_CREATED=true
     elif [[ "${_sub_channel}" != "${OADP_CHANNEL}" || -n "${_sub_start}" ]]; then
         # The subscription exists but installed no CSV (checked above) - e.g. one
         # cpd-cli made on stable-1.4 with startingCSV pinned to v1.4.4. Nothing
@@ -221,6 +255,26 @@ EOF
     echo "[INFO] Waiting up to 10m for the OADP operator CSV to succeed..."
     cp4d_wait_for_csv "${OADP_PROJECT}" "${OADP_CSV_PREFIX}" 600
     echo "[OK] OADP operator installed: $(oc get subscriptions.operators.coreos.com "${OADP_SUBSCRIPTION}" -n "${OADP_PROJECT}" -o jsonpath='{.status.installedCSV}')"
+fi
+
+# Resource preset on an existing operator subscription (only when asked for).
+# OLM rolls the operator's controller; Velero and running backups are not touched.
+if [[ "${RESOURCE_PRESET_EXPLICIT}" == "true" && "${SUB_CREATED}" != "true" ]]; then
+    _sub="$(oc get subscriptions.operators.coreos.com -n "${OADP_PROJECT}" \
+        -o jsonpath="{range .items[?(@.spec.name=='${OADP_PACKAGE}')]}{.metadata.name}{end}" 2>/dev/null || true)"
+    if [[ -z "${_sub}" ]]; then
+        echo "[WARN] No ${OADP_PACKAGE} subscription in ${OADP_PROJECT}; the operator keeps its resources"
+    elif [[ "${RESOURCE_PRESET}" == "medium" ]]; then
+        if [[ -n "$(oc get subscriptions.operators.coreos.com "${_sub}" -n "${OADP_PROJECT}" -o jsonpath='{.spec.config.resources}')" ]]; then
+            oc patch subscriptions.operators.coreos.com "${_sub}" -n "${OADP_PROJECT}" --type=json \
+                -p '[{"op":"remove","path":"/spec/config/resources"}]' >/dev/null
+            echo "[OK] OADP operator back to its default resources (medium)"
+        fi
+    else
+        oc patch subscriptions.operators.coreos.com "${_sub}" -n "${OADP_PROJECT}" --type=merge \
+            -p "{\"spec\":{\"config\":{\"resources\":${OPERATOR_RESOURCES_JSON}}}}" >/dev/null
+        echo "[OK] OADP operator resources: ${RESOURCE_PRESET} (requests ${RES[operator_cpu]} CPU / ${RES[operator_mem]})"
+    fi
 fi
 
 for _ in {1..30}; do
@@ -270,6 +324,11 @@ else
         --uploader-type=kopia
         # Offline backups copy volume data file by file; large volumes need longer than the 4h default.
         --node-agent-timeout="${OADP_NODE_AGENT_TIMEOUT:-72h}"
+        # Resource preset (requests only; cpd-cli's default limits stay).
+        --velero-pod-cpu-request="${RES[velero_cpu]}"
+        --velero-pod-mem-request="${RES[velero_mem]}"
+        --node-agent-pod-cpu-request="${RES[agent_cpu]}"
+        --node-agent-pod-mem-request="${RES[agent_mem]}"
     )
     [[ -n "${OADP_S3_CACERT_FILE:-}" ]] && DPA_FLAGS+=(--cacert="${OADP_S3_CACERT_FILE}")
     # OADP_CPDBR_VELERO_PLUGIN_IMAGE, OADP_SWHUB_VELERO_PLUGIN_IMAGE,
@@ -341,6 +400,31 @@ if (( ! ${#EXISTING_DPAS} )); then
     echo "[INFO] Creating DPA ${OADP_DPA_NAME} for s3://${OADP_BUCKET_NAME}/${OADP_BUCKET_PREFIX}"
     cpd-cli oadp dpa create "${OADP_DPA_NAME}" "${DPA_FLAGS[@]}" "${OADP_REGISTRY_FLAGS[@]}" \
         --wait --wait-timeout=15m --log-level=debug --verbose 2>&1 | tee -a "${LOG_FILE}"
+fi
+
+# Resource preset on an existing DPA (only when asked for). Changing it restarts
+# Velero and the node agents, which would break a backup or restore in flight.
+if (( ${#EXISTING_DPAS} )) && [[ "${RESOURCE_PRESET_EXPLICIT}" == "true" ]]; then
+    _want="${RES[velero_cpu]} ${RES[velero_mem]} ${RES[agent_cpu]} ${RES[agent_mem]}"
+    _active=(${(f)"$(oc get backups.velero.io,restores.velero.io -n "${OADP_PROJECT}" \
+        -o jsonpath='{range .items[*]}{.kind}/{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null \
+        | awk '$2 ~ /^(New|InProgress|WaitingForPluginOperations|Finalizing)/ {print $1}' || true)"})
+    for _dpa in "${EXISTING_DPAS[@]}"; do
+        _have="$(oc get "${_dpa}" -n "${OADP_PROJECT}" -o jsonpath='{.spec.configuration.velero.podConfig.resourceAllocations.requests.cpu}{" "}{.spec.configuration.velero.podConfig.resourceAllocations.requests.memory}{" "}{.spec.configuration.nodeAgent.podConfig.resourceAllocations.requests.cpu}{" "}{.spec.configuration.nodeAgent.podConfig.resourceAllocations.requests.memory}')"
+        if [[ "${_have}" == "${_want}" ]]; then
+            echo "[SKIP] ${_dpa} already has the ${RESOURCE_PRESET} resource preset"
+        elif (( ${#_active} )); then
+            echo "[WARN] Not applying the ${RESOURCE_PRESET} preset to ${_dpa}: it restarts Velero, and ${_active[*]} is still running."
+            echo "[WARN] Re-run with --resources ${RESOURCE_PRESET} once it has finished."
+        else
+            oc patch "${_dpa}" -n "${OADP_PROJECT}" --type=merge -p "{\"spec\":{\"configuration\":{
+                \"velero\":{\"podConfig\":{\"resourceAllocations\":{\"requests\":{\"cpu\":\"${RES[velero_cpu]}\",\"memory\":\"${RES[velero_mem]}\"}}}},
+                \"nodeAgent\":{\"podConfig\":{\"resourceAllocations\":{\"requests\":{\"cpu\":\"${RES[agent_cpu]}\",\"memory\":\"${RES[agent_mem]}\"}}}}}}}" >/dev/null
+            echo "[OK] ${_dpa}: ${RESOURCE_PRESET} resource preset (Velero ${RES[velero_cpu]}/${RES[velero_mem]}, node agent ${RES[agent_cpu]}/${RES[agent_mem]}); Velero restarts"
+        fi
+    done
+elif (( ${#EXISTING_DPAS} )); then
+    echo "[INFO] Existing DPA keeps its resources; pass --resources minimal|small|medium to change them"
 fi
 
 # Snapshot data mover (opt-in): makes online backups upload their CSI snapshot

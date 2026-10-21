@@ -354,8 +354,14 @@ oadp_set_client_namespace() {
 oadp_check_bsl() {
     local tries="${1:-30}" i line bsl phase bucket prefix
     for (( i = 1; i <= tries; i++ )); do
+        # '|| true': without OADP there is no such resource type, and under
+        # 'set -e -o pipefail' the failed oc get would end the script silently.
         line="$(oc get backupstoragelocations.velero.io -n "${OADP_PROJECT}" \
-            -o jsonpath='{range .items[?(@.spec.default==true)]}{.metadata.name}{" "}{.status.phase}{" "}{.spec.objectStorage.bucket}{" "}{.spec.objectStorage.prefix}{"\n"}{end}' 2>/dev/null | head -1)"
+            -o jsonpath='{range .items[?(@.spec.default==true)]}{.metadata.name}{" "}{.status.phase}{" "}{.spec.objectStorage.bucket}{" "}{.spec.objectStorage.prefix}{"\n"}{end}' 2>/dev/null | head -1 || true)"
+        if (( i == 1 )) && ! oc get crd backupstoragelocations.velero.io >/dev/null 2>&1; then
+            echo "[ERROR] OADP is not installed on $(oc whoami --show-server 2>/dev/null) (no Velero CRDs). Run 2_install_oadp_br_utilities.sh against it first." >&2
+            return 1
+        fi
         read -r bsl phase bucket prefix <<< "${line}"
         [[ "${phase:-}" == "Available" ]] && break
         (( i == 1 )) && echo "[INFO] Waiting for the default backup storage location in ${OADP_PROJECT} to be Available..."

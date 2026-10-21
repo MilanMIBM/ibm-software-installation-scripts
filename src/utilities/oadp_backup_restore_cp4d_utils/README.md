@@ -94,5 +94,14 @@ On a brand-new cluster, `4.1_restore_cp4d_instance_fresh_cluster.sh` replaces st
   On a fresh cluster, `4.1_restore_cp4d_instance_fresh_cluster.sh` runs these for you (see above).
 - **Namespaces.** A restore goes into the same project names the backup came from. The restore script stops if those projects already exist, unless you pass `--force`.
 - **Settings you can override.** `OADP_PROJECT` (default `oadp-operator`), `OADP_DPA_NAME` (`cpd-dpa`), `OADP_OPERATOR_CHANNEL` (defaults to the channel the cluster's Red Hat catalog marks as default, e.g. `stable` → OADP 1.5 on OCP 4.21), `OADP_NODE_AGENT_TIMEOUT` (`72h`), `OADP_IMAGE_PREFIX`, `OADP_IMAGE_PREPULL_MINUTES` (`30`), `OADP_PLUGIN_IMAGE_FALLBACK` (`true`: a plugin image whose tag the registry lacks is swapped for the newest earlier tag in the same release line, e.g. `db2u-velero-plugin:5.4.0.7` → `5.4.0.6`; `--no-plugin-image-fallback` turns it off for one run) and the velero plugin images (`OADP_CPDBR_VELERO_PLUGIN_IMAGE`, `OADP_SWHUB_VELERO_PLUGIN_IMAGE`, `OADP_CPFS_OADP_PLUGIN_IMAGE`, `OADP_DB2U_VELERO_PLUGIN_IMAGE`) can go in `cpd_vars.sh` or the target config. If `PRIVATE_REGISTRY_LOCATION` is set, every cpd-cli oadp call gets `--private-registry-location`.
+- **OADP resource presets.** `2_install_oadp_br_utilities.sh --resources minimal|small|medium`, or `OADP_RESOURCE_PRESET` in the config, sets the CPU/memory requests for Velero, the node agents and the OADP operator. `4.1_…` takes it as `--oadp-resources`. Limits stay at the defaults (Velero 1 CPU / 4Gi, node agent 1 / 32Gi, operator 1 / 512Mi). With low requests, a backup or restore only slows down when the nodes are busy.
+
+  | Preset | Velero | Node agent (per node) | Operator | Requested on 2 workers |
+  | --- | --- | --- | --- | --- |
+  | `minimal` | 100m / 154Mi | 50m / 154Mi | 50m / 77Mi | ~0.3 CPU |
+  | `small` (default) | 600m / 154Mi | 300m / 154Mi | 300m / 77Mi | ~1.5 CPU |
+  | `medium` | 1 / 256Mi | 500m / 256Mi | 500m / 128Mi | ~2.5 CPU |
+
+  A new DPA or subscription always gets the preset. An existing one is only changed when the preset is given explicitly. The script then skips the DPA while a Velero backup or restore is running, because the change restarts Velero.
 - **Logs.** cpd-cli output is also written to `cpd-cli-workspace/oadp/` at the repo root. You can also run `cpd-cli oadp tenant-backup log <name>` or `cpd-cli oadp tenant-restore log <name>`.
 - **Extra flags.** Anything after `--` is passed straight to `tenant-backup create` or `tenant-restore create`, for example `-- --precheck-exclude-checks=EdbClustersInSync`.

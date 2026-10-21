@@ -61,6 +61,8 @@ set -euo pipefail
 #     --sync-timeout <minutes>    passed to 4_restore_cp4d_instance.sh
 #     --timeout <duration>        passed to 4_restore_cp4d_instance.sh
 #     --health-timeout <minutes>  passed to 4_restore_cp4d_instance.sh
+#     --oadp-resources <preset>   minimal | small | medium: OADP resource requests, passed to
+#                                 2_install_oadp_br_utilities.sh --resources (default there: small)
 #     --shared-kubeconfig         use your current kubeconfig instead of the target's own
 #     --yes                       do not ask for confirmation
 #     --list                      list the tenant backups the target sees (OADP must be set up), then exit
@@ -109,6 +111,7 @@ FROM_STEP=""
 PREPARE_ONLY=false
 FORCE=false
 RESTORE_PASS=()
+OADP_ARGS=()
 SHARED_KUBECONFIG=false
 ASSUME_YES=false
 LIST_ONLY=false
@@ -125,6 +128,11 @@ while [[ $# -gt 0 ]]; do
         --force)             FORCE=true; shift ;;
         --sync-timeout|--timeout|--health-timeout)
                              RESTORE_PASS+=("$1" "${2:?$1 needs a value}"); shift 2 ;;
+        --oadp-resources)
+            case "${2:-}" in
+                minimal|small|medium) OADP_ARGS=(--resources "$2"); shift 2 ;;
+                *) echo "[ERROR] --oadp-resources needs minimal, small or medium (got '${2:-}')." >&2; exit 1 ;;
+            esac ;;
         --shared-kubeconfig) SHARED_KUBECONFIG=true; shift ;;
         --yes)               ASSUME_YES=true; shift ;;
         --list)              LIST_ONLY=true; shift ;;
@@ -238,6 +246,15 @@ if step_selected restore && (( ${#EXISTING_NS} )) && [[ "${FORCE}" != "true" ]];
     exit 1
 fi
 
+# Restoring without this run's 'oadp' step: OADP must already be on the cluster.
+if step_selected restore && ! step_selected oadp \
+        && [[ -z "$(oc get dataprotectionapplications.oadp.openshift.io -n "${OADP_PROJECT}" -o name 2>/dev/null)" ]]; then
+    echo "[ERROR] OADP is not set up on ${OCP_URL} (no DPA in ${OADP_PROJECT}), and this run skips the 'oadp' step." >&2
+    echo "[ERROR] On a fresh cluster, run without --from to do the cluster setup and OADP first, or" >&2
+    echo "[ERROR] start earlier, e.g. --from oadp if the cluster setup steps were already done." >&2
+    exit 1
+fi
+
 OTHER_INSTANCES=(${(f)"$(oc get ibmcpd -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null || true)"})
 if (( ${#OTHER_INSTANCES} )); then
     echo "[WARN] Software Hub already runs on this cluster in: ${OTHER_INSTANCES[*]}. The cluster-wide steps will"
@@ -315,10 +332,10 @@ must_step cluster-components env AUTHORIZE_INSTANCE_TOPOLOGY=false \
                              "${PREP_DIR}/2.0-2.1_preliminary_setup/2.1_apply_shared_cluster_CASE_packages.sh"
 must_step prereq-operators   env MCG_SETUP_INSTANCE_SECRETS=false \
                              "${PREP_DIR}/2.2_install_prerequisite_operators/2.2_install_prerequisite_operators.sh"
-must_step oadp               "${SCRIPT_DIR}/2_install_oadp_br_utilities.sh" --target "${ENV_TARGET}" "${BUCKET_ARGS[@]}" --rbac-only
+must_step oadp               "${SCRIPT_DIR}/2_install_oadp_br_utilities.sh" --target "${ENV_TARGET}" "${BUCKET_ARGS[@]}" "${OADP_ARGS[@]}" --rbac-only
 must_step restore            "${SCRIPT_DIR}/4_restore_cp4d_instance.sh" "${RESTORE_ARGS[@]}"
 
-post_step oadp-full            "${SCRIPT_DIR}/2_install_oadp_br_utilities.sh" --target "${ENV_TARGET}" "${BUCKET_ARGS[@]}" --full
+post_step oadp-full            "${SCRIPT_DIR}/2_install_oadp_br_utilities.sh" --target "${ENV_TARGET}" "${BUCKET_ARGS[@]}" "${OADP_ARGS[@]}" --full
 post_step pull-secret-relink   "${INSTALL_DIR}/1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh"
 post_step mcg-secrets          "${PREP_DIR}/2.2_install_prerequisite_operators/2.2.4_install_multicloud_object_gateway_operator.sh"
 post_step admission-controller "${INSTALL_DIR}/3_install_softwarehub/3.3.2_softwarehub_admission_controller.sh"
