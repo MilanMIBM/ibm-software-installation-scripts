@@ -175,6 +175,37 @@ oadp_confirm() {
     [[ "${ans}" == "yes" ]] || { echo "[INFO] Aborted."; return 1; }
 }
 
+# oadp_progress <n> <total> <what>: progress through a long loop over cluster
+# objects; call it before each one. On a terminal it redraws one status line
+# ([n/total] what); in a log it prints a line at every 10%. oadp_progress_done
+# ends it - call it before printing anything mid-loop, so the message starts on
+# a clean line (the next oadp_progress redraws).
+_OADP_PROGRESS_ON=false
+_OADP_PROGRESS_STEP=-1
+oadp_progress() {
+    local n="$1" total="$2" what="$3" width step
+    (( total > 0 )) || return 0
+    if [[ -t 1 ]]; then
+        width="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
+        what="       [${n}/${total}] ${what}"
+        # Cut to the terminal width: a wrapped line could not be redrawn.
+        printf '\r\033[K%s' "${what[1,width-1]}"
+        _OADP_PROGRESS_ON=true
+    else
+        step=$(( n * 10 / total ))
+        (( step == _OADP_PROGRESS_STEP )) && return 0
+        _OADP_PROGRESS_STEP=${step}
+        echo "       [${n}/${total}] ${what}"
+    fi
+    return 0
+}
+oadp_progress_done() {
+    [[ "${_OADP_PROGRESS_ON}" == "true" ]] && printf '\r\033[K'
+    _OADP_PROGRESS_ON=false
+    _OADP_PROGRESS_STEP=-1
+    return 0
+}
+
 # Fail unless the oc session points at OCP_URL: these scripts change clusters,
 # so running against the wrong one is the main thing to guard against.
 oadp_check_cluster() {
@@ -665,16 +696,27 @@ _oadp_strip_finalizers() {
     done
 }
 
-# Last resort for a namespace stuck in Terminating: clear the finalizers of what
-# is inside it, then the namespace's own.
-_oadp_force_remove_namespace() {
-    local ns="$1" kind
-    echo "[WARN] ${ns} is still terminating; clearing the finalizers that hold it."
-    for kind in ${(f)"$(oc api-resources --verbs=list --namespaced -o name 2>/dev/null || true)"}; do
-        _oadp_strip_finalizers "${kind}" "${ns}"
+# Last resort for namespaces stuck in Terminating: clear the finalizers of what
+# is inside them, then the namespaces' own. One cluster-wide list per kind (not
+# one per kind per namespace), and only objects that have finalizers are patched.
+_oadp_force_remove_namespaces() {
+    local kind ns obj fin i=0
+    local -a nss=("$@") kinds
+    echo "[WARN] Still terminating: ${nss[*]}; clearing the finalizers that hold them."
+    kinds=(${(f)"$(oc api-resources --verbs=list --namespaced -o name 2>/dev/null || true)"})
+    for kind in "${kinds[@]}"; do
+        oadp_progress $(( ++i )) ${#kinds} "${kind}"
+        oc get "${kind}" -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{" "}{.metadata.finalizers}{"\n"}{end}' 2>/dev/null \
+            | while read -r ns obj fin; do
+                [[ -n "${fin}" ]] && (( ${nss[(Ie)${ns}]} )) || continue
+                oc patch "${kind}" "${obj}" -n "${ns}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+            done || true
     done
-    oc get namespace "${ns}" -o json 2>/dev/null | jq '.spec.finalizers = []' \
-        | oc replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+    oadp_progress_done
+    for ns in "${nss[@]}"; do
+        oc get namespace "${ns}" -o json 2>/dev/null | jq '.spec.finalizers = []' \
+            | oc replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+    done
 }
 
 # Stop the restore scripts in OADP_OTHER_RESTORE_PIDS (and what they started).
@@ -744,7 +786,7 @@ oadp_delete_namespaces() {
         elapsed=$(( SECONDS - start ))
         if (( elapsed > 120 )) && [[ "${forced}" != "true" ]]; then
             forced=true
-            for ns in "${left[@]}"; do _oadp_force_remove_namespace "${ns}"; done
+            _oadp_force_remove_namespaces "${left[@]}"
         fi
         if (( elapsed > timeout_min * 60 )); then
             echo "[ERROR] ${left[*]} still exist(s) after ${timeout_min}m. Check: oc get namespace ${left[1]} -o yaml" >&2

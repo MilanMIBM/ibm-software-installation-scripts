@@ -69,7 +69,7 @@ CLASSIFIER="${REPO_ROOT}/src/helpers/oadp_cluster_changes.py"
 
 SECONDS=0
 DUMP_DIR=""
-trap '[[ -n "${DUMP_DIR}" ]] && rm -rf "${DUMP_DIR}"; (( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
+trap 'oadp_progress_done; [[ -n "${DUMP_DIR}" ]] && rm -rf "${DUMP_DIR}"; (( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
 
 TARGET=""
 SCOPE=restore
@@ -214,17 +214,22 @@ fi
 echo "[INFO] Reading the cluster..."
 DUMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/oadp-uninstall.XXXXXX")"
 chmod 700 "${DUMP_DIR}"
-for r in "${OADP_CHANGE_RESOURCES[@]}" persistentvolumes; do
+READ_KINDS=("${OADP_CHANGE_RESOURCES[@]}" persistentvolumes)
+i=0
+for r in "${READ_KINDS[@]}"; do
+    oadp_progress $(( ++i )) ${#READ_KINDS} "${r}"
     if ! oc get "${r}" -A -o json > "${DUMP_DIR}/${r}.json" 2>"${DUMP_DIR}/err"; then
         # A kind the cluster does not have is fine; a failed read would make the plan wrong.
         if grep -q "doesn't have a resource type" "${DUMP_DIR}/err"; then
             : > "${DUMP_DIR}/${r}.json"
             continue
         fi
+        oadp_progress_done
         echo "[ERROR] Could not read ${r}: $(cat "${DUMP_DIR}/err")" >&2
         exit 1
     fi
 done
+oadp_progress_done
 
 INSTANCE_NS=("${PROJECT_CPD_INST_OPERATORS}" "${PROJECT_CPD_INST_OPERANDS}")
 PLAN_FILE="$(oadp_log_file "uninstall-${TARGET_BASE}-${SCOPE}")"
@@ -410,7 +415,23 @@ nsflag() { reply=(); [[ -n "$1" ]] && reply=(-n "$1"); return 0; }
 del() {  # del <resource> <namespace or ''> <name>
     nsflag "$2"
     oc delete "$1" "$3" "${reply[@]}" --ignore-not-found --wait=false >/dev/null 2>&1 \
-        || echo "[WARN] Could not delete $1 ${2:+$2/}$3" >&2
+        || { oadp_progress_done; echo "[WARN] Could not delete $1 ${2:+$2/}$3" >&2; }
+}
+# del_entries <res|ns|name|reason>...: del each one, with progress.
+del_entries() {
+    local e res ns nm i=0
+    for e in "$@"; do
+        res="${e%%|*}"; e="${e#*|}"; ns="${e%%|*}"; e="${e#*|}"; nm="${e%%|*}"
+        oadp_progress $(( ++i )) $# "${res%%.*}/${ns:+${ns}/}${nm}"
+        del "${res}" "${ns}" "${nm}"
+    done
+    oadp_progress_done
+}
+# first_few <names...>: the first three, and how many more.
+first_few() {
+    local s="${(j:, :)@[1,3]}"
+    (( $# > 3 )) && s+=" and $(( $# - 3 )) more"
+    print -r -- "${s}"
 }
 crd_instances() {
     oc get "$1" -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null || true
@@ -425,23 +446,44 @@ strip_crd_instances() {
         fi
     done
 }
-# wait_crd_instances_gone <seconds>: true when no instance of P_CRD is left.
+# strip_all_crd_instances <crd>...: strip_crd_instances each one, with progress.
+strip_all_crd_instances() {
+    local c i=0
+    for c in "$@"; do
+        oadp_progress $(( ++i )) $# "clearing finalizers: ${c}"
+        strip_crd_instances "${c}"
+    done
+    oadp_progress_done
+}
+# wait_crd_instances_gone <seconds>: true once no instance of P_CRD is left.
+# After the first pass only the CRDs that still had some are checked again;
+# CRD_LEFT holds those.
 wait_crd_instances_gone() {
-    local i c left
-    for (( i = 0; i < $1; i += 10 )); do
-        left=0
-        for c in "${P_CRD[@]}"; do [[ -n "$(crd_instances "${c}")" ]] && (( ++left )); done
-        (( left == 0 )) && return 0
+    local start=${SECONDS} last=-20 c i
+    local -a todo
+    CRD_LEFT=("${P_CRD[@]}")
+    while true; do
+        todo=("${CRD_LEFT[@]}") CRD_LEFT=() i=0
+        for c in "${todo[@]}"; do
+            oadp_progress $(( ++i )) ${#todo} "checking ${c}"
+            [[ -n "$(crd_instances "${c}")" ]] && CRD_LEFT+=("${c}")
+        done
+        oadp_progress_done
+        (( ${#CRD_LEFT} == 0 )) && return 0
+        (( SECONDS - start >= $1 )) && return 1
+        if (( SECONDS - start - last >= 20 )); then
+            last=$(( SECONDS - start ))
+            echo "[INFO] Waiting for the custom resources of ${#CRD_LEFT} CRD(s) to finish deleting (${last}s): $(first_few "${CRD_LEFT[@]}")"
+        fi
         sleep 10
     done
-    return 1
 }
 
 oadp_stop_restore_scripts
 
 if (( ${#P_WEBHOOK} )); then
     echo "[INFO] Removing ${#P_WEBHOOK} webhook configuration(s)"
-    for e in "${P_WEBHOOK[@]}"; do del "${e%%|*}" "" "${${e#*|*|}%%|*}"; done
+    del_entries "${P_WEBHOOK[@]}"
 fi
 
 if [[ "${OADP_NS_GOES}" == "true" ]]; then
@@ -455,10 +497,18 @@ fi
 
 if (( ${#P_CRD} )); then
     echo "[INFO] Removing the custom resources of ${#P_CRD} CRD(s) while their operators still run"
-    for c in "${P_CRD[@]}"; do oc delete "${c}" --all -A --wait=false >/dev/null 2>&1 || true; done
-    if ! wait_crd_instances_gone 180; then
-        echo "[WARN] Some custom resources are still finalizing after 3m; clearing their finalizers."
-        for c in "${P_CRD[@]}"; do strip_crd_instances "${c}"; done
+    i=0
+    for c in "${P_CRD[@]}"; do
+        oadp_progress $(( ++i )) ${#P_CRD} "${c}"
+        oc delete "${c}" --all -A --wait=false >/dev/null 2>&1 || true
+    done
+    oadp_progress_done
+    echo "[INFO] Waiting up to 3m for the custom resources to finish deleting"
+    if wait_crd_instances_gone 180; then
+        echo "[OK] Custom resources deleted"
+    else
+        echo "[WARN] Custom resources of ${#CRD_LEFT} CRD(s) are still finalizing; clearing their finalizers: $(first_few "${CRD_LEFT[@]}")"
+        strip_all_crd_instances "${CRD_LEFT[@]}"
     fi
 fi
 
@@ -468,28 +518,45 @@ fi
 
 if (( ${#P_OLM} )); then
     echo "[INFO] Removing ${#P_OLM} operator object(s) in projects that stay"
-    for e in "${P_OLM[@]}"; do
-        res="${e%%|*}"; e="${e#*|}"; ns="${e%%|*}"; e="${e#*|}"
-        del "${res}" "${ns}" "${e%%|*}"
-    done
+    del_entries "${P_OLM[@]}"
 fi
 
 if (( ${#P_CRD} )); then
     echo "[INFO] Removing ${#P_CRD} CRD(s)"
-    for c in "${P_CRD[@]}"; do del customresourcedefinitions.apiextensions.k8s.io "" "${c}"; done
-    for (( i = 0; i < 120; i += 10 )); do
-        left=()
-        for c in "${P_CRD[@]}"; do oc get crd "${c}" >/dev/null 2>&1 && left+=("${c}"); done
+    i=0
+    for c in "${P_CRD[@]}"; do
+        oadp_progress $(( ++i )) ${#P_CRD} "${c}"
+        del customresourcedefinitions.apiextensions.k8s.io "" "${c}"
+    done
+    oadp_progress_done
+    t0=${SECONDS} last=-20 stripped=false
+    while true; do
+        existing=(${=$(oc get crd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)})
+        left=(${P_CRD:*existing})
         (( ${#left} == 0 )) && break
-        (( i == 60 )) && for c in "${left[@]}"; do strip_crd_instances "${c}"; done
+        waited=$(( SECONDS - t0 ))
+        (( waited >= 120 )) && break
+        if (( waited >= 60 )) && [[ "${stripped}" != "true" ]]; then
+            stripped=true
+            echo "[INFO] ${#left} CRD(s) still terminating after ${waited}s; clearing the finalizers of their custom resources"
+            strip_all_crd_instances "${left[@]}"
+        elif (( waited - last >= 20 )); then
+            last=${waited}
+            echo "[INFO] Waiting for ${#left} CRD(s) to terminate (${waited}s): $(first_few "${left[@]}")"
+        fi
         sleep 10
     done
-    (( ${#left} )) && { echo "[WARN] CRD(s) still terminating: ${left[*]}" >&2; FAILED+=("crds"); }
+    if (( ${#left} )); then
+        echo "[WARN] CRD(s) still terminating: ${left[*]}" >&2
+        FAILED+=("crds")
+    else
+        echo "[OK] CRDs deleted"
+    fi
 fi
 
 if (( ${#P_CLUSTER} )); then
     echo "[INFO] Removing ${#P_CLUSTER} other cluster-scoped object(s)"
-    for e in "${P_CLUSTER[@]}"; do del "${e%%|*}" "" "${${e#*|*|}%%|*}"; done
+    del_entries "${P_CLUSTER[@]}"
 fi
 
 if [[ -n "${CONSOLE_PLUGINS_NEW}" ]]; then
@@ -524,14 +591,21 @@ done
 # ------------------------------------------------------------------------------
 # Check
 # ------------------------------------------------------------------------------
+echo "[INFO] Checking that everything listed is gone"
 LEFT=()
-for ns in "${P_NS[@]}"; do oc get namespace "${ns}" >/dev/null 2>&1 && LEFT+=("namespace/${ns}"); done
-for e in "${P_WEBHOOK[@]}" "${P_OLM[@]}" "${P_CLUSTER[@]}"; do
+existing=(${=$(oc get namespace -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)})
+for ns in ${P_NS:*existing}; do LEFT+=("namespace/${ns}"); done
+CHECK=("${P_WEBHOOK[@]}" "${P_OLM[@]}" "${P_CLUSTER[@]}")
+i=0
+for e in "${CHECK[@]}"; do
     res="${e%%|*}"; e="${e#*|}"; ns="${e%%|*}"; e="${e#*|}"; nm="${e%%|*}"
+    oadp_progress $(( ++i )) ${#CHECK} "${res%%.*}/${ns:+${ns}/}${nm}"
     nsflag "${ns}"
     oc get "${res}" "${nm}" "${reply[@]}" >/dev/null 2>&1 && LEFT+=("${res%%.*}/${ns:+${ns}/}${nm}")
 done
-for c in "${P_CRD[@]}"; do oc get crd "${c}" >/dev/null 2>&1 && LEFT+=("crd/${c}"); done
+oadp_progress_done
+existing=(${=$(oc get crd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)})
+for c in ${P_CRD:*existing}; do LEFT+=("crd/${c}"); done
 
 echo ""
 if (( ${#LEFT} )); then
