@@ -19,6 +19,10 @@ OVERWRITE_CURRENT_SECRET="${OVERWRITE_CURRENT_SECRET:-true}"
 PULL_SECRET_NAME="${PULL_SECRET_NAME:-pull-secret}"
 PULL_SECRET_NAMESPACE="${PULL_SECRET_NAMESPACE:-openshift-config}"
 
+# Set to false to leave out the instance projects (operators/operands): a tenant
+# restore onto a fresh cluster recreates them itself and refuses if they exist.
+SETUP_INSTANCE_PROJECTS="${SETUP_INSTANCE_PROJECTS:-true}"
+
 # --- Create projects in the cluster
 eval "${OC_LOGIN}"
 
@@ -100,8 +104,12 @@ setup_project "${PROJECT_SCHEDULING_SERVICE:-}"
 setup_project "${PROJECT_IBM_EVENTS:-}"
 setup_project "${PROJECT_PRIVILEGED_MONITORING_SERVICE:-}"
 
-setup_project "${PROJECT_CPD_INST_OPERATORS:-}"
-setup_project "${PROJECT_CPD_INST_OPERANDS:-}"
+if [[ "${SETUP_INSTANCE_PROJECTS}" == "true" ]]; then
+    setup_project "${PROJECT_CPD_INST_OPERATORS:-}"
+    setup_project "${PROJECT_CPD_INST_OPERANDS:-}"
+else
+    echo "[INFO] SETUP_INSTANCE_PROJECTS=false - not creating ${PROJECT_CPD_INST_OPERATORS:-} / ${PROJECT_CPD_INST_OPERANDS:-}."
+fi
 
 # --- Additional non-standard projects
 # Add any extra namespaces here that are not covered by the standard CPD variables above.

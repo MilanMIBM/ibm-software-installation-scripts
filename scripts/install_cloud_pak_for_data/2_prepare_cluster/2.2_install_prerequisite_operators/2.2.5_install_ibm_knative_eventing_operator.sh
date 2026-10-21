@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
 
-[[ -n "${PROJECT_IBM_EVENTS}" ]] || { echo "[INFO] PROJECT_IBM_EVENTS is not set - skipping IBM Knative Eventing install."; exit 0; }
+[[ -n "${PROJECT_IBM_EVENTS:-}" ]] || { echo "[INFO] PROJECT_IBM_EVENTS is not set - skipping IBM Knative Eventing install."; exit 0; }
 
 eval "${OC_LOGIN}"
 

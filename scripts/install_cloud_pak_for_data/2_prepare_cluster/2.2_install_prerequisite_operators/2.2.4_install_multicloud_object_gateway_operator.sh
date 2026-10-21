@@ -107,6 +107,15 @@ fi
 echo "[INFO] Using credentials secret: ${NOOBAA_ACCOUNT_CREDENTIALS_SECRET}"
 echo "[INFO] Using certificate secret:  ${NOOBAA_ACCOUNT_CERTIFICATE_SECRET}"
 
+# Set MCG_SETUP_INSTANCE_SECRETS=false to stop here, before anything is written
+# to the operands project (e.g. before a tenant restore onto a fresh cluster,
+# which recreates that project; re-run afterwards to point the restored secrets
+# at this cluster's NooBaa).
+if [[ "${MCG_SETUP_INSTANCE_SECRETS:-true}" != "true" ]]; then
+    echo "[INFO] MCG_SETUP_INSTANCE_SECRETS=false - skipping setup-mcg for ${PROJECT_CPD_INST_OPERANDS}."
+    exit 0
+fi
+
 # ------------------------------------------------------------------------------
 # Step 3: Create the MCG secrets for every dependent component
 # ------------------------------------------------------------------------------

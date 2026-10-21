@@ -15,7 +15,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 
 
 PARAM_FILE_FLAG=()
-if [[ -n "${INSTALL_OPTIONS}" ]]; then
+if [[ -n "${INSTALL_OPTIONS:-}" ]]; then
     PARAM_FILE_FLAG=(--param-file="${CPD_CONFIG_PATH_CONTAINER}/${INSTALL_OPTIONS_FILE}")
 fi
 
@@ -76,10 +76,17 @@ for _c in "${_all_components[@]}"; do
     esac
 done
 
-cpd-cli manage authorize-instance-topology \
-    --operator_ns=${PROJECT_CPD_INST_OPERATORS} \
-    --instance_ns=${PROJECT_CPD_INST_OPERANDS} \
-    --verbose
+# Set AUTHORIZE_INSTANCE_TOPOLOGY=false to skip it: it works in the instance
+# projects, which a tenant restore onto a fresh cluster brings back (with this
+# RBAC in them) and which must not exist before it.
+if [[ "${AUTHORIZE_INSTANCE_TOPOLOGY:-true}" == true ]]; then
+    cpd-cli manage authorize-instance-topology \
+        --operator_ns=${PROJECT_CPD_INST_OPERATORS} \
+        --instance_ns=${PROJECT_CPD_INST_OPERANDS} \
+        --verbose
+else
+    echo "[INFO] AUTHORIZE_INSTANCE_TOPOLOGY=false - skipping authorize-instance-topology."
+fi
 
 
 # Apply cluster-wide components (License Service + cert-manager) if ibm-licensing is listed

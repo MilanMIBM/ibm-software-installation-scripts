@@ -63,7 +63,9 @@ fi
 # exists, copy its auth to the other.
 # ------------------------------------------------------------------------------
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-PULL_SECRET_FILE="${REPO_ROOT}/configs/cp4d_config/pull-secret.dockerconfigjson"
+# Overridable so a run against another cluster (e.g. a restore target) does not
+# replace this cluster's saved copy.
+PULL_SECRET_FILE="${PULL_SECRET_FILE:-${REPO_ROOT}/configs/cp4d_config/pull-secret.dockerconfigjson}"
 
 _raw_secret="$(oc get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 --decode)" || true
 
