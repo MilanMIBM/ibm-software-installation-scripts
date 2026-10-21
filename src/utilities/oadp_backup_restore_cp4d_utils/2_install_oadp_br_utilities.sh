@@ -12,8 +12,10 @@ set -euo pipefail
 #   1. the OADP project and the Red Hat OADP operator (OLM subscription on the
 #      catalog's default channel; see the note at that step for why not cpd-cli)
 #   2. the object storage credentials secret and the DataProtectionApplication
-#      (cpd-cli oadp dpa create, node agent with kopia, IBM velero plugins), then
-#      waits for the backup storage location to be Available
+#      (cpd-cli oadp dpa create, node agent with kopia, IBM velero plugins, whose
+#      images are checked against the registry, with a fallback for a missing
+#      tag, and pulled onto the workers first), then waits for the backup
+#      storage location to be Available
 #   3. cpdbr-tenant in the instance's operators project (cpd-cli oadp install --component=cpdbr-tenant)
 #   4. the Backup Restore Orchestration service (cpd-cli manage install-components --components=br_orchestration)
 #   5. optionally cpdbr-agent (--with-agent)
@@ -32,8 +34,9 @@ set -euo pipefail
 #
 # Safe to re-run. An existing DPA is kept (its bucket is checked against the
 # bucket config) unless --recreate-dpa. OADP_PROJECT (default oadp-operator),
-# OADP_DPA_NAME (cpd-dpa) and OADP_OPERATOR_CHANNEL (the catalog's default) can
-# be set in the loaded config.
+# OADP_DPA_NAME (cpd-dpa), OADP_OPERATOR_CHANNEL (the catalog's default),
+# OADP_IMAGE_PREPULL_MINUTES (30), OADP_PLUGIN_IMAGE_FALLBACK (true) and
+# OADP_<PLUGIN>_PLUGIN_IMAGE (see step 2) can be set in the loaded config.
 #
 #   2_install_oadp_br_utilities.sh [options]
 #     --bucket <name|path>        bucket config (optional when there is only one)
@@ -43,7 +46,13 @@ set -euo pipefail
 #     --recreate-dpa              delete the DPA(s) in OADP_PROJECT and create a new one
 #     --skip-oadp-operator        OADP is installed some other way; only check its CSV
 #     --skip-br-orchestration     do not install the br_orchestration component
-#     --upgrade                   reinstall br_orchestration even when its CR exists
+#     --skip-image-prepull        do not pull the velero plugin images onto the workers before the DPA
+#     --no-plugin-image-fallback  use cpd-cli's plugin images even when the registry lacks their tag
+#                                 (by default such an image is swapped for the newest earlier tag in
+#                                 the same release line, e.g. 5.4.0.7 -> 5.4.0.6, in a new or the
+#                                 existing DPA). OADP_PLUGIN_IMAGE_FALLBACK=false in the config does
+#                                 the same; --plugin-image-fallback turns it back on.
+#     --upgrade                  reinstall br_orchestration even when its CR exists
 #     --snapshot-move-data        turn on the snapshot data mover, so online backups upload their CSI
 #                                 snapshots to the bucket (DPA defaultSnapshotMoveData), and label one
 #                                 VolumeSnapshotClass per CSI driver the instance uses for Velero.
@@ -70,6 +79,9 @@ WITH_AGENT=false
 RECREATE_DPA=false
 SKIP_OADP_OPERATOR=false
 SKIP_BR_ORCHESTRATION=false
+SKIP_IMAGE_PREPULL=false
+# Empty: OADP_PLUGIN_IMAGE_FALLBACK from the config, else true (picked up after the env load).
+PLUGIN_IMAGE_FALLBACK=""
 UPGRADE=false
 # Empty: leave the DPA's setting alone. OADP_SNAPSHOT_MOVE_DATA in the loaded
 # config only applies when the env is loaded, so it is picked up further down.
@@ -84,6 +96,9 @@ while [[ $# -gt 0 ]]; do
         --recreate-dpa)          RECREATE_DPA=true; shift ;;
         --skip-oadp-operator)    SKIP_OADP_OPERATOR=true; shift ;;
         --skip-br-orchestration) SKIP_BR_ORCHESTRATION=true; shift ;;
+        --skip-image-prepull)    SKIP_IMAGE_PREPULL=true; shift ;;
+        --plugin-image-fallback)    PLUGIN_IMAGE_FALLBACK=true; shift ;;
+        --no-plugin-image-fallback) PLUGIN_IMAGE_FALLBACK=false; shift ;;
         --upgrade)               UPGRADE=true; shift ;;
         --snapshot-move-data)    SNAPSHOT_MOVE_DATA=true; shift ;;
         --no-snapshot-move-data) SNAPSHOT_MOVE_DATA=false; shift ;;
@@ -107,6 +122,11 @@ oadp_require_vars OCP_URL OC_LOGIN OADP_PROJECT PROJECT_CPD_INST_OPERATORS PROJE
 [[ -z "${SNAPSHOT_MOVE_DATA}" ]] && SNAPSHOT_MOVE_DATA="${OADP_SNAPSHOT_MOVE_DATA:-}"
 if [[ -n "${SNAPSHOT_MOVE_DATA}" && "${SNAPSHOT_MOVE_DATA}" != "true" && "${SNAPSHOT_MOVE_DATA}" != "false" ]]; then
     echo "[ERROR] OADP_SNAPSHOT_MOVE_DATA must be true or false (got '${SNAPSHOT_MOVE_DATA}')." >&2
+    exit 1
+fi
+[[ -z "${PLUGIN_IMAGE_FALLBACK}" ]] && PLUGIN_IMAGE_FALLBACK="${OADP_PLUGIN_IMAGE_FALLBACK:-true}"
+if [[ "${PLUGIN_IMAGE_FALLBACK}" != "true" && "${PLUGIN_IMAGE_FALLBACK}" != "false" ]]; then
+    echo "[ERROR] OADP_PLUGIN_IMAGE_FALLBACK must be true or false (got '${PLUGIN_IMAGE_FALLBACK}')." >&2
     exit 1
 fi
 oadp_registry_flags
@@ -232,6 +252,10 @@ fi
 
 if (( ${#EXISTING_DPAS} )); then
     echo "[SKIP] DPA already present: ${EXISTING_DPAS[*]} (use --recreate-dpa to replace it)"
+    PLUGIN_IMAGES=(${=$(oc get dataprotectionapplications.oadp.openshift.io -n "${OADP_PROJECT}" \
+        -o jsonpath='{range .items[*]}{.spec.configuration.velero.customPlugins[*].image}{" "}{end}')})
+    PLUGIN_IMAGES=("${(@u)PLUGIN_IMAGES}")
+    EXPLICIT_PLUGIN_IMAGES=()
 else
     BSL_CONFIG="region=${OADP_S3_REGION},s3ForcePathStyle=${OADP_S3_FORCE_PATH_STYLE}"
     [[ -n "${OADP_S3_URL}" ]] && BSL_CONFIG+=",s3Url=${OADP_S3_URL}"
@@ -246,12 +270,77 @@ else
         --uploader-type=kopia
         # Offline backups copy volume data file by file; large volumes need longer than the 4h default.
         --node-agent-timeout="${OADP_NODE_AGENT_TIMEOUT:-72h}"
-        --wait
-        --wait-timeout=15m
     )
     [[ -n "${OADP_S3_CACERT_FILE:-}" ]] && DPA_FLAGS+=(--cacert="${OADP_S3_CACERT_FILE}")
+    # OADP_CPDBR_VELERO_PLUGIN_IMAGE, OADP_SWHUB_VELERO_PLUGIN_IMAGE,
+    # OADP_CPFS_OADP_PLUGIN_IMAGE and OADP_DB2U_VELERO_PLUGIN_IMAGE replace
+    # cpd-cli's built-in plugin images (they are tagged with the cpd-cli version,
+    # which the registry does not always carry: cpd-cli 5.4.0.7 asks for
+    # db2u-velero-plugin:5.4.0.7, but icr.io stops at 5.4.0.6). Images set
+    # this way are used as given, never swapped by the fallback below.
+    EXPLICIT_PLUGIN_IMAGES=()
+    for _p in cpdbr-velero swhub-velero cpfs-oadp db2u-velero; do
+        _v="OADP_${${_p:u}//-/_}_PLUGIN_IMAGE"
+        [[ -n "${(P)_v:-}" ]] || continue
+        DPA_FLAGS+=(--${_p}-plugin-image="${(P)_v}")
+        EXPLICIT_PLUGIN_IMAGES+=("${(P)_v}")
+    done
+    # The plugins the DPA will reference, as <name>=<image>, from cpd-cli
+    # itself. If the dry run fails, the real create below fails the same way,
+    # on screen.
+    PLUGIN_SPECS=(${=$(cpd-cli oadp dpa create "${OADP_DPA_NAME}" "${DPA_FLAGS[@]}" "${OADP_REGISTRY_FLAGS[@]}" --dry-run 2>>"${LOG_FILE}" \
+        | oc create --dry-run=client -f - -o jsonpath='{range .spec.configuration.velero.customPlugins[*]}{.name}{"="}{.image}{" "}{end}' || true)})
+    PLUGIN_IMAGES=("${(@)PLUGIN_SPECS#*=}")
+fi
+
+# Plugin image fallback (on by default): a plugin image whose tag the registry
+# does not have is swapped for the newest earlier tag of the same release line
+# (db2u-velero-plugin:5.4.0.7 -> :5.4.0.6). A new DPA is created with the
+# swapped images; an existing one has them patched in, which rolls velero.
+if [[ "${PLUGIN_IMAGE_FALLBACK}" == "true" ]]; then
+    oadp_find_image_fallbacks "${(@)PLUGIN_IMAGES:|EXPLICIT_PLUGIN_IMAGES}"
+    if (( ${#OADP_IMAGE_FALLBACKS} )); then
+        if (( ${#EXISTING_DPAS} )); then
+            for _dpa in "${EXISTING_DPAS[@]}"; do
+                _imgs=(${=$(oc get "${_dpa}" -n "${OADP_PROJECT}" -o jsonpath='{.spec.configuration.velero.customPlugins[*].image}')})
+                for (( _i = 1; _i <= ${#_imgs}; _i++ )); do
+                    _new="${OADP_IMAGE_FALLBACKS[${_imgs[_i]}]:-}"
+                    [[ -n "${_new}" ]] || continue
+                    oc patch "${_dpa}" -n "${OADP_PROJECT}" --type=json \
+                        -p "[{\"op\":\"replace\",\"path\":\"/spec/configuration/velero/customPlugins/$(( _i - 1 ))/image\",\"value\":\"${_new}\"}]" >/dev/null
+                    echo "[OK] ${_dpa}: plugin image ${_imgs[_i]} -> ${_new}"
+                done
+            done
+        else
+            for _s in "${PLUGIN_SPECS[@]}"; do
+                _new="${OADP_IMAGE_FALLBACKS[${_s#*=}]:-}"
+                [[ -n "${_new}" ]] && DPA_FLAGS+=(--${_s%%=*}-image="${_new}")
+            done
+        fi
+        for (( _i = 1; _i <= ${#PLUGIN_IMAGES}; _i++ )); do
+            PLUGIN_IMAGES[_i]="${OADP_IMAGE_FALLBACKS[${PLUGIN_IMAGES[_i]}]:-${PLUGIN_IMAGES[_i]}}"
+        done
+    fi
+fi
+
+# Velero's pod pulls each plugin image in turn as an init container, and from
+# icr.io that can outlast 'dpa create --wait'. Pulling them onto the workers
+# first, in parallel, leaves that wait with nothing to download, and an image
+# that does not exist fails here, by name, not as a velero pod stuck in
+# ImagePullBackOff.
+if [[ "${SKIP_IMAGE_PREPULL}" == "true" ]]; then
+    echo "[SKIP] Velero plugin image pre-pull (--skip-image-prepull)"
+elif ! oadp_prepull_images $(( ${OADP_IMAGE_PREPULL_MINUTES:-30} * 60 )) "${PLUGIN_IMAGES[@]}"; then
+    echo "[ERROR] Point the failing plugin at an image that exists in the config, e.g." >&2
+    echo "[ERROR]   OADP_DB2U_VELERO_PLUGIN_IMAGE=icr.io/db2u/db2u-velero-plugin:5.4.0.6" >&2
+    (( ${#EXISTING_DPAS} )) && echo "[ERROR] and re-run with --recreate-dpa (an existing DPA keeps the images it was created with)." >&2
+    exit 1
+fi
+
+if (( ! ${#EXISTING_DPAS} )); then
     echo "[INFO] Creating DPA ${OADP_DPA_NAME} for s3://${OADP_BUCKET_NAME}/${OADP_BUCKET_PREFIX}"
-    cpd-cli oadp dpa create "${OADP_DPA_NAME}" "${DPA_FLAGS[@]}" "${OADP_REGISTRY_FLAGS[@]}" --log-level=debug --verbose 2>&1 | tee -a "${LOG_FILE}"
+    cpd-cli oadp dpa create "${OADP_DPA_NAME}" "${DPA_FLAGS[@]}" "${OADP_REGISTRY_FLAGS[@]}" \
+        --wait --wait-timeout=15m --log-level=debug --verbose 2>&1 | tee -a "${LOG_FILE}"
 fi
 
 # Snapshot data mover (opt-in): makes online backups upload their CSI snapshot

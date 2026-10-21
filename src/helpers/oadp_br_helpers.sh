@@ -194,6 +194,153 @@ oadp_registry_flags() {
     return 0
 }
 
+# Schedulable worker nodes, one per line: where velero and the node agent run.
+oadp_worker_nodes() {
+    oc get nodes -l node-role.kubernetes.io/worker \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.unschedulable}{"\n"}{end}' | awk '$2 != "true" {print $1}'
+}
+
+# Runs on a node (bash, as root): for each image argument, prints 'OK <image>'
+# when the registry has it, else 'MISSING <image> <tag>...' with the tags its
+# repository does have. skopeo uses the node's pull secret and registry
+# mirrors, as CRI-O does when it pulls.
+_OADP_TAG_CHECK_NODE_SCRIPT='
+auth=/var/lib/kubelet/config.json
+for i in "$@"; do
+    if skopeo inspect --raw --authfile "$auth" "docker://$i" >/dev/null 2>&1; then echo "OK $i"; continue; fi
+    echo "MISSING $i $(skopeo list-tags --authfile "$auth" "docker://${i%:*}" 2>/dev/null \
+        | tr -d " \n\"" | sed -n "s/.*Tags:\[\([^]]*\)\].*/\1/p" | tr , " ")"
+done'
+
+# _oadp_version_le <a> <b>: true when dotted numeric version a <= b (5.4.0 == 5.4.0.0).
+_oadp_version_le() {
+    local -a a=(${(s:.:)1}) b=(${(s:.:)2})
+    local i
+    for (( i = 1; i <= ${#a} || i <= ${#b}; i++ )); do
+        (( ${a[i]:-0} < ${b[i]:-0} )) && return 0
+        (( ${a[i]:-0} > ${b[i]:-0} )) && return 1
+    done
+    return 0
+}
+
+# oadp_find_image_fallbacks <image>...
+# For each image tagged with a dotted version (e.g. ...:5.4.0.7) that the
+# registry does not have, finds the newest tag of the same repository in the
+# same major.minor line that is not newer than the requested one (5.4.0.6, say;
+# never 5.3.x or 5.5.x, and never an -amd64 / -prod-NNN style tag). Fills the
+# global assoc array OADP_IMAGE_FALLBACKS (missing image -> replacement); images
+# that exist, have no such tag, or are not version-tagged (:latest, @sha256)
+# are left out. Asks the registry from a worker node.
+oadp_find_image_fallbacks() {
+    typeset -gA OADP_IMAGE_FALLBACKS=()
+    local -a check nodes lines words
+    local img tag line t best line_mm checked=0
+    local ver='^[0-9]+(\.[0-9]+)+$'
+    for img in "$@"; do
+        [[ "${img}" != *@* && "${img##*/}" == *:* && "${img##*:}" =~ ${ver} ]] && check+=("${img}")
+    done
+    (( ${#check} )) || return 0
+    nodes=(${(f)"$(oadp_worker_nodes)"})
+    if (( ! ${#nodes} )); then
+        echo "[WARN] No schedulable worker node to check plugin image tags from; using the images as they are"
+        return 0
+    fi
+    lines=(${(f)"$(oc debug "node/${nodes[1]}" -q -- chroot /host sh -c "${_OADP_TAG_CHECK_NODE_SCRIPT}" sh "${check[@]}" 2>/dev/null || true)"})
+    for line in "${lines[@]}"; do
+        words=(${=line})
+        [[ "${words[1]}" == (OK|MISSING) ]] && (( ++checked ))
+        [[ "${words[1]}" == MISSING ]] || continue
+        img="${words[2]}"; tag="${img##*:}"; best=""
+        line_mm="${(j:.:)${(s:.:)tag}[1,2]}"
+        for t in "${(@)words[3,-1]}"; do
+            [[ "${t}" =~ ${ver} && "${(j:.:)${(s:.:)t}[1,2]}" == "${line_mm}" ]] || continue
+            _oadp_version_le "${t}" "${tag}" || continue
+            if [[ -z "${best}" ]] || _oadp_version_le "${best}" "${t}"; then best="${t}"; fi
+        done
+        if [[ -n "${best}" ]]; then
+            OADP_IMAGE_FALLBACKS[${img}]="${img%:*}:${best}"
+            echo "[INFO] ${img} is not in the registry; using ${best}, the newest ${line_mm}.x tag before ${tag}"
+        else
+            echo "[WARN] ${img} is not in the registry, and it has no earlier ${line_mm}.x tag to fall back to"
+        fi
+    done
+    if (( checked < ${#check} )); then
+        echo "[WARN] Could not check the plugin image tags from node ${nodes[1]}; using the images as they are"
+    fi
+    return 0
+}
+
+# Runs on a node (bash, as root): pulls each image given as an argument, all in
+# parallel, skipping images the node already has. Prints one FAILED line per
+# image that cannot be pulled and exits non-zero if any could not.
+_OADP_PREPULL_NODE_SCRIPT='
+rc=0; pids=""
+for i in "$@"; do
+    ( crictl inspecti -q "$i" >/dev/null 2>&1 && exit 0
+      out="$(crictl pull "$i" 2>&1)" && exit 0
+      echo "FAILED $i: $(printf "%s" "$out" | tail -1)"; exit 1 ) &
+    pids="$pids $!"
+done
+for p in $pids; do wait "$p" || rc=1; done
+exit $rc'
+
+# oadp_prepull_images <timeout seconds> <image>...
+# Pulls images onto every schedulable worker node (oc debug node + crictl, all
+# nodes at once), so pods that need them start without waiting on the registry,
+# wherever they are scheduled. CRI-O pulls with the cluster's global pull
+# secret, as kubelet does. Returns 1 when an image cannot be pulled at all
+# (e.g. a tag missing from the registry: the pod would sit in ImagePullBackOff);
+# a node still pulling at the timeout only gets a warning, since the pod's own
+# pull carries on from there.
+oadp_prepull_images() {
+    local timeout="$1"; shift
+    local -a images=("$@") nodes pids failed timed_out
+    local node f pid i running start=${SECONDS} out_dir
+    (( ${#images} )) || return 0
+    nodes=(${(f)"$(oadp_worker_nodes)"})
+    if (( ! ${#nodes} )); then
+        echo "[WARN] No schedulable worker nodes found; skipping the image pre-pull"
+        return 0
+    fi
+    echo "[INFO] Pre-pulling ${#images} image(s) on ${#nodes} worker node(s), waiting up to $((timeout / 60))m:"
+    printf '         %s\n' "${images[@]}"
+    out_dir="$(mktemp -d)"
+    for node in "${nodes[@]}"; do
+        f="${out_dir}/${node}"
+        ( set +e; oc debug "node/${node}" -q -- chroot /host sh -c "${_OADP_PREPULL_NODE_SCRIPT}" sh "${images[@]}" >"${f}" 2>&1
+          print $? >"${f}.rc" ) &
+        pids+=($!)
+    done
+    while true; do
+        running=0
+        for pid in "${pids[@]}"; do kill -0 "${pid}" 2>/dev/null && (( ++running )); done
+        (( running == 0 || SECONDS - start >= timeout )) && break
+        sleep 10
+    done
+    for (( i = 1; i <= ${#nodes}; i++ )); do
+        node="${nodes[i]}"; f="${out_dir}/${node}"
+        if [[ ! -f "${f}.rc" ]]; then
+            # Stop oc debug too (it deletes its debug pod on SIGTERM), not just the subshell.
+            pkill -TERM -P "${pids[i]}" 2>/dev/null || true
+            kill "${pids[i]}" 2>/dev/null || true
+            timed_out+=("${node}")
+        elif [[ "$(<"${f}.rc")" != "0" ]]; then
+            failed+=("${node}")
+            sed "s/^/[ERROR]   ${node}: /" "${f}" >&2
+        fi
+    done
+    rm -rf "${out_dir}"
+    if (( ${#failed} )); then
+        echo "[ERROR] Image pre-pull failed on ${#failed} of ${#nodes} node(s) (details above)." >&2
+        return 1
+    fi
+    if (( ${#timed_out} )); then
+        echo "[WARN] Still pulling after $((timeout / 60))m on ${timed_out[*]}; carrying on (pods pull the rest themselves)."
+    else
+        echo "[OK] Images present on all ${#nodes} worker node(s) ($((SECONDS - start))s)"
+    fi
+}
+
 # Point cpd-cli oadp at this cluster's OADP project. The client config lives on
 # the workstation, not the cluster, so set it on every run in case the last run
 # was against another cluster.
