@@ -123,6 +123,9 @@ BUCKET_FILE="$(oadp_resolve_config "${BUCKET_CONFIG_DIR}" "${BUCKET_CONFIG_SUFFI
 if [[ -n "${TARGET}" ]]; then
     ENV_TARGET="$(oadp_resolve_config "${TARGET_CONFIG_DIR}" "${TARGET_CONFIG_SUFFIX}" target "${TARGET}" 1.2_generate_restore_target_config.sh)"
     export ENV_TARGET
+    TARGET_BASE="${${ENV_TARGET:t}%${TARGET_CONFIG_SUFFIX}}"
+    FIRST_USE=false
+    oadp_target_first_use "${TARGET_BASE}" && FIRST_USE=true
 fi
 
 # --- Env load (repo root found above) ---
@@ -163,6 +166,8 @@ echo "[INFO] cpd-cli output is also written to ${LOG_FILE}"
 
 eval "${OC_LOGIN}"
 oadp_check_cluster
+# A restore target's state before the first change, for 5_uninstall_from_target_cluster.sh --all.
+[[ -n "${TARGET}" ]] && oadp_auto_baseline "${TARGET_BASE}" "${FIRST_USE}"
 cpd-cli oadp version 2>&1 | tee -a "${LOG_FILE}"
 
 if [[ -z "${TENANT_MODE}" ]]; then

@@ -23,15 +23,36 @@ set -euo pipefail
 #     names, node settings) should be in place - the repo's step 1/2 scripts can
 #     be run against the target with ENV_TARGET=<target config path>
 #
-# The instance is recreated in the namespaces it was backed up from. If they
-# already exist on the target the restore refuses, unless --force.
+# The instance is recreated in the namespaces it was backed up from.
+#
+# A run is always a fresh start (clean start): whatever an earlier, unfinished
+# attempt left is removed first, so re-running the same command redoes the
+# restore from scratch. That is:
+#   - other restore scripts still running on this machine are stopped
+#   - Velero restore, volume-restore and data-download objects in the OADP project
+#     are deleted (backups are never touched); Velero is restarted when a restore
+#     was unfinished, because a stuck one blocks every restore queued behind it
+#   - the instance projects are deleted, with their volumes: only with --target,
+#     or with --clean on --same-cluster, and not with --force. A healthy,
+#     finished instance (ibmcpd Completed) is only deleted after you type its
+#     project name, or with --wipe-healthy.
+# --no-clean turns all of this off: the restore then refuses when the instance
+# projects exist (unless --force) and leaves any other leftovers alone.
 # Arguments after '--' are passed to tenant-restore create unchanged.
 #
 #   4_restore_cp4d_instance.sh (--target <name|path> | --same-cluster) --backup <name> [options] [-- <args>]
 #     --backup <name>             tenant backup to restore (see --list)
 #     --name <name>               restore name (default restore-<timestamp>)
 #     --bucket <name|path>        bucket config to check the DPA against (optional when there is only one)
-#     --force                     allow the instance namespaces to exist already (tenant-restore --force)
+#     --no-clean                  no clean start: leave leftovers of earlier attempts, refuse when the
+#                                 instance projects exist
+#     --clean                     with --same-cluster: also delete the existing instance projects
+#                                 (--target does that by default)
+#     --wipe-healthy              delete the instance projects without asking even if the instance
+#                                 there is finished and healthy
+#     --clean-timeout <minutes>   how long to wait for the old projects to terminate (default 10)
+#     --force                     restore into instance namespaces that exist already (tenant-restore
+#                                 --force); they are not deleted
 #     --sync-timeout <minutes>    how long to wait for the backup to sync from the bucket (default 10)
 #     --timeout <duration>        wait limit when br_orchestration runs the restore (default 6h)
 #     --health-timeout <minutes>  how long to wait for the restored workloads to be ready (default 30, 0 = skip)
@@ -54,6 +75,11 @@ BACKUP_NAME=""
 RESTORE_NAME=""
 BUCKET=""
 FORCE=false
+CLEAN=true
+CLEAN_EXPLICIT=false
+NO_CLEAN_GIVEN=false
+WIPE_HEALTHY=false
+CLEAN_TIMEOUT_MIN=10
 SYNC_TIMEOUT_MIN=10
 WAIT_TIMEOUT=6h
 HEALTH_TIMEOUT=30
@@ -68,6 +94,10 @@ while [[ $# -gt 0 ]]; do
         --name)         RESTORE_NAME="${2:?--name needs a value}"; shift 2 ;;
         --bucket)       BUCKET="${2:?--bucket needs a config name or path}"; shift 2 ;;
         --force)        FORCE=true; shift ;;
+        --no-clean)     CLEAN=false; NO_CLEAN_GIVEN=true; shift ;;
+        --clean)        CLEAN_EXPLICIT=true; shift ;;
+        --wipe-healthy) WIPE_HEALTHY=true; shift ;;
+        --clean-timeout) CLEAN_TIMEOUT_MIN="${2:?--clean-timeout needs minutes}"; shift 2 ;;
         --sync-timeout) SYNC_TIMEOUT_MIN="${2:?--sync-timeout needs minutes}"; shift 2 ;;
         --timeout)      WAIT_TIMEOUT="${2:?--timeout needs a duration}"; shift 2 ;;
         --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout needs minutes}"; shift 2 ;;
@@ -91,6 +121,14 @@ if [[ "${LIST_ONLY}" != "true" && -z "${BACKUP_NAME}" ]]; then
 fi
 if [[ "${HEALTH_TIMEOUT}" != <-> ]]; then
     echo "[ERROR] --health-timeout must be a number of minutes (got '${HEALTH_TIMEOUT}')." >&2
+    exit 1
+fi
+if [[ "${CLEAN_TIMEOUT_MIN}" != <-> ]]; then
+    echo "[ERROR] --clean-timeout must be a number of minutes (got '${CLEAN_TIMEOUT_MIN}')." >&2
+    exit 1
+fi
+if [[ "${NO_CLEAN_GIVEN}" == "true" && "${CLEAN_EXPLICIT}" == "true" ]]; then
+    echo "[ERROR] --clean and --no-clean contradict each other." >&2
     exit 1
 fi
 
@@ -141,13 +179,29 @@ if ! backup_visible; then
 fi
 echo "[OK] Tenant backup ${BACKUP_NAME} is visible on this cluster"
 
-EXISTING_NS=()
-for ns in "${PROJECT_CPD_INST_OPERATORS}" "${PROJECT_CPD_INST_OPERANDS}"; do
-    oc get namespace "${ns}" >/dev/null 2>&1 && EXISTING_NS+=("${ns}")
-done
-if (( ${#EXISTING_NS} )) && [[ "${FORCE}" != "true" ]]; then
+# --- Clean start: what an earlier attempt left on this cluster (read-only here) ---
+INSTANCE_NS=("${PROJECT_CPD_INST_OPERATORS}" "${PROJECT_CPD_INST_OPERANDS}")
+# Only restore scripts aimed at this same cluster count as leftovers.
+if [[ -n "${TARGET}" ]]; then
+    OADP_RESTORE_MATCH="${${ENV_TARGET:t}%${TARGET_CONFIG_SUFFIX}}"
+else
+    OADP_RESTORE_MATCH="--same-cluster"
+fi
+oadp_find_restore_remnants "${INSTANCE_NS[@]}"
+EXISTING_NS=("${OADP_REM_NS[@]}")
+# Deleting the instance projects is what makes a re-run a redo. On the cluster
+# the backup came from, that would delete the live instance, so it needs --clean.
+DELETE_NS=false
+if [[ "${CLEAN}" == "true" && "${FORCE}" != "true" ]] && [[ -n "${TARGET}" || "${CLEAN_EXPLICIT}" == "true" ]]; then
+    DELETE_NS=true
+fi
+if (( ${#EXISTING_NS} )) && [[ "${FORCE}" != "true" && "${DELETE_NS}" != "true" ]]; then
     echo "[ERROR] ${EXISTING_NS[*]} already exist(s) on ${OCP_URL}. tenant-restore recreates the instance there;" >&2
-    echo "[ERROR] delete the old instance first, or pass --force to restore into the existing namespaces." >&2
+    if [[ "${CLEAN}" != "true" ]]; then
+        echo "[ERROR] delete the old instance first, drop --no-clean to have this script do it, or pass --force to restore into the existing namespaces." >&2
+    else
+        echo "[ERROR] this is the cluster itself, not a restore target: pass --clean to delete them (and the instance in them), or --force to restore into them." >&2
+    fi
     exit 1
 fi
 
@@ -158,14 +212,56 @@ if [[ ! "${RESTORE_NAME}" =~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' || ${#RESTORE_NAM
     exit 1
 fi
 
+HEALTHY_NS=()
+if [[ "${DELETE_NS}" == "true" ]]; then
+    for ns in "${EXISTING_NS[@]}"; do oadp_instance_healthy "${ns}" && HEALTHY_NS+=("${ns}"); done
+fi
+
 echo ""
 echo "  Cluster:   ${OCP_URL}${TARGET:+ (target config: ${ENV_TARGET:t})}"
 echo "  Backup:    ${BACKUP_NAME}"
 echo "  Restore:   ${RESTORE_NAME}"
 echo "  Instance:  ${PROJECT_CPD_INST_OPERATORS} (operators) / ${PROJECT_CPD_INST_OPERANDS} (operands)"
-(( ${#EXISTING_NS} )) && echo "  --force:   restoring into existing ${EXISTING_NS[*]}"
+(( ${#EXISTING_NS} )) && [[ "${FORCE}" == "true" ]] && echo "  --force:   restoring into existing ${EXISTING_NS[*]}"
+if [[ "${CLEAN}" != "true" ]]; then
+    oadp_remnants_any && echo "  --no-clean: leaving the leftovers of earlier attempts as they are"
+elif oadp_remnants_any; then
+    echo "  Clean start - removing what earlier attempts left:"
+    for pid in "${OADP_OTHER_RESTORE_PIDS[@]}"; do echo "    - stop the restore script running as PID ${pid}"; done
+    (( OADP_REM_VELERO )) && echo "    - delete ${OADP_REM_VELERO} Velero restore / volume-restore / data-download object(s)$([[ "${OADP_REM_STUCK}" == "true" ]] && echo ', restart Velero (a restore is unfinished)')"
+    (( ${OADP_REM_BR:-0} )) && echo "    - delete ${OADP_REM_BR} BR orchestration tenantrestores"
+    if [[ "${DELETE_NS}" == "true" ]]; then
+        (( ${#EXISTING_NS} )) && echo "    - DELETE project(s) ${EXISTING_NS[*]} and their volumes${HEALTHY_NS:+ (${HEALTHY_NS[*]}: a finished, healthy instance)}"
+    elif (( ${#EXISTING_NS} )); then
+        echo "    - keep project(s) ${EXISTING_NS[*]}"
+    fi
+else
+    echo "  Clean start: nothing left over from earlier attempts"
+fi
 echo ""
 oadp_confirm "This restores Software Hub onto ${OCP_URL}."
+
+# A finished, healthy instance is not wiped on a bare --yes: the project name has to be typed.
+if (( ${#HEALTHY_NS} )) && [[ "${WIPE_HEALTHY}" != "true" ]]; then
+    if [[ ! -t 0 ]]; then
+        echo "[ERROR] ${HEALTHY_NS[*]} hold(s) a finished, healthy Software Hub instance and there is no terminal to confirm deleting it. Pass --wipe-healthy to delete it, or --force to restore into it." >&2
+        exit 1
+    fi
+    for ns in "${HEALTHY_NS[@]}"; do
+        read -r "ans?${ns} holds a finished, healthy instance that will be DELETED. Type the project name to confirm: "
+        [[ "${ans}" == "${ns}" ]] || { echo "[INFO] Aborted."; exit 1; }
+    done
+fi
+
+if [[ "${CLEAN}" == "true" ]] && oadp_remnants_any; then
+    oadp_clean_restore_remnants "${CLEAN_TIMEOUT_MIN}" "${DELETE_NS}"
+    # Velero may have restarted: be sure it is serving the bucket and sees the backup again.
+    oadp_check_bsl 12
+    backup_visible || { sleep 30; backup_visible; } || {
+        echo "[ERROR] Tenant backup ${BACKUP_NAME} is not visible after the clean-up." >&2
+        exit 1
+    }
+fi
 
 RESTORE_FLAGS=(
     --from-tenant-backup="${BACKUP_NAME}"

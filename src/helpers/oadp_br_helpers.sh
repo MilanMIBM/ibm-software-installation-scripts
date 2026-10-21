@@ -567,3 +567,309 @@ oadp_datamover_report() {
     (( ${+phases[Failed]} || ${+phases[Canceled]} )) && return 1
     return 0
 }
+
+# ------------------------------------------------------------------------------
+# Clean start for a restore: remove what an earlier, unfinished attempt left
+# ------------------------------------------------------------------------------
+# A restore that was interrupted, or stalled (a Velero restore that never leaves
+# 'InProgress' or never gets a phase blocks the ones queued behind it), leaves
+# objects that make the next attempt fail or hang. These functions find them
+# (read-only) and remove them, so a re-run starts as if nothing had happened.
+#
+#   oadp_find_restore_remnants <instance ns>...   sets OADP_REM_* and OADP_OTHER_RESTORE_PIDS
+#   oadp_remnants_any                             true when something was found
+#   oadp_instance_healthy <ns>                    true when ns holds a finished Software Hub instance
+#   oadp_clean_restore_remnants <minutes> <delete namespaces: true|false>
+
+_OADP_VELERO_RESTORE_KINDS=(restores.velero.io podvolumerestores.velero.io datadownloads.velero.io)
+
+# PIDs of other restore scripts on this machine aimed at the same cluster (not
+# this one, nor its parents, e.g. the fresh-cluster wrapper), into
+# OADP_OTHER_RESTORE_PIDS. OADP_RESTORE_MATCH says which cluster: a target config
+# name (matches '--target <name>' or '.../<name>_vars.sh') or '--same-cluster'.
+# Unset or empty matches nothing, so a restore to another cluster is never stopped.
+oadp_other_restore_pids() {
+    OADP_OTHER_RESTORE_PIDS=()
+    local match="${OADP_RESTORE_MATCH:-}" skip=" $$ " p=$$ pp pid comm cmd re
+    [[ -z "${match}" ]] && return 0
+    if [[ "${match}" == "--same-cluster" ]]; then
+        re='(^| )--same-cluster( |$)'
+    else
+        re="(--target[ =]|/)${match//./\.}(_vars\.sh)?( |$)"
+    fi
+    while (( p > 1 )); do
+        pp="$(ps -o ppid= -p "${p}" 2>/dev/null | tr -d ' ' || true)"
+        [[ -z "${pp}" ]] && break
+        skip+="${pp} "
+        p="${pp}"
+    done
+    for pid in ${(f)"$(pgrep -f '(^|[ /])4(\.1)?_restore_cp4d_instance' 2>/dev/null || true)"}; do
+        [[ "${skip}" == *" ${pid} "* ]] && continue
+        # Only shells: an editor or pager with the script open is not a running restore.
+        comm="$(ps -o comm= -p "${pid}" 2>/dev/null || true)"
+        [[ "${comm:t}" == (zsh|-zsh|bash|sh) ]] || continue
+        cmd="$(ps -o command= -p "${pid}" 2>/dev/null || true)"
+        [[ "${cmd}" =~ ${re} ]] && OADP_OTHER_RESTORE_PIDS+=("${pid}")
+    done
+    return 0
+}
+
+# Is a Software Hub instance in <ns> finished and healthy (control plane Completed)?
+oadp_instance_healthy() {
+    [[ "$(oc get ibmcpd -n "$1" -o jsonpath='{.items[*].status.controlPlaneStatus}' 2>/dev/null || true)" == *Completed* ]]
+}
+
+# Read-only. Sets OADP_REM_NS (instance namespaces that exist), OADP_REM_VELERO
+# (Velero restore, volume-restore and data-download objects in the OADP project),
+# OADP_REM_BR (BR orchestration tenantrestores CRs), OADP_REM_STUCK (true when a
+# Velero restore is unfinished, so Velero itself needs a restart) and
+# OADP_OTHER_RESTORE_PIDS.
+oadp_find_restore_remnants() {
+    local ns kind n
+    OADP_REM_NS=() OADP_REM_VELERO=0 OADP_REM_BR=0 OADP_REM_STUCK=false
+    for ns in "$@"; do
+        oc get namespace "${ns}" >/dev/null 2>&1 && OADP_REM_NS+=("${ns}")
+    done
+    for kind in "${_OADP_VELERO_RESTORE_KINDS[@]}"; do
+        n="$(oc get "${kind}" -n "${OADP_PROJECT}" --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)"
+        OADP_REM_VELERO=$(( OADP_REM_VELERO + ${n:-0} ))
+    done
+    n="$(oc get restores.velero.io -n "${OADP_PROJECT}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null \
+        | awk '$2 == "" || $2 ~ /^(New|InProgress|Finalizing|WaitingForPluginOperations)/' | wc -l | tr -d ' ' || true)"
+    (( ${n:-0} > 0 )) && OADP_REM_STUCK=true
+    if oc get crd tenantrestores.bros.ibm.com >/dev/null 2>&1; then
+        OADP_REM_BR="$(oc get tenantrestores.bros.ibm.com --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)"
+    fi
+    oadp_other_restore_pids
+}
+
+oadp_remnants_any() {
+    (( ${#OADP_REM_NS} + OADP_REM_VELERO + ${OADP_REM_BR:-0} + ${#OADP_OTHER_RESTORE_PIDS} > 0 ))
+}
+
+# Wait until no <kind> object is left in <ns>; false after <seconds>.
+_oadp_wait_none() {
+    local kind="$1" ns="$2" secs="$3" i
+    for (( i = 0; i < secs; i += 3 )); do
+        [[ -z "$(oc get "${kind}" -n "${ns}" -o name 2>/dev/null || true)" ]] && return 0
+        sleep 3
+    done
+    return 1
+}
+
+_oadp_strip_finalizers() {
+    local kind="$1" ns="$2" obj
+    for obj in ${(f)"$(oc get "${kind}" -n "${ns}" -o name 2>/dev/null || true)"}; do
+        oc patch "${obj}" -n "${ns}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+    done
+}
+
+# Last resort for a namespace stuck in Terminating: clear the finalizers of what
+# is inside it, then the namespace's own.
+_oadp_force_remove_namespace() {
+    local ns="$1" kind
+    echo "[WARN] ${ns} is still terminating; clearing the finalizers that hold it."
+    for kind in ${(f)"$(oc api-resources --verbs=list --namespaced -o name 2>/dev/null || true)"}; do
+        _oadp_strip_finalizers "${kind}" "${ns}"
+    done
+    oc get namespace "${ns}" -o json 2>/dev/null | jq '.spec.finalizers = []' \
+        | oc replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+}
+
+# Stop the restore scripts in OADP_OTHER_RESTORE_PIDS (and what they started).
+oadp_stop_restore_scripts() {
+    local pid
+    for pid in "${OADP_OTHER_RESTORE_PIDS[@]}"; do
+        echo "[INFO] Stopping the restore script running as PID ${pid}"
+        pkill -TERM -P "${pid}" 2>/dev/null || true
+        kill -TERM "${pid}" 2>/dev/null || true
+    done
+    (( ${#OADP_OTHER_RESTORE_PIDS} )) && sleep 3
+    return 0
+}
+
+# Delete the Velero restore objects and BR tenantrestores found by
+# oadp_find_restore_remnants, restarting Velero first when a restore was
+# unfinished (the OADP operator reverts 'rollout restart', so its pod is
+# deleted). Backups are never touched.
+oadp_clear_velero_restores() {
+    local kind
+    if (( ${OADP_REM_BR:-0} )); then
+        echo "[INFO] Deleting ${OADP_REM_BR} BR orchestration tenantrestores"
+        oc delete tenantrestores.bros.ibm.com --all --all-namespaces --wait=false >/dev/null 2>&1 || true
+    fi
+    if (( OADP_REM_VELERO )); then
+        echo "[INFO] Deleting ${OADP_REM_VELERO} Velero restore / volume-restore / data-download object(s) in ${OADP_PROJECT}"
+        for kind in "${_OADP_VELERO_RESTORE_KINDS[@]}"; do
+            oc delete "${kind}" --all -n "${OADP_PROJECT}" --wait=false >/dev/null 2>&1 || true
+        done
+    fi
+    if [[ "${OADP_REM_STUCK}" == "true" ]]; then
+        echo "[INFO] A restore was unfinished: restarting Velero so it drops it and takes the next one"
+        oc delete pod -n "${OADP_PROJECT}" -l app.kubernetes.io/name=velero --wait=false >/dev/null 2>&1 || true
+        sleep 5
+        oc rollout status deployment/velero -n "${OADP_PROJECT}" --timeout=180s >/dev/null 2>&1 \
+            || echo "[WARN] Velero did not report ready within 3m; continuing." >&2
+    fi
+    if (( OADP_REM_VELERO )); then
+        for kind in "${_OADP_VELERO_RESTORE_KINDS[@]}"; do
+            _oadp_wait_none "${kind}" "${OADP_PROJECT}" 45 && continue
+            _oadp_strip_finalizers "${kind}" "${OADP_PROJECT}"
+            _oadp_wait_none "${kind}" "${OADP_PROJECT}" 30 \
+                || echo "[WARN] ${kind} objects are still present in ${OADP_PROJECT}." >&2
+        done
+        echo "[OK] Velero restore objects cleared (backups untouched)"
+    fi
+    return 0
+}
+
+# oadp_delete_namespaces <minutes> <ns>...
+# Delete projects and wait until they are gone. After 2 minutes, the finalizers
+# holding one in Terminating are cleared. Fails after <minutes>.
+oadp_delete_namespaces() {
+    local timeout_min="$1" ns start left elapsed forced=false last=0 pvs
+    shift
+    local nss=("$@")
+    (( ${#nss} )) || return 0
+    echo "[INFO] Deleting project(s) ${nss[*]} (waiting up to ${timeout_min}m)"
+    oc delete namespace "${nss[@]}" --wait=false >/dev/null 2>&1 || true
+    start=${SECONDS}
+    while true; do
+        left=()
+        for ns in "${nss[@]}"; do
+            oc get namespace "${ns}" >/dev/null 2>&1 && left+=("${ns}")
+        done
+        (( ${#left} == 0 )) && break
+        elapsed=$(( SECONDS - start ))
+        if (( elapsed > 120 )) && [[ "${forced}" != "true" ]]; then
+            forced=true
+            for ns in "${left[@]}"; do _oadp_force_remove_namespace "${ns}"; done
+        fi
+        if (( elapsed > timeout_min * 60 )); then
+            echo "[ERROR] ${left[*]} still exist(s) after ${timeout_min}m. Check: oc get namespace ${left[1]} -o yaml" >&2
+            return 1
+        fi
+        if (( elapsed - last >= 20 )); then
+            last=${elapsed}
+            echo "[INFO] Waiting for ${left[*]} to terminate (${elapsed}s)..."
+        fi
+        sleep 5
+    done
+    echo "[OK] Project(s) ${nss[*]} deleted"
+    # Volumes of the deleted claims: gone with the claims (reclaim policy Delete), or left behind (Retain).
+    sleep 10
+    pvs="$(oc get pv -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.claimRef.namespace}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null \
+        | awk -v n=" ${nss[*]} " 'index(n, " " $2 " ") && $3 != "Bound" {print $1" ("$3")"}' || true)"
+    if [[ -n "${pvs}" ]]; then
+        echo "[WARN] Volumes of the deleted claims are still on the cluster (storage not reclaimed yet, or reclaim policy Retain):" >&2
+        print -r -- "${pvs}" | sed 's/^/         /' >&2
+    fi
+    return 0
+}
+
+# oadp_clean_restore_remnants <minutes to wait for the namespaces> <delete namespaces: true|false>
+# Acts on what oadp_find_restore_remnants found: stops other restore scripts,
+# clears the Velero restore objects, then deletes the instance namespaces.
+oadp_clean_restore_remnants() {
+    local timeout_min="${1:-10}" delete_ns="${2:-true}"
+    oadp_stop_restore_scripts
+    oadp_clear_velero_restores
+    if [[ "${delete_ns}" == "true" ]]; then
+        oadp_delete_namespaces "${timeout_min}" "${OADP_REM_NS[@]}" || return 1
+    fi
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Baseline: what a restore target had before these scripts first changed it
+# ------------------------------------------------------------------------------
+# restore_target_configs/<name>.baseline/ (gitignored, owner-only):
+#   inventory.txt     resource|namespace|name|uid of every object of the kinds below
+#   pull-secret.json  the global pull secret (openshift-config/pull-secret), decoded
+#   settings.txt      mastersSchedulable, console plugins, labeled snapshot classes
+#   captured.txt      when and on which cluster
+# 5_uninstall_from_target_cluster.sh --all removes what is not in it and puts the
+# settings back. Without one it falls back to a creation-time cutoff.
+
+# Keep in sync with RESOURCES in src/helpers/oadp_cluster_changes.py.
+OADP_CHANGE_RESOURCES=(
+    namespaces
+    subscriptions.operators.coreos.com
+    clusterserviceversions.operators.coreos.com
+    catalogsources.operators.coreos.com
+    operatorgroups.operators.coreos.com
+    customresourcedefinitions.apiextensions.k8s.io
+    clusterroles.rbac.authorization.k8s.io
+    clusterrolebindings.rbac.authorization.k8s.io
+    mutatingwebhookconfigurations.admissionregistration.k8s.io
+    validatingwebhookconfigurations.admissionregistration.k8s.io
+    apiservices.apiregistration.k8s.io
+    priorityclasses.scheduling.k8s.io
+    securitycontextconstraints.security.openshift.io
+    storageclasses.storage.k8s.io
+    consoleplugins.console.openshift.io
+)
+OADP_VSC_LABEL="velero.io/csi-volumesnapshot-class"
+
+oadp_baseline_dir() { print -r -- "${TARGET_CONFIG_DIR}/$1.baseline"; }
+
+# True when the scripts have not been pointed at this target before: no baseline,
+# no kubeconfig copy and no saved pull secret for it. Call before creating them.
+oadp_target_first_use() {
+    [[ ! -e "$(oadp_baseline_dir "$1")" && ! -e "${TARGET_CONFIG_DIR}/$1.kubeconfig" \
+        && ! -e "${TARGET_CONFIG_DIR}/$1.pull-secret.dockerconfigjson" ]]
+}
+
+# oadp_capture_baseline <dir>: record the cluster as it is now. Reads only.
+oadp_capture_baseline() {
+    local dir="$1" tmp r out
+    tmp="${dir}.tmp.$$"
+    rm -rf "${tmp}"
+    mkdir -p "${tmp}" && chmod 700 "${tmp}"
+    : > "${tmp}/inventory.txt"
+    for r in "${OADP_CHANGE_RESOURCES[@]}"; do
+        if ! out="$(oc get "${r}" -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{.metadata.uid}{"\n"}{end}' 2>&1)"; then
+            # A kind the cluster does not have is fine; any other error would make the baseline incomplete.
+            [[ "${out}" == *"doesn't have a resource type"* ]] && continue
+            echo "[ERROR] Could not record ${r} for the baseline: ${out}" >&2
+            rm -rf "${tmp}"
+            return 1
+        fi
+        [[ -n "${out}" ]] && print -r -- "${out}" | sed "s#^#${r}|#" >> "${tmp}/inventory.txt"
+    done
+    if ! grep -q '^namespaces|' "${tmp}/inventory.txt" || ! grep -q '^customresourcedefinitions' "${tmp}/inventory.txt"; then
+        echo "[ERROR] The baseline came back without namespaces or CRDs; not saving it." >&2
+        rm -rf "${tmp}"
+        return 1
+    fi
+    ( umask 077
+      oc get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null \
+          | base64 --decode > "${tmp}/pull-secret.json" 2>/dev/null || : )
+    {
+        print -r -- "mastersSchedulable=$(oc get schedulers.config.openshift.io cluster -o jsonpath='{.spec.mastersSchedulable}' 2>/dev/null || true)"
+        print -r -- "consolePlugins=$(oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}' 2>/dev/null || true)"
+        print -r -- "labeledSnapshotClasses=$(oc get volumesnapshotclasses.snapshot.storage.k8s.io -l "${OADP_VSC_LABEL}=true" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+    } > "${tmp}/settings.txt"
+    print -r -- "server=$(oc whoami --show-server 2>/dev/null) captured=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${tmp}/captured.txt"
+    chmod 600 "${tmp}"/*
+    rm -rf "${dir}"
+    mv "${tmp}" "${dir}"
+    echo "[OK] Baseline of $(oc whoami --show-server 2>/dev/null) saved: ${dir} ($(wc -l < "${dir}/inventory.txt" | tr -d ' ') objects)"
+}
+
+# oadp_auto_baseline <target name> <first use: true|false>
+# For the setup scripts, before their first change: record a baseline when the
+# scripts have not touched this target before. A cluster set up before baselines
+# existed gets none (it would already include the scripts' changes).
+oadp_auto_baseline() {
+    local base="$1" first="$2"
+    [[ -e "$(oadp_baseline_dir "${base}")" ]] && return 0
+    if [[ "${first}" == "true" ]]; then
+        oadp_capture_baseline "$(oadp_baseline_dir "${base}")" \
+            || echo "[WARN] No baseline recorded; 5_uninstall_from_target_cluster.sh --all will need --since." >&2
+    else
+        echo "[INFO] No baseline for ${base}: it was set up before baselines were recorded. 5_uninstall_from_target_cluster.sh --all uses a time cutoff instead."
+    fi
+    return 0
+}

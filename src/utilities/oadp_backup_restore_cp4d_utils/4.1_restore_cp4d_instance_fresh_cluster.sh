@@ -35,6 +35,13 @@ set -euo pipefail
 # A failure before or in 'restore' stops the script (resume with --from <step>);
 # after it, the failed step is reported and the rest still run.
 #
+# The restore step is always a clean start: 4_restore_cp4d_instance.sh first
+# removes what an earlier attempt left (Velero restore objects, a stuck Velero,
+# restore scripts still running against this target, and the instance projects
+# with their volumes), so re-running - e.g. --from restore - redoes the restore
+# from scratch. --no-clean keeps the old behaviour (refuse when the instance
+# projects exist, unless --force).
+#
 # Everything runs against the --target config alone, which needs the settings
 # 1.2_generate_restore_target_config.sh copies from the source config (VERSION,
 # SOFTWARE_HUB, COMPLETE_COMPONENT_LIST, IMAGE_PULL_*, IBM_ENTITLEMENT_KEY, ...).
@@ -56,8 +63,12 @@ set -euo pipefail
 #     --skip <step>[,<step>...]   leave these steps out (repeatable)
 #     --from <step>               start at this step, e.g. to resume after a failure
 #     --prepare-only              stop after the 'oadp' step; no --backup needed
-#     --force                     restore although the instance projects exist (to retry a restore
-#                                 that failed partway; passed on to tenant-restore)
+#     --no-clean                  no clean start before the restore (passed to 4_restore_cp4d_instance.sh)
+#     --wipe-healthy              delete the instance projects even if they hold a finished, healthy
+#                                 instance, without asking for the project name
+#     --clean-timeout <minutes>   how long to wait for the old projects to terminate (default 10)
+#     --force                     restore into the existing instance projects instead of deleting them
+#                                 (passed on to tenant-restore)
 #     --sync-timeout <minutes>    passed to 4_restore_cp4d_instance.sh
 #     --timeout <duration>        passed to 4_restore_cp4d_instance.sh
 #     --health-timeout <minutes>  passed to 4_restore_cp4d_instance.sh
@@ -110,6 +121,7 @@ SKIP_STEPS=()
 FROM_STEP=""
 PREPARE_ONLY=false
 FORCE=false
+NO_CLEAN=false
 RESTORE_PASS=()
 OADP_ARGS=()
 SHARED_KUBECONFIG=false
@@ -126,6 +138,9 @@ while [[ $# -gt 0 ]]; do
         --from)              FROM_STEP="${2:?--from needs a step name}"; shift 2 ;;
         --prepare-only)      PREPARE_ONLY=true; shift ;;
         --force)             FORCE=true; shift ;;
+        --no-clean)          NO_CLEAN=true; RESTORE_PASS+=(--no-clean); shift ;;
+        --wipe-healthy)      RESTORE_PASS+=(--wipe-healthy); shift ;;
+        --clean-timeout)     RESTORE_PASS+=(--clean-timeout "${2:?--clean-timeout needs minutes}"); shift 2 ;;
         --sync-timeout|--timeout|--health-timeout)
                              RESTORE_PASS+=("$1" "${2:?$1 needs a value}"); shift 2 ;;
         --oadp-resources)
@@ -192,6 +207,10 @@ fi
 # usual oc session (it may be in use against the source cluster). Every step
 # below inherits it. First use copies your current one, which carries over a TLS
 # decision you already made for this cluster.
+# Decided before the kubeconfig copy below exists: a baseline is only recorded
+# on a target these scripts have not changed yet.
+FIRST_USE=false
+oadp_target_first_use "${TARGET_BASE}" && FIRST_USE=true
 mkdir -p "${TARGET_CONFIG_DIR}"
 chmod 700 "${TARGET_CONFIG_DIR}"
 TARGET_KUBECONFIG=""
@@ -221,6 +240,8 @@ fi
 
 eval "${OC_LOGIN}"
 oadp_check_cluster
+# What the cluster had before any step ran, for 5_uninstall_from_target_cluster.sh --all.
+oadp_auto_baseline "${TARGET_BASE}" "${FIRST_USE}"
 
 if [[ "${LIST_ONLY}" == "true" ]]; then
     if [[ -z "$(oc get dataprotectionapplications.oadp.openshift.io -n "${OADP_PROJECT}" -o name 2>/dev/null)" ]]; then
@@ -239,10 +260,9 @@ EXISTING_NS=()
 for ns in "${PROJECT_CPD_INST_OPERATORS}" "${PROJECT_CPD_INST_OPERANDS}"; do
     oc get namespace "${ns}" >/dev/null 2>&1 && EXISTING_NS+=("${ns}")
 done
-if step_selected restore && (( ${#EXISTING_NS} )) && [[ "${FORCE}" != "true" ]]; then
+if step_selected restore && (( ${#EXISTING_NS} )) && [[ "${FORCE}" != "true" && "${NO_CLEAN}" == "true" ]]; then
     echo "[ERROR] ${EXISTING_NS[*]} already exist(s) on ${OCP_URL}: not a fresh cluster for this instance." >&2
-    echo "[ERROR] Delete the old instance first. To restore into the existing projects instead, use" >&2
-    echo "[ERROR] 4_restore_cp4d_instance.sh --force; to retry a restore that failed partway, add --from restore --force." >&2
+    echo "[ERROR] Drop --no-clean to have the restore step delete them first, or pass --force to restore into them." >&2
     exit 1
 fi
 
@@ -283,7 +303,13 @@ echo "  Cluster:   ${OCP_URL} (target config: ${ENV_TARGET:t})"
 [[ -n "${BUCKET_FILE}" ]] && echo "  Bucket:    ${BUCKET_FILE:t}"
 step_selected restore && echo "  Backup:    ${BACKUP_NAME}"
 echo "  Instance:  ${PROJECT_CPD_INST_OPERATORS} (operators) / ${PROJECT_CPD_INST_OPERANDS} (operands)"
-(( ${#EXISTING_NS} )) && step_selected restore && echo "  --force:   restoring into existing ${EXISTING_NS[*]}"
+if (( ${#EXISTING_NS} )) && step_selected restore; then
+    if [[ "${FORCE}" == "true" ]]; then
+        echo "  --force:   restoring into existing ${EXISTING_NS[*]}"
+    else
+        echo "  Leftover:  ${EXISTING_NS[*]} exist(s): the restore step deletes them first (clean start)"
+    fi
+fi
 echo "  Steps:"
 for _s in "${STEPS[@]}"; do
     if step_selected "${_s}"; then _mark="run "; else _mark="skip"; fi
@@ -312,7 +338,7 @@ run_step() {
 must_step() {
     run_step "$@" && return 0
     echo "[ERROR] Step '$1' failed. Fix the cause, then re-run the same command with --from $1 added." >&2
-    [[ "$1" == "restore" ]] && echo "[ERROR] (add --force if the restore already created the instance projects)" >&2
+    [[ "$1" == "restore" ]] && echo "[ERROR] (the restore step clears what the failed attempt left before it starts again)" >&2
     exit 1
 }
 # After the restore, a failed step is recorded and the next one still runs.

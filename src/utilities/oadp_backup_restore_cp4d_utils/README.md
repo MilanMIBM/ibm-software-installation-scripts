@@ -9,6 +9,8 @@ Back up a whole Software Hub instance to an S3 bucket outside the cluster with `
 | `2_install_oadp_br_utilities.sh` | source, then target | OADP operator (OLM), credentials secret, DPA, cpdbr-tenant, br_orchestration (cpd-cli) |
 | `3_backup_cp4d_instance.sh` | source | `tenant-backup create` (offline by default) |
 | `4_restore_cp4d_instance.sh` | target | `tenant-restore create --from-tenant-backup` |
+| `4.1_restore_cp4d_instance_fresh_cluster.sh` | target | Cluster setup steps, OADP, restore and post-restore steps on a fresh cluster |
+| `5_uninstall_from_target_cluster.sh` | target | Removes the restore (`--restore`), or the restore and everything setup changed (`--all`) |
 | `4.1_restore_cp4d_instance_fresh_cluster.sh` | fresh target | The repo's cluster setup steps, then 2 (`--rbac-only`), 4, and 2 (`--full`) plus post-restore fixes, in one run |
 
 If you run a generator with no options, it writes a template straight away, named `bucket-<id>` or `target-<id>`. The connection values are left empty, and each field has a comment explaining what goes there. Fill in the file by hand. The script lists the values that are still empty, and the install, backup and restore scripts refuse a config that hasn't been filled in. Options fill in whatever they name. Pass `--interactive` to be asked for the rest instead.
@@ -66,11 +68,38 @@ On a brand-new cluster, `4.1_restore_cp4d_instance_fresh_cluster.sh` replaces st
 | `mcg-secrets` | 2.2.4 | The restored NooBaa secrets still have the source cluster's credentials. Only for MCG-dependent services |
 | `admission-controller` | 3.3.2 | The webhook configuration is cluster-scoped |
 
-- **Checks before it changes anything.** The script stops if the instance projects already exist, or if `STG_CLASS_BLOCK`/`STG_CLASS_FILE` are missing on the target. It warns if Software Hub already runs elsewhere on the cluster. It shows the step plan and asks before starting (`--yes` skips the question).
-- **Resuming after a failure.** If a step up to and including `restore` fails, the script stops. Fix the cause and re-run with `--from <step>`. After a failed restore, also add `--force`, because the instance projects may exist by then. If a step after the restore fails, it's reported and the remaining steps still run. Use `--skip a,b` to leave steps out.
+- **Checks before it changes anything.** The script stops if `STG_CLASS_BLOCK`/`STG_CLASS_FILE` are missing on the target, or if the instance projects exist and `--no-clean` was given. It warns if Software Hub already runs elsewhere on the cluster. It shows the step plan and asks before starting (`--yes` skips the question).
+- **Resuming after a failure.** If a step up to and including `restore` fails, the script stops. Fix the cause and re-run with `--from <step>`. The restore step clears what the failed attempt left by itself (see *Re-running a restore* below). If a step after the restore fails, it's reported and the remaining steps still run. Use `--skip a,b` to leave steps out.
 - **Separate oc session.** oc uses `restore_target_configs/<name>.kubeconfig`, a copy of your current kubeconfig made on first use. That way your usual oc context, for example a backup running against the source cluster, isn't switched to the target. `--shared-kubeconfig` turns this off. The cpd-cli olm-utils container has only one login, and the setup steps move it to the target.
 - **Not covered.** Node settings (CRI-O, kernel parameters, db2u kubelet), image mirrors for a private registry, and any storage class the backed-up PVCs use besides `STG_CLASS_BLOCK`/`STG_CLASS_FILE`.
 - **Target config.** It needs the settings `1.2_generate_restore_target_config.sh` copies from the source config, such as `VERSION`, `SOFTWARE_HUB`, `COMPLETE_COMPONENT_LIST`, `IMAGE_PULL_*` and the entitlement key. So don't generate it with `--no-copy-source`.
+
+## Removing a restore or the whole setup from a target
+
+`5_uninstall_from_target_cluster.sh --target <name>` undoes what these scripts did on a restore target. It refuses to run against the cluster in `configs/cp4d_config/cpd_vars.sh`. It always shows the plan first, writes it to `cpd-cli-workspace/oadp/uninstall-*.plan.tsv`, and asks before changing anything. `--dry-run` stops after the plan.
+
+```bash
+./5_uninstall_from_target_cluster.sh --target cluster-b --dry-run           # what --restore would remove
+./5_uninstall_from_target_cluster.sh --target cluster-b                     # remove the restore, keep the setup
+./5_uninstall_from_target_cluster.sh --target cluster-b --all --dry-run
+./5_uninstall_from_target_cluster.sh --target cluster-b --all --keep-namespace oadp-operator
+```
+
+| | `--restore` (default) | `--all` |
+| --- | --- | --- |
+| Restore scripts still running against this target | Stopped | Stopped |
+| Velero restore objects (backups stay, in the cluster and the bucket) | Deleted, and Velero restarted if one never finished | Deleted with the OADP project, unless it's kept |
+| Instance projects and their volumes | Deleted | Deleted |
+| Cluster-scoped objects Velero restored (labelled `velero.io/restore-name`) | Deleted | Deleted |
+| Webhooks, API services and cluster role bindings that point at or bind the instance projects | Deleted | Deleted |
+| Setup: cert-manager, License Service, scheduler, prerequisite operators, OADP, CRDs, cluster roles, webhooks | Kept, so you can restore again | Deleted, if created since the baseline |
+| Global pull secret, `mastersSchedulable`, console plugin list, snapshot class labels | Kept | Put back to the baseline |
+
+- **What counts as a change in `--all`.** `4.1_…` and `2_install_oadp_br_utilities.sh --target` record a baseline the first time they run against a target, before they change anything. It's saved in `restore_target_configs/<name>.baseline/` and lists every project, operator, CRD, cluster role, webhook and similar object, plus the pull secret and those settings. `--all` removes what isn't in the baseline. Anything that belongs to an operator that existed before stays, even if it was created later, for example when ODF upgrades itself. `--snapshot` records a baseline by hand, and `--overwrite-snapshot` replaces one.
+- **Without a baseline**, for a cluster set up before baselines existed, `--all` counts everything created at or after `--since <time>`. The default is when the target's kubeconfig copy was made, which is the first `4.1_…` run (macOS records that time; on Linux pass `--since`). Without a baseline the pull secret, `mastersSchedulable` and snapshot class labels can't be put back, so the plan only lists them.
+- **Always kept:** objects that are part of OpenShift itself (CVO-managed, `system:…`), objects owned by another object, new `openshift-*` projects that don't hold an operator the scripts installed, unowned `openshift-*`-named objects, new CRDs in `*.openshift.io` or `*.k8s.io` groups, webhooks and API services that serve a project that stays, and storage classes still in use. These show up in the plan's *Kept* list.
+- **Order:** webhooks first, so a webhook whose service is gone doesn't block anything. Then the custom resources of the CRDs being removed, while their operators still run, then projects, operators, CRDs and the remaining cluster-scoped objects. If something is still finalizing after a few minutes, its finalizers are cleared. Re-running the script retries whatever is left.
+- **Not undone:** node labels from NFD or the GPU operator, images pulled onto the nodes, and the local files in `restore_target_configs/`.
 
 ## Offline, online and downtime
 
@@ -92,7 +121,13 @@ On a brand-new cluster, `4.1_restore_cp4d_instance_fresh_cluster.sh` replaces st
 - **Prepare the target cluster first.** A tenant restore recreates the instance's namespaces, but not cluster-wide prerequisites like the global pull secret, cert-manager, License Service, the scheduler, storage classes with the same names, or node settings. The target config uses the `cpd_vars.sh` format, so the repo's step 1/2 scripts can set those up:
   `ENV_TARGET=$PWD/restore_target_configs/cluster-b_vars.sh ../../../scripts/install_cloud_pak_for_data/1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh`
   On a fresh cluster, `4.1_restore_cp4d_instance_fresh_cluster.sh` runs these for you (see above).
-- **Namespaces.** A restore goes into the same project names the backup came from. The restore script stops if those projects already exist, unless you pass `--force`.
+- **Namespaces.** A restore goes into the same project names the backup came from.
+- **Re-running a restore.** Each run of `4_restore_cp4d_instance.sh` (and the `restore` step of `4.1_…`) starts clean, so running the same command again redoes the restore from scratch. Before restoring, it removes what earlier attempts left. It shows the list first and asks before starting:
+  - restore scripts still running on this machine against the same target (a restore to another cluster is left alone)
+  - Velero restore, volume-restore and data-download objects in the OADP project. Velero is restarted if one of them never finished, because a stuck restore blocks every restore queued after it. Backups are never touched, in the cluster or in the bucket
+  - the instance projects, with their volumes. This only happens with `--target`, or with `--clean` on `--same-cluster`, and not with `--force`. If the projects hold a finished, healthy instance (`ibmcpd` Completed), you're asked to type the project name, even with `--yes`. `--wipe-healthy` skips that question
+
+  `--no-clean` keeps the old behaviour: leftovers stay, and the restore refuses if the projects exist, unless `--force` is given, which restores into them. `--clean-timeout <minutes>` (default 10) sets how long to wait for the old projects to terminate. After 2 minutes, finalizers that hold them are cleared.
 - **Settings you can override.** `OADP_PROJECT` (default `oadp-operator`), `OADP_DPA_NAME` (`cpd-dpa`), `OADP_OPERATOR_CHANNEL` (defaults to the channel the cluster's Red Hat catalog marks as default, e.g. `stable` → OADP 1.5 on OCP 4.21), `OADP_NODE_AGENT_TIMEOUT` (`72h`), `OADP_IMAGE_PREFIX`, `OADP_IMAGE_PREPULL_MINUTES` (`30`), `OADP_PLUGIN_IMAGE_FALLBACK` (`true`: a plugin image whose tag the registry lacks is swapped for the newest earlier tag in the same release line, e.g. `db2u-velero-plugin:5.4.0.7` → `5.4.0.6`; `--no-plugin-image-fallback` turns it off for one run) and the velero plugin images (`OADP_CPDBR_VELERO_PLUGIN_IMAGE`, `OADP_SWHUB_VELERO_PLUGIN_IMAGE`, `OADP_CPFS_OADP_PLUGIN_IMAGE`, `OADP_DB2U_VELERO_PLUGIN_IMAGE`) can go in `cpd_vars.sh` or the target config. If `PRIVATE_REGISTRY_LOCATION` is set, every cpd-cli oadp call gets `--private-registry-location`.
 - **OADP resource presets.** `2_install_oadp_br_utilities.sh --resources minimal|small|medium`, or `OADP_RESOURCE_PRESET` in the config, sets the CPU/memory requests for Velero, the node agents and the OADP operator. `4.1_…` takes it as `--oadp-resources`. Limits stay at the defaults (Velero 1 CPU / 4Gi, node agent 1 / 32Gi, operator 1 / 512Mi). With low requests, a backup or restore only slows down when the nodes are busy.
 
