@@ -1,0 +1,602 @@
+# Vendored from DataStax: https://docs.datastax.com/en/mission-control/install/_attachments/openshift-control-plane.yaml
+# (linked from "Install Mission Control on OpenShift", fetched 2026-10-20).
+# Kept as published so a refresh is a plain diff. Local change:
+#   - aggregator.persistence.size: fixed the "**ADMIN_EMAIL**OBSERVABILITY_VECTOR_VOLUME_SIZE**" typo
+# The double-asterisk tokens are filled in by 2.0_render_values.sh, which also
+# layers its own overrides on top (observability storage, Loki schema, SCC).
+agent:
+  enabled: false
+  podSecurityContext:
+    fsGroup: 1001
+    runAsNonRoot: true
+    runAsUser: 1001
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+aggregator:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: mission-control.datastax.com/role
+            operator: In
+            values:
+            - platform
+  enabled: true
+  persistence:
+    enabled: true
+    hostPath:
+      enabled: false
+    size: **OBSERVABILITY_VECTOR_VOLUME_SIZE**
+    storageClassName: **OBSERVABILITY_VECTOR_STORAGE_CLASS**
+  podSecurityContext:
+    fsGroup: 1001
+    runAsNonRoot: true
+    runAsUser: 1001
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+allowOperatorsOnDatabaseNodes: false
+controlPlane: true
+controlPlaneRemon: false
+dex:
+  config:
+    enablePasswordDB: true
+    issuer: http://mission-control-dex:5556/dex
+    staticPasswords:
+    - email: **ADMIN_EMAIL**
+      hash: **HASHED_ADMIN_PASSWORD**
+      userID: 00000000-0000-0000-0000-000000000000
+      username: admin
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+  volumeMounts:
+  - mountPath: /tmp
+    name: tmp
+  volumes:
+  - emptyDir: {}
+    name: tmp
+disableCertManagerCheck: true
+disablePullSecretsGeneration: true
+grafana:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: mission-control.datastax.com/role
+            operator: In
+            values:
+            - platform
+  enabled: false
+k8ssandra-operator:
+  cass-operator:
+    disableCertManagerCheck: true
+    nodeSelector:
+      mission-control.datastax.com/role: platform
+    podSecurityContext:
+      runAsNonRoot: true
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+  nodeSelector:
+    mission-control.datastax.com/role: platform
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+kube-state-metrics:
+  nodeSelector:
+    mission-control.datastax.com/role: platform
+kubernetes-ingress:
+  controller:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    replicaCount: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    service:
+      annotations: null
+      enablePorts:
+        http: false
+        prometheus: false
+        stat: false
+      labels: null
+      ports:
+        http: "8080"
+        https: "8443"
+        prometheus: "6060"
+        stat: "1024"
+      type: LoadBalancer
+  enabled: false
+loki:
+  backend:
+    affinity: |
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: mission-control.datastax.com/role
+                  operator: In
+                  values: ["platform"]
+    persistence:
+      size: 10Gi
+      storageClass: ""
+      volumeClaimsEnabled: "1"
+    extraArgs:
+      - '-config.expand-env=true'
+    extraEnv:
+      - name: **OBSERVABILITY_S3_ACCESS_KEY_ENV_VAR**
+        valueFrom:
+          secretKeyRef:
+            name: **OBSERVABILITY_S3_SECRET_NAME**
+            key: **OBSERVABILITY_S3_ACCESS_KEY_SECRET_KEY**
+      - name: **OBSERVABILITY_S3_SECRET_KEY_ENV_VAR**
+        valueFrom:
+          secretKeyRef:
+            name: **OBSERVABILITY_S3_SECRET_NAME**
+            key: **OBSERVABILITY_S3_SECRET_KEY_SECRET_KEY**
+  enabled: true
+  gateway:
+    affinity: |
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: mission-control.datastax.com/role
+                  operator: In
+                  values: ["platform"]
+  global:
+    clusterDomain: cluster.local
+    dnsNamespace: openshift-dns
+    dnsService: dns-default
+  loki:
+    commonConfig:
+      replication_factor: 1
+    compactor:
+      retention_enabled: true
+      delete_request_store: s3
+      working_directory: /var/loki/retention
+    limits_config:
+      ingestion_burst_size_mb: 2000
+      ingestion_rate_mb: 1000
+      retention_period: **OBSERVABILITY_LOGS_STORAGE_RETENTION**
+    rulerConfig:
+      storage:
+        local:
+          directory: /var/loki/rules
+        type: local
+    schemaConfig:
+      configs:
+      - from: 2020-05-15
+        index:
+          period: 24h
+          prefix: index_
+        object_store: s3
+        schema: v11
+        store: boltdb-shipper
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+    storage:
+      bucketNames:
+        chunks: **OBSERVABILITY_LOGS_BUCKET_NAME**
+      s3:
+        accessKeyId: "${**OBSERVABILITY_S3_ACCESS_KEY_ENV_VAR**}"
+        endpoint: s3.**REGION**.amazonaws.com
+        http_config:
+          insecure_skip_verify: false
+        insecure: true
+        region: **OBSERVABILITY_S3_REGION**
+        s3: s3.**REGION**.amazonaws.com
+        s3ForcePathStyle: false
+        secretAccessKey: "${**OBSERVABILITY_S3_SECRET_KEY_ENV_VAR**}"
+      type: s3
+  read:
+    affinity: |
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: mission-control.datastax.com/role
+                  operator: In
+                  values: ["platform"]
+    persistence:
+      enabled: "1"
+      size: 10Gi
+      storageClassName: ""
+    replicas: 1
+  sidecar:
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+  write:
+    affinity: |
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: mission-control.datastax.com/role
+                  operator: In
+                  values: ["platform"]
+    persistence:
+      size: 10Gi
+      storageClass: ""
+      volumeClaimsEnabled: "1"
+    replicas: 1
+mimir:
+  alertmanager:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    enabled: true
+    extraArgs:
+      alertmanager-storage.backend: local
+      alertmanager-storage.local.path: /etc/alertmanager/config
+      alertmanager.configs.fallback: /etc/alertmanager/config/default.yml
+      alertmanager.sharding-ring.replication-factor: "2"
+    extraVolumeMounts:
+    - mountPath: /etc/alertmanager/config
+      name: alertmanager-config
+    - mountPath: /alertmanager
+      name: alertmanager-config-tmp
+    extraVolumes:
+    - name: alertmanager-config
+      secret:
+        secretName: alertmanager-config
+    - emptyDir: {}
+      name: alertmanager-config-tmp
+    persistentVolume:
+      accessModes:
+      - ReadWriteOnce
+      enabled: "1"
+      size: **OBSERVABILITY_METRICS_ALERTS_VOLUME_SIZE**
+      storageClass: **OBSERVABILITY_METRICS_STORAGE_CLASS**
+    replicas: "2"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  compactor:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    extraArgs:
+      compactor.blocks-retention-period: **OBSERVABILITY_METRICS_STORAGE_RETENTION**
+    persistentVolume:
+      accessModes:
+      - ReadWriteOnce
+      enabled: "1"
+      size: **OBSERVABILITY_METRICS_COMPACTOR_VOLUME_SIZE**
+      storageClass: **OBSERVABILITY_METRICS_STORAGE_CLASS**
+    replicas: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  distributor:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    extraArgs:
+      ingester.ring.replication-factor: "1"
+    replicas: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  enabled: true
+  ingester:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    extraArgs:
+      ingester.max-global-series-per-user: "0"
+      ingester.ring.replication-factor: "1"
+    persistentVolume:
+      accessModes:
+      - ReadWriteOnce
+      enabled: "1"
+      size: **OBSERVABILITY_METRICS_INGESTER_VOLUME_SIZE**
+      storageClass: **OBSERVABILITY_METRICS_STORAGE_CLASS**
+    replicas: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  mimir:
+    structuredConfig:
+      activity_tracker:
+        filepath: /data/activity.log
+      blocks_storage:
+        backend: s3
+        bucket_store:
+          sync_dir: /data/tsdb-sync
+        s3:
+          access_key_id: "${**OBSERVABILITY_S3_ACCESS_KEY_ENV_VAR**}"
+          bucket_name: **OBSERVABILITY_BUCKET_NAME**
+          endpoint: s3.**REGION**.amazonaws.com
+          http:
+            insecure_skip_verify: false
+          insecure: true
+          secret_access_key: "${**OBSERVABILITY_S3_SECRET_KEY_ENV_VAR**}"
+        tsdb:
+          dir: /data/tsdb
+      limits:
+        ingestion_burst_size: 100000
+        ingestion_rate: 50000
+        max_label_names_per_series: 120
+        out_of_order_time_window: 5m
+    extraEnvFrom:
+      - secretRef:
+          name: **OBSERVABILITY_S3_SECRET_NAME**
+    extraEnv:
+      - name: **OBSERVABILITY_S3_ACCESS_KEY_ENV_VAR**
+        valueFrom:
+          secretKeyRef:
+            name: **OBSERVABILITY_S3_SECRET_NAME**
+            key: **OBSERVABILITY_S3_ACCESS_KEY_SECRET_KEY**
+      - name: **OBSERVABILITY_S3_SECRET_KEY_ENV_VAR**
+        valueFrom:
+          secretKeyRef:
+            name: **OBSERVABILITY_S3_SECRET_NAME**
+            key: **OBSERVABILITY_S3_SECRET_KEY_SECRET_KEY**
+  minio:
+    buckets:
+    - name: mimir-tsdb
+      policy: none
+      purge: false
+    - name: mimir-ruler
+      policy: none
+      purge: false
+    - name: **OBSERVABILITY_LOGS_BUCKET_NAME**
+      policy: none
+      purge: false
+    - name: loki-ruler
+      policy: none
+      purge: false
+    - name: loki-admin
+      policy: none
+      purge: false
+    - name: mc-medusa
+      policy: none
+      purge: false
+    configPathmc: /tmp/minio/mc/
+    enabled: false
+    mode: standalone
+    persistence:
+      size: 5Gi
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+    rootPassword: minioadmin
+    rootUser: minioadmin
+    users:
+    - accessKey: mimir-user
+      policy: readwrite
+      secretKey: mimir-user
+  gateway:
+    nginx:
+      config:
+        resolver: dns-default.openshift-dns.svc.cluster.local
+  nginx:
+    affinity: |
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: mission-control.datastax.com/role
+                  operator: In
+                  values: ["platform"]
+    nginxConfig:
+      resolver: dns-default.openshift-dns.svc
+  overrides_exporter:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+  querier:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    extraArgs:
+      ingester.ring.replication-factor: "1"
+    replicas: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  query_frontend:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    replicas: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  query_scheduler:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    replicas: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  ruler:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    enabled: true
+    extraArgs:
+      ingester.ring.replication-factor: "1"
+      ruler-storage.backend: local
+      ruler-storage.local.directory: /etc/rules
+      ruler.alertmanager-url: http://mission-control-mimir-alertmanager:8080/alertmanager
+      ruler.query-frontend.address: mission-control-mimir-query-frontend:9095
+    extraVolumeMounts:
+    - mountPath: /etc/rules/anonymous
+      name: ruler-config
+    extraVolumes:
+    - name: ruler-config
+      projected:
+        defaultMode: 420
+        sources:
+        - configMap:
+            name: mission-control-ruler-config
+        - configMap:
+            name: mission-control-ruler-custom-config
+    replicas: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  store_gateway:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: mission-control.datastax.com/role
+              operator: In
+              values:
+              - platform
+    persistentVolume:
+      accessModes:
+      - ReadWriteOnce
+      enabled: "1"
+      size: **OBSERVABILITY_METRICS_STORE_GATEWAY_VOLUME_SIZE**
+      storageClass: **OBSERVABILITY_METRICS_STORAGE_CLASS**
+    replicas: "1"
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+nodeSelector:
+  mission-control.datastax.com/role: platform
+podSecurityContext:
+  runAsNonRoot: true
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+ui:
+  baseUrl: ""
+  enabled: true
+  https:
+    enabled: true

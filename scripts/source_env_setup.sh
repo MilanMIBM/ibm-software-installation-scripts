@@ -26,6 +26,7 @@ export CONFIGS_ROOT="$(cd "${_ENV_SETUP_DIR}/.." && pwd)/configs"
 export CONFIG_DIR="${CONFIGS_ROOT}/cp4d_config"
 export CONFLUENT_CONFIG_DIR="${CONFIGS_ROOT}/confluent_platform_config"
 export CONCERT_CONFIG_DIR="${CONFIGS_ROOT}/concert_config"
+export DATASTAX_MC_CONFIG_DIR="${CONFIGS_ROOT}/datastax_mc_config"
 export SERVICE_INSTANCE_FILE_DIR="${_ENV_SETUP_DIR}/../service_instances"
 # Ensure payload output dir exists so provisioning scripts can write into it
 mkdir -p "${SERVICE_INSTANCE_FILE_DIR}"
@@ -33,6 +34,7 @@ _env_log "CONFIGS_ROOT=${CONFIGS_ROOT}"
 _env_log "CONFIG_DIR=${CONFIG_DIR}"
 _env_log "CONFLUENT_CONFIG_DIR=${CONFLUENT_CONFIG_DIR}"
 _env_log "CONCERT_CONFIG_DIR=${CONCERT_CONFIG_DIR}"
+_env_log "DATASTAX_MC_CONFIG_DIR=${DATASTAX_MC_CONFIG_DIR}"
 _env_log "SERVICE_INSTANCE_FILE_DIR=${SERVICE_INSTANCE_FILE_DIR}"
 unset _ENV_SETUP_DIR
 
@@ -73,7 +75,7 @@ _source_if_exists() {
 # a bare name (confluent -> confluent_vars.sh, looked up in every configs/*/
 # subfolder) or a path to a config file. Scripts normally get ENV_TARGET from
 # env_bootstrap.sh, which infers it from the script's folder (cpd, confluent,
-# concert) unless ENV_TARGET or --env-target is given.
+# concert, datastax_mc) unless ENV_TARGET or --env-target is given.
 if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
     _target_file="${ENV_TARGET}"
     for _d in "${CONFIGS_ROOT}"/*(N/); do
@@ -85,6 +87,7 @@ if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
     if [[ ! -f "${_target_file}" ]]; then
         echo "[ERROR] ENV_TARGET='${ENV_TARGET}' does not resolve to a config file." >&2
         echo "[ERROR] Tried: ${ENV_TARGET}, ${CONFIGS_ROOT}/*/${ENV_TARGET}_vars.sh, ${CONFIGS_ROOT}/*/${ENV_TARGET}" >&2
+        [[ "${ENV_TARGET}" == datastax_mc ]] && echo "[ERROR] Create it with scripts/install_datastax_mc_standalone/0_initial_setup/0.0_generate_datastax_mc_config.sh --empty (or --from-cpd)" >&2
         return 1 2>/dev/null || exit 1
     fi
 
