@@ -325,6 +325,11 @@ fi
 # ------------------------------------------------------------------------------
 # Steps
 # ------------------------------------------------------------------------------
+# Run directly, a 2.2.x prerequisite script installs its operator regardless of
+# CPD_COMPONENTS. Here they are part of the whole flow (2.2.4 is also called
+# directly for mcg-secrets), so they install only what the components need.
+export CP4D_PREREQ_GATE_DEFAULT="${CP4D_PREREQ_GATE_DEFAULT:-auto}"
+
 # run_step <step> <command...>: runs the command when the step is selected.
 run_step() {
     local step="$1"

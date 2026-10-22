@@ -25,29 +25,24 @@ INSTALL_OPERATORS_IN_PARALLEL="${INSTALL_OPERATORS_IN_PARALLEL:-true}"
 #             with the other lanes.
 #   cpd-cli - MCG and Knative Eventing both drive `cpd-cli manage` through the one
 #             shared olm-utils container and work dir, so they must not overlap.
-CPD_CLI_LANE="2.2.4_install_multicloud_object_gateway_operator.sh"
+#
+# Run from here, each script installs its operator only when a component in
+# CPD_COMPONENTS needs it with its install options (IBM's defaults where none are
+# set), and exits straight away otherwise. Run directly, a 2.2.x script installs
+# its operator regardless. CP4D_PREREQ_GATE_DEFAULT carries the "auto" default to
+# the scripts. Override per operator with auto / true (skip) / false (install anyway):
+#   SKIP_GPU_OPERATORS_INSTALL     2.2.1 + 2.2.2
+#   SKIP_RHOAI_INSTALL             2.2.3 (RHOAI_CREATE_DSC for the DataScienceCluster)
+#   SKIP_MCG_INSTALL               2.2.4
+#   SKIP_KNATIVE_EVENTING_INSTALL  2.2.5
+# The rules live in src/helpers/cp4d_prereq_requirements.py.
+export CP4D_PREREQ_GATE_DEFAULT="${CP4D_PREREQ_GATE_DEFAULT:-auto}"
 
-# Knative Eventing is only needed by watsonx_orchestrate and watson_assistant, so
-# it is not installed by default. Exact match on the comma-separated list, so e.g.
-# "watson_assistant_foo" does not trigger it. Run 2.2.5 directly to force it.
-_components=",${CPD_COMPONENTS:-},"
-if [[ "${_components// /}" == *",watsonx_orchestrate,"* || "${_components// /}" == *",watson_assistant,"* ]]; then
-  CPD_CLI_LANE+=" 2.2.5_install_ibm_knative_eventing_operator.sh"
-else
-  echo "[INFO] watsonx_orchestrate / watson_assistant not in CPD_COMPONENTS; skipping 2.2.5_install_ibm_knative_eventing_operator.sh."
-fi
-unset _components
-
-# SKIP_RHOAI_INSTALL=true drops the OpenShift AI lane (operator + Service Mesh)
-# entirely. Off by default; 2.2.3 then decides on its own whether a
-# DataScienceCluster is needed (RHOAI_CREATE_DSC=auto|true|false).
-LANES=("gpu:2.2.1_install_nvidia_node_discovery.sh 2.2.2_install_nvidia_gpu_operator.sh")
-if [[ "${SKIP_RHOAI_INSTALL:-false}" == "true" ]]; then
-  echo "[INFO] SKIP_RHOAI_INSTALL=true; skipping 2.2.3_install_openshift_ai_operator.sh."
-else
-  LANES+=("rhoai:2.2.3_install_openshift_ai_operator.sh")
-fi
-LANES+=("cpd-cli:${CPD_CLI_LANE}")
+LANES=(
+  "gpu:2.2.1_install_nvidia_node_discovery.sh 2.2.2_install_nvidia_gpu_operator.sh"
+  "rhoai:2.2.3_install_openshift_ai_operator.sh"
+  "cpd-cli:2.2.4_install_multicloud_object_gateway_operator.sh 2.2.5_install_ibm_knative_eventing_operator.sh"
+)
 
 run_lane() {
   local script

@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # source "${SCRIPT_DIR}/../../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
 
 # ------------------------------------------------------------------------------
 # Determine which of the MCG-dependent components are being installed
@@ -34,12 +35,16 @@ if [[ " ${MCG_COMPONENTS[*]} " == *" watsonx_orchestrate "* && " ${MCG_COMPONENT
     MCG_COMPONENTS+=(watson_assistant)
 fi
 
-if (( ${#MCG_COMPONENTS[@]} == 0 )); then
-    echo "[INFO] No components with a Multicloud Object Gateway dependency are being installed - skipping."
-    exit 0
-fi
+# SKIP_MCG_INSTALL:
+#   auto (default from 2.2_install_prerequisite_operators.sh) - install only when
+#        one of the components above is in CPD_COMPONENTS
+#   true / false - always skip / install
+#   Run directly, this script installs it whatever CPD_COMPONENTS holds (with a banner).
+cp4d_prereq_gate mcg SKIP_MCG_INSTALL "Multicloud Object Gateway" || exit 0
 
-echo "[INFO] Components requiring Multicloud Object Gateway: ${MCG_COMPONENTS[*]}"
+if (( ${#MCG_COMPONENTS[@]} > 0 )); then
+    echo "[INFO] Components requiring Multicloud Object Gateway: ${MCG_COMPONENTS[*]}"
+fi
 
 eval "${OC_LOGIN}"
 
@@ -113,6 +118,13 @@ echo "[INFO] Using certificate secret:  ${NOOBAA_ACCOUNT_CERTIFICATE_SECRET}"
 # at this cluster's NooBaa).
 if [[ "${MCG_SETUP_INSTANCE_SECRETS:-true}" != "true" ]]; then
     echo "[INFO] MCG_SETUP_INSTANCE_SECRETS=false - skipping setup-mcg for ${PROJECT_CPD_INST_OPERANDS}."
+    exit 0
+fi
+
+# SKIP_MCG_INSTALL=false installs NooBaa even without MCG-dependent components;
+# setup-mcg needs at least one, so there is nothing more to do then.
+if (( ${#MCG_COMPONENTS[@]} == 0 )); then
+    echo "[INFO] No MCG-dependent components in CPD_COMPONENTS - no MCG secrets to create."
     exit 0
 fi
 

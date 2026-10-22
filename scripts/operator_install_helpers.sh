@@ -243,3 +243,97 @@ cp4d_wait_for_csv() {
         echo "  [${elapsed}s] CSV ${csv_prefix}*: ${phase:-pending}"
     done
 }
+
+# -----------------------------------------------------------------------------
+# cp4d_prereq_assess <gpu|rhoai|mcg|knative>
+# -----------------------------------------------------------------------------
+# Decide whether CPD_COMPONENTS needs a cluster prerequisite, from the install
+# options the component install passes as --param-file (IBM's defaults where a
+# service has none). The rules live in src/helpers/cp4d_prereq_requirements.py.
+# Prints one [needed] / [not needed] line per relevant component and sets
+# CP4D_PREREQ_NEEDED=true|false. If the options cannot be read it warns and sets
+# true: an unneeded operator costs resources, a missing one breaks the install.
+# Needs no cluster access, so callers can run it before logging in.
+cp4d_prereq_assess() {
+    local prereq="$1" opts_file="" verdicts
+    if [[ "${INSTALL_OPTIONS:-}" == "true" && -n "${INSTALL_OPTIONS_FILE:-}" ]]; then
+        opts_file="${CONFIG_DIR}/${INSTALL_OPTIONS_FILE}"
+        if [[ ! -f "${opts_file}" ]]; then
+            echo "[WARN] ${opts_file} not found - judging on IBM's default install options." >&2
+            opts_file=""
+        fi
+    fi
+    echo "[INFO] Checking CPD_COMPONENTS for the ${prereq} prerequisite (options: ${opts_file:-IBM defaults})..."
+    if verdicts="$(CPD_COMPONENTS="${CPD_COMPONENTS:-}" \
+            python3 "${_CP4D_REPO_ROOT}/src/helpers/cp4d_prereq_requirements.py" "${prereq}" "${opts_file}")"; then
+        if [[ -n "${verdicts}" ]]; then
+            print -r -- "${verdicts}" | sed 's/^/[INFO]   /'
+        fi
+        if grep -q '^\[needed\]' <<< "${verdicts}"; then
+            CP4D_PREREQ_NEEDED=true
+        else
+            CP4D_PREREQ_NEEDED=false
+        fi
+    else
+        echo "[WARN] Could not evaluate the install options - treating ${prereq} as needed to be safe." >&2
+        CP4D_PREREQ_NEEDED=true
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# cp4d_prereq_gate <gpu|rhoai|mcg|knative> <switch-variable-name> <label>
+# -----------------------------------------------------------------------------
+# Apply a SKIP_*_INSTALL switch for an operator install script:
+#   auto  - install only if cp4d_prereq_assess finds a component needing it
+#   true  - always skip
+#   false - always install, whatever CPD_COMPONENTS holds
+# With the switch unset, the default comes from CP4D_PREREQ_GATE_DEFAULT, which
+# the callers that run whole flows export as "auto"
+# (2.2_install_prerequisite_operators.sh, and through it the full installs, plus
+# the fresh-cluster restore). Unset means the script was run directly: it then
+# installs whatever CPD_COMPONENTS holds and says so in a banner.
+# Returns 0 to install, 1 to skip; callers use `cp4d_prereq_gate ... || exit 0`.
+cp4d_prereq_gate() {
+    local prereq="$1" switch="$2" label="$3"
+    local mode="${(P)switch:-}"
+    if [[ -z "${mode}" && -z "${CP4D_PREREQ_GATE_DEFAULT:-}" ]]; then
+        local script="${ZSH_ARGZERO:t}"
+        echo ""
+        echo "################################################################################"
+        echo "##"
+        echo "##  DIRECT RUN of ${script}"
+        echo "##"
+        echo "##  Installing ${label} WHATEVER CPD_COMPONENTS HOLDS."
+        echo "##  This is the default when a 2.2.x script is run on its own."
+        echo "##"
+        echo "##  2.2_install_prerequisite_operators.sh and the full installs install it"
+        echo "##  only when a selected component needs it. For this run, set:"
+        echo "##    ${switch}=auto   install only if a component needs it"
+        echo "##    ${switch}=true   skip it"
+        echo "##"
+        echo "################################################################################"
+        echo ""
+        return 0
+    fi
+    mode="${mode:-${CP4D_PREREQ_GATE_DEFAULT}}"
+    case "${mode}" in
+        true)
+            echo "[INFO] ${switch}=true - skipping ${label}."
+            return 1
+            ;;
+        false)
+            echo "[INFO] ${switch}=false - installing ${label} whatever CPD_COMPONENTS holds."
+            return 0
+            ;;
+        auto)
+            cp4d_prereq_assess "${prereq}"
+            [[ "${CP4D_PREREQ_NEEDED}" == "true" ]] && return 0
+            echo "[INFO] No component in CPD_COMPONENTS needs ${label} - skipping (${switch}=false installs it anyway)."
+            return 1
+            ;;
+        *)
+            echo "[ERROR] ${switch} / CP4D_PREREQ_GATE_DEFAULT must be auto, true or false (got '${mode}')." >&2
+            exit 1
+            ;;
+    esac
+}

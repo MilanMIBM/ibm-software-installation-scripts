@@ -14,6 +14,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
 
+# SKIP_GPU_OPERATORS_INSTALL (shared by 2.2.1 NFD and 2.2.2 NVIDIA GPU Operator):
+#   auto (default from 2.2_install_prerequisite_operators.sh) - install only when
+#        CPD_COMPONENTS has a service that needs GPU with its install options
+#   true / false - always skip / install
+#   Run directly, this script installs it whatever CPD_COMPONENTS holds (with a banner).
+cp4d_prereq_gate gpu SKIP_GPU_OPERATORS_INSTALL "the GPU operators (NFD + NVIDIA GPU Operator)" || exit 0
+
 eval "${OC_LOGIN}"
 
 NAMESPACE="openshift-nfd"
