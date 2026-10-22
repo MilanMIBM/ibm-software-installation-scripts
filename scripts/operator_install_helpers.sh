@@ -263,9 +263,14 @@ cp4d_prereq_assess() {
             opts_file=""
         fi
     fi
+    # Prefer the repo's virtualenv (it has PyYAML) over whatever python3 is on PATH.
+    local python="python3"
+    if [[ -x "${_CP4D_REPO_ROOT}/.venv/bin/python" ]]; then
+        python="${_CP4D_REPO_ROOT}/.venv/bin/python"
+    fi
     echo "[INFO] Checking CPD_COMPONENTS for the ${prereq} prerequisite (options: ${opts_file:-IBM defaults})..."
     if verdicts="$(CPD_COMPONENTS="${CPD_COMPONENTS:-}" \
-            python3 "${_CP4D_REPO_ROOT}/src/helpers/cp4d_prereq_requirements.py" "${prereq}" "${opts_file}")"; then
+            "${python}" "${_CP4D_REPO_ROOT}/src/helpers/cp4d_prereq_requirements.py" "${prereq}" "${opts_file}")"; then
         if [[ -n "${verdicts}" ]]; then
             print -r -- "${verdicts}" | sed 's/^/[INFO]   /'
         fi

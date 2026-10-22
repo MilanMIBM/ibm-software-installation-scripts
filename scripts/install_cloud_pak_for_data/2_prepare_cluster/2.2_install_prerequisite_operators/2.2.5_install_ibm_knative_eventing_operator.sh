@@ -19,9 +19,9 @@ source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
 #        watson_assistant, or watsonx_orchestrate in agentic_assistant mode
 #   true / false - always skip / install
 #   Run directly, this script installs it whatever CPD_COMPONENTS holds (with a banner).
-cp4d_prereq_gate knative SKIP_KNATIVE_EVENTING_INSTALL "Red Hat OpenShift Serverless Knative Eventing + IBM Events" || exit 0
-
 [[ -n "${PROJECT_IBM_EVENTS:-}" ]] || { echo "[INFO] PROJECT_IBM_EVENTS is not set - skipping IBM Knative Eventing install."; exit 0; }
+
+cp4d_prereq_gate knative SKIP_KNATIVE_EVENTING_INSTALL "Red Hat OpenShift Serverless Knative Eventing + IBM Events" || exit 0
 
 eval "${OC_LOGIN}"
 
