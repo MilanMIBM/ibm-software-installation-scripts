@@ -38,11 +38,16 @@ else
 fi
 unset _components
 
-LANES=(
-  "gpu:2.2.1_install_nvidia_node_discovery.sh 2.2.2_install_nvidia_gpu_operator.sh"
-  "rhoai:2.2.3_install_openshift_ai_operator.sh"
-  "cpd-cli:${CPD_CLI_LANE}"
-)
+# SKIP_RHOAI_INSTALL=true drops the OpenShift AI lane (operator + Service Mesh)
+# entirely. Off by default; 2.2.3 then decides on its own whether a
+# DataScienceCluster is needed (RHOAI_CREATE_DSC=auto|true|false).
+LANES=("gpu:2.2.1_install_nvidia_node_discovery.sh 2.2.2_install_nvidia_gpu_operator.sh")
+if [[ "${SKIP_RHOAI_INSTALL:-false}" == "true" ]]; then
+  echo "[INFO] SKIP_RHOAI_INSTALL=true; skipping 2.2.3_install_openshift_ai_operator.sh."
+else
+  LANES+=("rhoai:2.2.3_install_openshift_ai_operator.sh")
+fi
+LANES+=("cpd-cli:${CPD_CLI_LANE}")
 
 run_lane() {
   local script

@@ -14,13 +14,179 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
 
+# --- Switches ------------------------------------------------------------------
+# SKIP_RHOAI_INSTALL=true skips this script entirely: no RHOAI operator and no
+# Service Mesh. Off by default.
+# RHOAI_CREATE_DSC controls the DataScienceCluster (the RHOAI operator itself is
+# always installed unless SKIP_RHOAI_INSTALL=true):
+#   auto  (default) - create it only when CPD_COMPONENTS has a service that needs
+#                     RHOAI with its install options (or IBM's defaults for them)
+#   true / false    - always / never create it
+SKIP_RHOAI_INSTALL="${SKIP_RHOAI_INSTALL:-false}"
+RHOAI_CREATE_DSC="${RHOAI_CREATE_DSC:-auto}"
+
+if [[ "${SKIP_RHOAI_INSTALL}" == "true" ]]; then
+  echo "[INFO] SKIP_RHOAI_INSTALL=true - skipping Red Hat OpenShift AI and Service Mesh."
+  exit 0
+fi
+
+# --- Does any service need the DataScienceCluster? ----------------------------
+# Rules from IBM's "Installing Red Hat OpenShift AI" (Software Hub 5.4) table.
+# Options are read from the install-options file the component install passes as
+# --param-file; a service with no options there is judged on IBM's defaults.
+# Prints one "[needed]" / "[not needed]" line per relevant component; exits 2 if
+# the options file cannot be read.
+rhoai_dsc_verdicts() {
+  CPD_COMPONENTS="${CPD_COMPONENTS:-}" OPTIONS_FILE="$1" python3 - <<'PYEOF'
+import os, sys
+try:
+    import yaml
+except ImportError:
+    print("PyYAML is not available to python3", file=sys.stderr)
+    sys.exit(2)
+
+components = [c.strip() for c in os.environ["CPD_COMPONENTS"].split(",") if c.strip()]
+path = os.environ["OPTIONS_FILE"]
+
+# Merge every document's per-service blocks: the file is one YAML document per
+# service, each under non_olm (or override_components_meta / custom_spec).
+opts = {}
+if path:
+    try:
+        with open(path) as f:
+            for doc in yaml.safe_load_all(f):
+                if not isinstance(doc, dict):
+                    continue
+                for section in ("non_olm", "override_components_meta", "custom_spec"):
+                    for svc, cfg in (doc.get(section) or {}).items():
+                        if isinstance(cfg, dict):
+                            opts.setdefault(svc, {}).update(cfg)
+    except (OSError, yaml.YAMLError) as e:
+        print(f"cannot read {path}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+def block(*names):
+    for n in names:
+        if n in opts:
+            return opts[n]
+    return None
+
+def get(cfg, key, default):
+    v = (cfg or {}).get(key)
+    return default if v is None else v
+
+def text(v):
+    return str(v).strip().lower()
+
+def on(v):
+    return text(v) in ("true", "yes", "1")
+
+def enrichments_on(node, under=False):
+    # IBM documents no exact key for Speech enrichments, so match any key
+    # containing "enrich" that is switched on.
+    if isinstance(node, dict):
+        return any(enrichments_on(v, under or "enrich" in str(k).lower()) for k, v in node.items())
+    if isinstance(node, list):
+        return under and bool(node)
+    return under and on(node)
+
+# Always need RHOAI. watsonx_ai_ifm serves the Inference foundation models, and
+# the wca_z family runs models too, so those are kept here to fail safe.
+ALWAYS = {
+    "watsonx_ai", "watsonx_ai_ifm", "watsonx_bi_assistant",
+    "wca", "wca_ansible", "wca_z", "wca_z_agentic", "wca_z_ce", "wca_z_cg", "wca_z_understand",
+}
+
+def verdict(c):
+    if c in ALWAYS:
+        return True, "always requires Red Hat OpenShift AI"
+    if c in ("ikc_premium", "ikc_standard"):
+        key = "ikcPremium" if c == "ikc_premium" else "ikcStandard"
+        m = text(get(block(key), "enableModelsOn", "cpu"))
+        return m == "gpu", f"{key}.enableModelsOn={m} (needed only for gpu)"
+    if c == "watson_speech":
+        e = enrichments_on(block("watsonSpeech") or {})
+        return e, f"watsonSpeech enrichments {'on' if e else 'off'} (needed only for enrichments)"
+    if c == "watson_assistant":
+        t = text(get(block("watsonAssistant"), "watsonxAiType", "none"))
+        return t == "embedded", f"watsonAssistant.watsonxAiType={t} (needed only for embedded/GPU features)"
+    if c == "watsonx_data_premium":
+        cfg = block("watsonxDataPremium")
+        if cfg is None:
+            return True, "no watsonxDataPremium options - assuming all features"
+        comps = get(cfg, "component", [])
+        comps = [text(x) for x in (comps if isinstance(comps, list) else [comps])]
+        gpu = text(get(cfg, "wxd_premium_enable_models_on", "")) == "gpu"
+        if "premium" in comps or gpu:
+            return True, "watsonxDataPremium all features (component premium / models on gpu)"
+        if not comps:
+            return True, "watsonxDataPremium.component not set - assuming all features"
+        return False, f"watsonxDataPremium.component={','.join(comps)} (limited features)"
+    if c == "watsonx_dataintegration":
+        u = on(get(block("watsonxDataintegration", "watsonx_dataintegration"),
+                   "enableUnstructuredDataIntegration", True))
+        return u, f"enableUnstructuredDataIntegration={str(u).lower()} (IBM default true)"
+    if c == "watsonx_dataintelligence":
+        cfg = block("watsonxDataintelligence")
+        m = text(get(cfg, "enableModelsOn", "cpu"))
+        u = on(get(cfg, "enableUnstructuredDataIntegration", False))
+        return m == "gpu" or u, f"watsonxDataintelligence.enableModelsOn={m}, enableUnstructuredDataIntegration={str(u).lower()}"
+    if c == "watsonx_orchestrate":
+        ai = get(block("watsonxOrchestrate"), "watsonxAI", {}) or {}
+        f = on(get(ai, "watsonxaiifm", False))
+        return f, f"watsonxOrchestrate.watsonxAI.watsonxaiifm={str(f).lower()} (needed only for local models)"
+    return None
+
+for c in components:
+    v = verdict(c)
+    if v is not None:
+        print(f"[{'needed' if v[0] else 'not needed'}] {c}: {v[1]}")
+PYEOF
+}
+
+case "${RHOAI_CREATE_DSC}" in
+  true|false)
+    CREATE_DSC="${RHOAI_CREATE_DSC}"
+    echo "[INFO] RHOAI_CREATE_DSC=${RHOAI_CREATE_DSC} - DataScienceCluster creation set explicitly."
+    ;;
+  auto)
+    # Same file the component install passes as --param-file, read from the host side.
+    OPTIONS_FILE=""
+    if [[ "${INSTALL_OPTIONS:-}" == "true" && -n "${INSTALL_OPTIONS_FILE:-}" ]]; then
+      OPTIONS_FILE="${CONFIG_DIR}/${INSTALL_OPTIONS_FILE}"
+      if [[ ! -f "${OPTIONS_FILE}" ]]; then
+        echo "[WARN] ${OPTIONS_FILE} not found - judging on IBM's default install options." >&2
+        OPTIONS_FILE=""
+      fi
+    fi
+    echo "[INFO] Checking whether CPD_COMPONENTS needs a DataScienceCluster (options: ${OPTIONS_FILE:-IBM defaults})..."
+    if DSC_VERDICTS="$(rhoai_dsc_verdicts "${OPTIONS_FILE}")"; then
+      [[ -n "${DSC_VERDICTS}" ]] && print -r -- "${DSC_VERDICTS}" | sed 's/^/[INFO]   /'
+      if grep -q '^\[needed\]' <<< "${DSC_VERDICTS}"; then
+        CREATE_DSC=true
+      else
+        CREATE_DSC=false
+        echo "[INFO] No component in CPD_COMPONENTS needs Red Hat OpenShift AI with these options -"
+        echo "[INFO] installing the operator without a DataScienceCluster."
+      fi
+    else
+      echo "[WARN] Could not evaluate the install options - creating the DataScienceCluster to be safe." >&2
+      CREATE_DSC=true
+    fi
+    ;;
+  *)
+    echo "[ERROR] RHOAI_CREATE_DSC must be auto, true or false (got '${RHOAI_CREATE_DSC}')." >&2
+    exit 1
+    ;;
+esac
+
 eval "${OC_LOGIN}"
 
 NAMESPACE="redhat-ods-operator"
 # Service Mesh version to install: 2 or 3. Defaults to 3 for CP4D 5.4.0+ and 2 for
 # earlier releases; export SERVICE_MESH_VERSION to override.
 SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-$(cp4d_default_service_mesh_version)}"
-TIMEOUT=60
+TIMEOUT=300
 
 # Map CP4D VERSION to the corresponding RHOAI channel.
 # Channel names are OLM channel identifiers (e.g. "2.25"), not CSV version strings.
@@ -55,6 +221,13 @@ if [[ "${RHOAI_CSV_PHASE}" == "Succeeded" ]]; then
   # DataScienceCluster reports readiness through its Ready condition, not .status.phase.
   DSC_READY=$(oc get datasciencecluster default-dsc \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+  # Without a DataScienceCluster to create, a Ready DSCInitialization is the finished state.
+  if [[ "${CREATE_DSC}" == "true" ]]; then
+    HEALTHY_DESC="DataScienceCluster is Ready"
+  else
+    HEALTHY_DESC="DSCInitialization is Ready (no DataScienceCluster needed)"
+    DSC_READY="True"
+  fi
 
   if [[ "${DSCI_PHASE}" == "Ready" && "${DSC_READY}" == "True" ]]; then
     # A different channel family (stable -> fast) or major version is not an
@@ -67,7 +240,7 @@ if [[ "${RHOAI_CSV_PHASE}" == "Succeeded" ]]; then
     }
     case "${CHANNEL_STATE}" in
       match)
-        echo "[INFO] RHOAI already installed on channel ${CHANNEL_VERSION} and DataScienceCluster is Ready, skipping."
+        echo "[INFO] RHOAI already installed on channel ${CHANNEL_VERSION} and ${HEALTHY_DESC}, skipping."
         exit 0
         ;;
       patched)
@@ -214,6 +387,16 @@ if [[ "${PHASE:-}" != "Ready" ]]; then
   exit 1
 fi
 echo "DSCInitialization is Ready."
+
+if [[ "${CREATE_DSC}" != "true" ]]; then
+  # An existing DataScienceCluster may carry user workloads, so it is never removed here.
+  if oc get datasciencecluster default-dsc &>/dev/null; then
+    echo "[INFO] DataScienceCluster default-dsc already exists - leaving it in place."
+  fi
+  echo "[INFO] Skipping the DataScienceCluster. To create it later: RHOAI_CREATE_DSC=true $0"
+  echo "Red Hat OpenShift AI Operator installation complete."
+  exit 0
+fi
 
 # Create DataScienceCluster
 echo "Creating DataScienceCluster..."

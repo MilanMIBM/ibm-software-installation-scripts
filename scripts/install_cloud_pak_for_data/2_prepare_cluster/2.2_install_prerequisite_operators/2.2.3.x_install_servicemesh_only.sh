@@ -22,7 +22,7 @@ NAMESPACE="openshift-operators"
 # earlier releases; export SERVICE_MESH_VERSION to override.
 SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-$(cp4d_default_service_mesh_version)}"
 CHANNEL="stable"
-TIMEOUT=60
+TIMEOUT=300
 
 case "${SERVICE_MESH_VERSION}" in
   3) SM_OPERATOR="servicemeshoperator3" ;;
