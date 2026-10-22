@@ -20,6 +20,11 @@ if [[ -n "${PATCH_ID:-}" ]]; then
     PATCH_FLAG=(--patch_id=${PATCH_ID})
 fi
 
+# Air-gapped (CPD_CASE_SOURCE=offline): the CASE packages must already be in the
+# work dir (private registry mirroring track, transfer bundle) - checked here.
+source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
+cp4d_offline_case_check || exit 1
+
 # --- Case download for the components
 eval "${CPDM_OC_LOGIN}"
 

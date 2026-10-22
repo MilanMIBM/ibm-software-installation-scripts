@@ -29,7 +29,9 @@ mc_require_config
 # A data plane must use the same MC_RELEASE_NAME as its control plane.
 # ==============================================================================
 
-CHART="oci://icr.io/mission-control-helm/mission-control"
+# MC_CHART: the private registry mirroring track points it at the chart's copy in
+# the registry (registry_overrides.sh; 3.5 also logs helm in there).
+CHART="${MC_CHART:-oci://icr.io/mission-control-helm/mission-control}"
 
 "${SCRIPT_DIR}/2.0_render_values.sh"
 

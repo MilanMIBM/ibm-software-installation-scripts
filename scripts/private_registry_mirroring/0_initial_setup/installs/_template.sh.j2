@@ -1,0 +1,15 @@
+{#- Config section of one install in registry_mirror_vars.sh.
+    Context: install (the .conf values), ID (upper-case id), components_comment
+    (the component catalog from `<id>.sh components`, as comment lines).
+    Keep every selection empty: nothing is mirrored unless the user fills it in. -#}
+# ------------------------------------------------------------------------------
+# {{ install.INSTALL_LABEL }} ({{ install.INSTALL_ID }})
+# ------------------------------------------------------------------------------
+# Components (MIRROR_{{ ID }}_COMPONENTS, comma-separated):
+{{ components_comment }}
+# Content kinds (MIRROR_{{ ID }}_CONTENT): {{ install.INSTALL_CONTENT_KINDS }}
+export MIRROR_{{ ID }}_REGISTRY_PATH="{{ install.INSTALL_REGISTRY_PATH_DEFAULT }}"
+export MIRROR_{{ ID }}_COMPONENTS=""
+export MIRROR_{{ ID }}_CONTENT=""
+# source-prefix=subpath pairs, space-separated, for target-path collisions
+export MIRROR_{{ ID }}_PATH_OVERRIDES=""

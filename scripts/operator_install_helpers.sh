@@ -342,3 +342,30 @@ cp4d_prereq_gate() {
             ;;
     esac
 }
+
+# -----------------------------------------------------------------------------
+# cp4d_offline_case_check
+# -----------------------------------------------------------------------------
+# CPD_CASE_SOURCE=offline (air-gapped; written to configs/cp4d_config/
+# registry_overrides.sh by scripts/private_registry_mirroring/ for a local
+# registry): the CASE packages come from the transfer bundle. `cpd-cli manage
+# case-download` then reuses them without network - it only tries, and tolerates
+# failing, to refresh the patch metadata - so check they are there before it
+# runs. No-op unless CPD_CASE_SOURCE=offline. Returns 1 with a hint otherwise.
+cp4d_offline_case_check() {
+    [[ "${CPD_CASE_SOURCE:-online}" == offline ]] || return 0
+    local cases="${CPD_CLI_WORK_PATH:-${HOME}/cpd-cli/work}/offline/${VERSION}/.ibm-pak/data/cases"
+    if [[ ! -d "${cases}" || -z "$(ls -A "${cases}" 2>/dev/null)" ]]; then
+        echo "[ERROR] CPD_CASE_SOURCE=offline but ${cases} is empty - restore the transfer bundle" \
+             "(scripts/private_registry_mirroring/2_download_and_mirror/2.6_restore_transfer_bundle.sh)." >&2
+        return 1
+    fi
+    if [[ -n "${PATCH_ID:-}" ]]; then
+        local patch="${CPD_CLI_WORK_PATH:-${HOME}/cpd-cli/work}/offline/patch/patch-${VERSION}-${PATCH_ID}.yaml"
+        if [[ ! -f "${patch}" ]]; then
+            echo "[ERROR] CPD_CASE_SOURCE=offline but the patch metadata ${patch} is missing - restore the transfer bundle." >&2
+            return 1
+        fi
+    fi
+    echo "[INFO] CPD_CASE_SOURCE=offline - case-download reuses the CASE packages in ${cases}"
+}

@@ -27,6 +27,7 @@ export CONFIG_DIR="${CONFIGS_ROOT}/cp4d_config"
 export CONFLUENT_CONFIG_DIR="${CONFIGS_ROOT}/confluent_platform_config"
 export CONCERT_CONFIG_DIR="${CONFIGS_ROOT}/concert_config"
 export DATASTAX_MC_CONFIG_DIR="${CONFIGS_ROOT}/datastax_mc_config"
+export REGISTRY_MIRROR_CONFIG_DIR="${CONFIGS_ROOT}/registry_mirror_config"
 export SERVICE_INSTANCE_FILE_DIR="${_ENV_SETUP_DIR}/../service_instances"
 # Ensure payload output dir exists so provisioning scripts can write into it
 mkdir -p "${SERVICE_INSTANCE_FILE_DIR}"
@@ -56,6 +57,16 @@ _source_if_exists() {
     _sourced+=("$real")
     _env_loaded+=("${real#${_env_repo}/}")
     source "$real"
+}
+
+# registry_overrides.sh next to an install's *_vars.sh is written by
+# scripts/private_registry_mirroring/3_configure_cluster/3.5_point_installs_at_registry.sh
+# and points that install at the private registry. Sourced right after the
+# install's config so it wins; absent file = no change. The mirroring track's
+# own map hooks set PREG_SKIP_REGISTRY_OVERRIDES=1 to read the original sources.
+_source_registry_overrides() {
+    [[ "$1" == *_vars.sh && -z "${PREG_SKIP_REGISTRY_OVERRIDES:-}" ]] || return 0
+    _source_if_exists "${1:h}/registry_overrides.sh"
 }
 
 # ------------------------------------------------------------------------------
@@ -93,6 +104,7 @@ if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
 
     _source_if_exists "${_target_file}"
     export ENV_TARGET_FILE="$(cd "$(dirname "${_target_file}")" && pwd)/$(basename "${_target_file}")"
+    _source_registry_overrides "${ENV_TARGET_FILE}"
 
     # Companion instance-details files next to it (e.g. confluent_vars.sh ->
     # confluent_instance_details.sh, confluent_flink_instance_details.sh),
@@ -107,6 +119,7 @@ if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
     unset _target_file _target_details _d
 else
     _source_if_exists "${CONFIG_DIR}/cpd_vars.sh"
+    _source_registry_overrides "${CONFIG_DIR}/cpd_vars.sh"
     _source_if_exists "${CONFIG_DIR}/cpd_instance_details.sh"
     for _f in "${CONFIG_DIR}"/*.sh(N) "${CONFIGS_ROOT}"/*/*.sh(N); do
         # Only config files - other scripts dropped into configs/ (e.g. the
@@ -116,11 +129,17 @@ else
             continue
         fi
         _source_if_exists "$_f"
+        _source_registry_overrides "$_f"
     done
 fi
 
+# One-off overrides for a single child run: the private registry mirroring track
+# runs an install's own script (e.g. Concert's 1.1 mirror step) against the push
+# side of the registry this way, without touching the install's config.
+[[ -n "${PREG_RUN_OVERRIDES_FILE:-}" && -f "${PREG_RUN_OVERRIDES_FILE}" ]] && _source_if_exists "${PREG_RUN_OVERRIDES_FILE}"
+
 unset _f _sourced
-unset -f _source_if_exists
+unset -f _source_if_exists _source_registry_overrides
 
 # Caller overrides (set by s_env.sh KEY=VALUE args): applied after the configs
 # so they win, and before the login wrapping below so OCP_URL etc. take effect.

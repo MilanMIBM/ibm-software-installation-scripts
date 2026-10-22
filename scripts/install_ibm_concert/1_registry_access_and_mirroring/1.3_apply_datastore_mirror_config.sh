@@ -35,6 +35,10 @@ if [[ "${CONCERT_IMAGE_SOURCE}" == entitled ]]; then
     concert_info "CONCERT_IMAGE_SOURCE=entitled - nothing to apply."
     exit 0
 fi
+if concert_is_true "${CONCERT_MIRROR_VIA_SHARED:-false}"; then
+    concert_info "CONCERT_MIRROR_VIA_SHARED=true - mirror sets and catalogs come from scripts/private_registry_mirroring (3.3/3.4)."
+    exit 0
+fi
 
 RES_DIR="${1:-$(cat "${CONCERT_WORKSPACE}/oc-mirror/last-cluster-resources" 2>/dev/null || true)}"
 if [[ "${RES_DIR}" == none ]]; then

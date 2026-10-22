@@ -1,0 +1,45 @@
+# ------------------------------------------------------------------------------
+# {{ install.INSTALL_LABEL }} ({{ install.INSTALL_ID }})
+# ------------------------------------------------------------------------------
+# Components (MIRROR_CPD_COMPONENTS, comma-separated, the IDs cpd-cli uses). The
+# platform itself is ibm-licensing,scheduler,cpfs,cpd_platform,ccs,zen - list it
+# too, nothing is added automatically:
+{{ components_comment }}
+# Content kinds (MIRROR_CPD_CONTENT, comma-separated):
+#   case              CASE packages (cpd-cli manage case-download; needed offline)
+#   olm-utils         the olm-utils-v4 image for cpd-cli (saved for the stop-over)
+#   ibm-images        IBM images of the components (cpd-cli manage mirror-images)
+#   image-groups      optional models/images in MIRROR_CPD_IMAGE_GROUPS (--groups)
+#   prereq-operators  Red Hat/certified operators the 2.x scripts install
+#                     (cert-manager, NFD/GPU, OpenShift AI, Service Mesh, Serverless,
+#                     MCG) - gated like 2.2, mirrored into <root>/shared
+#   extra-images      images the CP4D scripts use outside CASE (Databand Postgres)
+#                     plus MIRROR_CPD_EXTRA_IMAGES
+#   vllm              vLLM images for ibm-watsonx-ai-ifm (MIRROR_CPD_VLLM)
+#   oadp              OADP operator + backup plugin images (src/utilities/oadp_*)
+#   cli               cpd-cli for the inside workstation (stop-over bundle only)
+export MIRROR_CPD_REGISTRY_PATH="{{ install.INSTALL_REGISTRY_PATH_DEFAULT }}"
+export MIRROR_CPD_COMPONENTS=""
+export MIRROR_CPD_CONTENT=""
+# Optional models/images (--groups), comma-separated:
+{{ catalogs.image_group }}
+export MIRROR_CPD_IMAGE_GROUPS=""
+# mistral, rhaiis-cuda, rhoai-cuda (x86_64) or spyre (s390x), comma-separated
+export MIRROR_CPD_VLLM=""
+export MIRROR_CPD_EXTRA_IMAGES=""
+# IBM's optional prunes before mirror-images (EDB Postgres Standard customers;
+# Watson Studio GPU / NLP images)
+export MIRROR_CPD_EDB_STANDARD_ONLY="false"
+export MIRROR_CPD_WSL_EXCLUDE_GPU="false"
+export MIRROR_CPD_WSL_EXCLUDE_NLP="false"
+# Empty = take VERSION / PATCH_ID / IMAGE_ARCH from configs/cp4d_config/cpd_vars.sh.
+# MIRROR_CPD_ARCH=all mirrors every architecture.
+export MIRROR_CPD_VERSION=""
+export MIRROR_CPD_PATCH_ID=""
+export MIRROR_CPD_ARCH=""
+# CASE packages from the IBM OCI registry (true) or GitHub (false)
+export MIRROR_CPD_CASE_FROM_OCI="true"
+# IBM's IDMS step also maps all of registry.redhat.io to <root>/cpd. Kept in our
+# own mirror-cpd objects (a re-run of apply-icsp would wipe it from IBM's).
+export MIRROR_CPD_REDHAT_HOST_MIRROR="true"
+export MIRROR_CPD_PATH_OVERRIDES=""

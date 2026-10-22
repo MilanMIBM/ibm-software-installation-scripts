@@ -193,6 +193,9 @@ configs/*
 # IBM Concert installer archives, extracted installer, runner build context and logs
 /concert_workspace
 /datastax_mc_workspace
+# Private registry mirroring: inventories, mapping files, oc-mirror cache, local
+# registry storage, transfer bundles (can be hundreds of GB) and tools
+/registry_mirror_workspace
 # OADP backup/restore: S3 bucket credentials and restore target cluster logins
 /src/utilities/oadp_backup_restore_cp4d_utils/backup_bucket_configs/
 /src/utilities/oadp_backup_restore_cp4d_utils/restore_target_configs/

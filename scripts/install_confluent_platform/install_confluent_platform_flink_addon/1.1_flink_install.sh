@@ -107,7 +107,7 @@ echo ""
 # requires cluster-scoped RBAC that a namespace admin may not have.
 _operator_args=(
     "${FLINK_OPERATOR_RELEASE_NAME}"
-    "${FLINK_HELM_REPO_NAME}/flink-kubernetes-operator"
+    "${FLINK_OPERATOR_CHART_REF:-${FLINK_HELM_REPO_NAME}/flink-kubernetes-operator}"
     --namespace "${NS}"
     --version "${FLINK_OPERATOR_CHART_VERSION}"
     --set "podSecurityContext.runAsUser=null"
@@ -177,7 +177,7 @@ fi
 # single-instance configuration; point cmf.database at PostgreSQL for HA.
 _cmf_args=(
     "${FLINK_CMF_RELEASE_NAME}"
-    "${FLINK_HELM_REPO_NAME}/confluent-manager-for-apache-flink"
+    "${FLINK_CMF_CHART_REF:-${FLINK_HELM_REPO_NAME}/confluent-manager-for-apache-flink}"
     --namespace "${NS}"
     --version "${FLINK_CMF_CHART_VERSION}"
     --set "encryption.enabled=false"

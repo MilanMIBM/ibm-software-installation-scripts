@@ -47,6 +47,12 @@ if [[ "${CONCERT_IMAGE_SOURCE}" == entitled ]]; then
     concert_info "CONCERT_IMAGE_SOURCE=entitled - operators come from the default catalogs, nothing to mirror."
     exit 0
 fi
+# The private registry mirroring track owns the cluster's mirrored catalogs (one
+# union catalog for every install); it sets this in registry_overrides.sh.
+if concert_is_true "${CONCERT_MIRROR_VIA_SHARED:-false}"; then
+    concert_info "CONCERT_MIRROR_VIA_SHARED=true - operators and data-store images are mirrored by scripts/private_registry_mirroring (2.1/2.2)."
+    exit 0
+fi
 
 PHASE="${CONCERT_AIRGAP_PHASE:-}"
 for _arg in "$@"; do

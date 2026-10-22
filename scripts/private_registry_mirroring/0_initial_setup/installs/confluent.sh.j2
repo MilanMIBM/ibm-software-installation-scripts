@@ -1,0 +1,19 @@
+# ------------------------------------------------------------------------------
+# {{ install.INSTALL_LABEL }} ({{ install.INSTALL_ID }})
+# ------------------------------------------------------------------------------
+# Components (MIRROR_CONFLUENT_COMPONENTS, comma-separated). Image names and
+# versions come from configs/confluent_platform_config/confluent_vars.sh:
+{{ components_comment }}
+# Content kinds (MIRROR_CONFLUENT_CONTENT, comma-separated):
+#   images      container images of the selected components
+#   charts      Flink Helm charts (pushed to the registry as OCI artifacts)
+#   connectors  Kafka Connect plugin ZIPs from MIRROR_CONFLUENT_CONNECTORS_FILE
+#   files       other downloads (the upstream cert-manager manifest for Flink)
+export MIRROR_CONFLUENT_REGISTRY_PATH="{{ install.INSTALL_REGISTRY_PATH_DEFAULT }}"
+export MIRROR_CONFLUENT_COMPONENTS=""
+export MIRROR_CONFLUENT_CONTENT=""
+# Connector list, one per line: owner/name:version (same format as
+# scripts/install_confluent_platform/confluent_connectors.example.txt; local ZIP
+# paths are skipped - they are already offline)
+export MIRROR_CONFLUENT_CONNECTORS_FILE=""
+export MIRROR_CONFLUENT_PATH_OVERRIDES=""

@@ -1,0 +1,21 @@
+# ------------------------------------------------------------------------------
+# {{ install.INSTALL_LABEL }}
+# ------------------------------------------------------------------------------
+# <root>/shared holds the operator catalogs (one union catalog per catalog source,
+# whatever install needs them) and content DECLARED shared because it is reused
+# across components and installs. Installs declare their generic items
+# themselves (UBI base images, Red Hat operators); add more here.
+export MIRROR_SHARED_REGISTRY_PATH="{{ install.INSTALL_REGISTRY_PATH_DEFAULT }}"
+# Extra operators, space-separated: package[:channel][@catalog]
+#   catalog = redhat-operators (default) | certified-operators | community-operators
+#             | redhat-marketplace | a full index image reference
+#   e.g. "cincinnati-operator:v1 nfd:stable gpu-operator-certified@certified-operators"
+export MIRROR_SHARED_OPERATORS=""
+# Extra images to mirror under <root>/shared, space-separated full references.
+export MIRROR_SHARED_IMAGES=""
+# Declare content shared, space-separated: a full reference (exact) or a
+# repository prefix. Matching images of ANY install go to <root>/shared.
+# 1.0_build_inventory.sh lists "shared candidates" (same image mirrored by
+# several installs) to consider here.
+export MIRROR_SHARED_DECLARE="registry.access.redhat.com/ubi9/ubi registry.access.redhat.com/ubi9/ubi-minimal registry.access.redhat.com/ubi9/ubi-micro"
+export MIRROR_SHARED_PATH_OVERRIDES=""

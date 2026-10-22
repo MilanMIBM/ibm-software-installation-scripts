@@ -37,10 +37,26 @@ DO_PREREQUISITE_OPERATORS=true             # 2.2 install prerequisite operators
 DO_INSTALL_SOFTWAREHUB=true                # 3.1 install software hub
 DO_INSTALL_CPD=true                        # 4.0 install cpd components
 
+# Private registry (CPD_IMAGE_SOURCE private | local): configure the cluster for
+# it first - pull secret, CA trust, image mirror sets (IBM's apply-icsp + ours),
+# mirrored operator catalogs, and this install's registry_overrides.sh - with
+# scripts/private_registry_mirroring/ (mirroring itself is not chained here: run
+# that track's 0-2 segments first). auto = on when CPD_IMAGE_SOURCE is not
+# entitled and the mirror config exists.
+DO_REGISTRY_CLUSTER_CONFIG="${DO_REGISTRY_CLUSTER_CONFIG:-auto}"
+if [[ "${DO_REGISTRY_CLUSTER_CONFIG}" == auto ]]; then
+    if [[ "${CPD_IMAGE_SOURCE:-entitled}" != entitled && -f "${CONFIGS_ROOT}/registry_mirror_config/registry_mirror_vars.sh" ]]; then
+        DO_REGISTRY_CLUSTER_CONFIG=true
+    else
+        DO_REGISTRY_CLUSTER_CONFIG=false
+    fi
+fi
+
 run_step() {
     local enabled="$1"
     local label="$2"
     local script="$3"
+    shift 3
 
     if [[ "${enabled}" != "true" ]]; then
         echo ""
@@ -50,8 +66,14 @@ run_step() {
 
     echo ""
     echo "==> Running:  ${label}"
-    "${script}"
+    "${script}" "$@"
 }
+
+# --- Private registry: cluster configuration (CPD_IMAGE_SOURCE private | local) ---
+run_step "${DO_REGISTRY_CLUSTER_CONFIG}" \
+    "private registry: configure the cluster (scripts/private_registry_mirroring 3.x)" \
+    "${SCRIPTS_ROOT}/../private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh" \
+    --cluster-only
 
 # --- Step 0.0 - Install & set up openshift cert manager -------------------------------
 run_step "${DO_PREP_CERT_MANAGER}" \

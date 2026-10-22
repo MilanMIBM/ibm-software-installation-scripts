@@ -61,6 +61,7 @@ fi
 #        scripts/install_confluent_platform/                  -> confluent
 #        scripts/install_ibm_concert/                         -> concert
 #        scripts/install_datastax_mc_standalone/              -> datastax_mc
+#        scripts/private_registry_mirroring/                  -> registry_mirror
 #      Anything else loads every config, as before.
 # "all" loads every configs/*/*_vars.sh. The inferred value is not exported, so
 # a child script in another product folder still infers its own target.
@@ -91,6 +92,7 @@ if [[ -z "${ENV_TARGET:-}" ]]; then
         scripts/install_confluent_platform/*) ENV_TARGET=confluent; _CP4D_ENV_TARGET_WHY="script folder scripts/install_confluent_platform/" ;;
         scripts/install_ibm_concert/*)        ENV_TARGET=concert;   _CP4D_ENV_TARGET_WHY="script folder scripts/install_ibm_concert/" ;;
         scripts/install_datastax_mc_standalone/*) ENV_TARGET=datastax_mc; _CP4D_ENV_TARGET_WHY="script folder scripts/install_datastax_mc_standalone/" ;;
+        scripts/private_registry_mirroring/*) ENV_TARGET=registry_mirror; _CP4D_ENV_TARGET_WHY="script folder scripts/private_registry_mirroring/" ;;
     esac
     unset _caller
 fi

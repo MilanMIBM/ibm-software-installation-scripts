@@ -28,6 +28,12 @@ eval "${OC_LOGIN}"
 
 echo "[INFO] Enabling access to watsonx Orchestrate images for the Agent Development Kit (ADK)..."
 
+if [[ "${CPD_IMAGE_SOURCE:-entitled}" == local ]]; then
+    echo "[WARN] CPD_IMAGE_SOURCE=local: the ADK docker proxy pulls from cp.icr.io with this key, which an"
+    echo "       air-gapped cluster cannot reach. The secret is still created; ADK image pulls need internet"
+    echo "       access (the private registry mirroring track does not cover them)."
+fi
+
 # Use IBM_ENTITLEMENT_KEY directly if set; otherwise extract from the cluster pull secret
 if [[ -n "${IBM_ENTITLEMENT_KEY:-}" ]]; then
     echo "[INFO] Using IBM_ENTITLEMENT_KEY from environment."

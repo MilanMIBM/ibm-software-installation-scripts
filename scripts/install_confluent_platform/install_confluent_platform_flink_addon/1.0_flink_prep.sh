@@ -184,7 +184,8 @@ else
     echo "[INFO] cert-manager not found. Installing ${FLINK_CERT_MANAGER_VERSION}..."
     # Applied from the upstream release manifest, which is what Confluent's own
     # OpenShift instructions do. It creates its own namespace.
-    run oc apply -f "https://github.com/cert-manager/cert-manager/releases/download/${FLINK_CERT_MANAGER_VERSION}/cert-manager.yaml"
+    # FLINK_CERT_MANAGER_MANIFEST: a local copy (private registry mirroring track).
+    run oc apply -f "${FLINK_CERT_MANAGER_MANIFEST:-https://github.com/cert-manager/cert-manager/releases/download/${FLINK_CERT_MANAGER_VERSION}/cert-manager.yaml}"
 
     if [[ "${DRY_RUN}" != "true" ]]; then
         echo "[INFO] Waiting for cert-manager to become available..."
@@ -346,7 +347,19 @@ esac
 # ------------------------------------------------------------------------------
 # Helm repository
 # ------------------------------------------------------------------------------
-if [[ "${DRY_RUN}" == "true" ]]; then
+if [[ "${FLINK_CHART_SOURCE:-repo}" == (oci|local) ]]; then
+    # Private registry (scripts/private_registry_mirroring 3.5): the charts are
+    # OCI artifacts in the registry (or local .tgz files) - no Helm repository.
+    for _ref in "${FLINK_CMF_CHART_REF:-}:${FLINK_CMF_CHART_VERSION}" "${FLINK_OPERATOR_CHART_REF:-}:${FLINK_OPERATOR_CHART_VERSION}"; do
+        _r="${_ref%:*}" _ver="${_ref##*:}"
+        [[ -n "${_r}" ]] || { echo "[ERROR] FLINK_CHART_SOURCE=${FLINK_CHART_SOURCE} needs FLINK_CMF_CHART_REF and FLINK_OPERATOR_CHART_REF." >&2; exit 1; }
+        if [[ "${DRY_RUN}" != "true" ]] && ! helm show chart "${_r}" --version "${_ver}" &>/dev/null; then
+            echo "[ERROR] Chart ${_r} version ${_ver} is not reachable (helm registry login done by 3.5?)." >&2
+            exit 1
+        fi
+    done
+    echo "[INFO] Charts from ${FLINK_CHART_SOURCE}: ${FLINK_OPERATOR_CHART_REF}, ${FLINK_CMF_CHART_REF}"
+elif [[ "${DRY_RUN}" == "true" ]]; then
     echo "  [DRY-RUN] helm repo add ${FLINK_HELM_REPO_NAME} ${FLINK_HELM_REPO_URL}"
 else
     # --force-update makes this idempotent when the repo is already present

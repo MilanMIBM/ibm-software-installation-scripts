@@ -1,0 +1,15 @@
+# ------------------------------------------------------------------------------
+# {{ install.INSTALL_LABEL }} ({{ install.INSTALL_ID }})
+# ------------------------------------------------------------------------------
+# Components (MIRROR_CONCERT_COMPONENTS, comma-separated). Versions and data-store
+# images come from configs/concert_config/concert_vars.sh:
+{{ components_comment }}
+# Content kinds (MIRROR_CONCERT_CONTENT, comma-separated):
+#   ibm-images        IBM Concert images (Concert's own 1.1, IBM's cp/<suffix> layout)
+#   operators         Service Mesh 3 / ODF / CloudNativePG (into <root>/shared)
+#   datastore-images  images of the provisioned data stores
+#   runner-image      the installer runner's UBI base image (shared)
+export MIRROR_CONCERT_REGISTRY_PATH="{{ install.INSTALL_REGISTRY_PATH_DEFAULT }}"
+export MIRROR_CONCERT_COMPONENTS=""
+export MIRROR_CONCERT_CONTENT=""
+export MIRROR_CONCERT_PATH_OVERRIDES=""

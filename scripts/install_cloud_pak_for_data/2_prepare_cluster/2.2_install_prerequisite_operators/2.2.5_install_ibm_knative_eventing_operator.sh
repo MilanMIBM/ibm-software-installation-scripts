@@ -47,7 +47,9 @@ CASE_DOWNLOAD_FROM="oci"
 
 TIMEOUT=300
 
-# Step 1: Download the IBM Events CASE package
+# Step 1: Download the IBM Events CASE package (air-gapped: reused from the
+# transfer bundle - the mirroring track adds ibm_events_operator to it)
+cp4d_offline_case_check || exit 1
 eval "${CPDM_OC_LOGIN}"
 
 case "${CASE_DOWNLOAD_FROM}" in

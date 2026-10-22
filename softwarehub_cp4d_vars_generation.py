@@ -132,9 +132,13 @@ def _():
 
     # Credentials Options - Pull Secret
 
+    # Image sources (CPD_IMAGE_SOURCE): entitled | private (cloud/remote registry)
+    # | local (local private registry, air-gapped). The two private ones are
+    # filled and wired by scripts/private_registry_mirroring/.
     image_pull_credentials = {
         "IBM Entitled Registry": '$(echo -n "cp:$IBM_ENTITLEMENT_KEY" | base64 -w 0)',
         "Private Container Registry": '$(echo -n "$PRIVATE_REGISTRY_PULL_USER:$PRIVATE_REGISTRY_PULL_PASSWORD" | base64 -w 0)',
+        "Local Private Registry (air-gapped)": '$(echo -n "$PRIVATE_REGISTRY_PULL_USER:$PRIVATE_REGISTRY_PULL_PASSWORD" | base64 -w 0)',
     }
 
     # Storage options - Block Storage
@@ -188,6 +192,26 @@ def _(custom_pull_prefix, image_pull_creds_select):
         else custom_pull_prefix
     )
     print(image_pull_prefix)
+    return
+
+
+@app.cell(hide_code=True)
+def _(custom_pull_prefix, image_pull_creds_select):
+    # Same classifier as scripts/private_registry_mirroring (0.1_detect_registry.sh):
+    # warn when the chosen source does not match the registry host.
+    from src.helpers.registry_classifier import classify as _classify_registry
+
+    _registry_check = None
+    if image_pull_creds_select.selected_key != "IBM Entitled Registry" and "<" not in str(custom_pull_prefix):
+        _kind, _reason = _classify_registry(str(custom_pull_prefix))
+        _chosen = "local" if "Local" in image_pull_creds_select.selected_key else "private"
+        if _kind != "unknown" and _kind != _chosen:
+            _registry_check = mo.callout(
+                mo.md(f"**{custom_pull_prefix}** looks like a **{_kind}** registry ({_reason}), "
+                      f"but *{image_pull_creds_select.selected_key}* is selected."),
+                kind="warn",
+            )
+    _registry_check
     return
 
 

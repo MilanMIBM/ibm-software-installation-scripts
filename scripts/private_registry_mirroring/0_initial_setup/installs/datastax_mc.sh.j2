@@ -1,0 +1,22 @@
+# ------------------------------------------------------------------------------
+# {{ install.INSTALL_LABEL }} ({{ install.INSTALL_ID }})
+# ------------------------------------------------------------------------------
+# Components (MIRROR_DATASTAX_MC_COMPONENTS, comma-separated). Chart version and
+# values come from configs/datastax_mc_config/ (MC_VERSION, mc-values-*.yaml):
+{{ components_comment }}
+# Content kinds (MIRROR_DATASTAX_MC_CONTENT, comma-separated):
+#   chart    the Mission Control Helm chart (pushed as an OCI artifact)
+#   images   container images of the selected components
+export MIRROR_DATASTAX_MC_REGISTRY_PATH="{{ install.INSTALL_REGISTRY_PATH_DEFAULT }}"
+export MIRROR_DATASTAX_MC_COMPONENTS=""
+export MIRROR_DATASTAX_MC_CONTENT=""
+# Database server versions created in the Mission Control UI, comma-separated
+# (images cp.icr.io/cp/ibm-ds-mission-control/hcd:<v>-ubi / dse-mgmtapi:<v>-ubi).
+# HCD empty = the newest MIRROR_DATASTAX_MC_HCD_LATEST versions in the registry.
+export MIRROR_DATASTAX_MC_HCD_VERSIONS=""
+export MIRROR_DATASTAX_MC_HCD_LATEST="3"
+export MIRROR_DATASTAX_MC_DSE_VERSIONS=""
+# DataStax's per-release Hauler manifest (release notes). When set it is the
+# authoritative image + chart list instead of rendering the chart.
+export MIRROR_DATASTAX_MC_HAULER_MANIFEST=""
+export MIRROR_DATASTAX_MC_PATH_OVERRIDES=""

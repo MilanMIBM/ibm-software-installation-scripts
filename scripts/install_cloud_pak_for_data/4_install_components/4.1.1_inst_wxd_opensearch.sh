@@ -34,6 +34,10 @@ if [[ -n "${PATCH_ID:-}" ]]; then
     PATCH_FLAG=(--patch_id="${PATCH_ID}")
 fi
 
+# Air-gapped (CPD_CASE_SOURCE=offline): the CASE must already be in the work dir.
+source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
+cp4d_offline_case_check || exit 1
+
 cpd-cli manage case-download \
     --components="ibm_wxd_opensearch" \
     --release=${VERSION} \

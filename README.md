@@ -19,6 +19,8 @@ The Cloud Pak for Data workflow has two stages:
 | `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README) |
 | `scripts/install_ibm_concert/` | IBM Concert install steps (0 → 4) around IBM's own installer, data store provisioning, optional Concert Optimize / Turbonomic (5), plus cleanup/debug scripts under `x_clean_or_debug_concert/` |
 | `scripts/install_datastax_mc_standalone/` | DataStax Mission Control on OpenShift with Helm, independent of CP4D: config generator (0), cluster prep (1), install (2), internode NetworkPolicy (3), uninstall under `x_clean_or_debug_datastax_mc/`. DataStax's OpenShift Helm values templates are in `src/helpers/datastax_mc_helm_values_templates/` |
+| `scripts/private_registry_mirroring/` | Mirrors the images, operator catalogs, charts and files of the installs above into a private registry (cloud, or local/air-gapped), and points the cluster and the installs at it: config generator and registry tools (0), mapping (1), mirroring and the stop-over bundle (2), cluster configuration (3), plus cleanup/listing under `x_clean_or_debug_registry/` |
+| `registry_mirror_workspace/` | The mirroring track's inventory, tools, local registry and default stop-over bundle (gitignored) |
 | `concert_workspace/` | IBM Concert installer archives, the extracted installer, runner build context and copied logs (gitignored) |
 | `scripts/*.sh` | Shared script plumbing: `source_env_setup.sh` (config loading), `0.0_make_executable.sh`, and `operator_install_helpers.sh` (idempotency checks so OLM operator installs are safe to re-run) |
 | `src/helpers/` | Jinja2 templates and marimo widgets backing the notebooks, plus Python/zsh helpers: IBM Cloud IAM auth, watsonx.data database registration, IBM License Service, IBM Cloud Secrets Manager, the Software Hub internal vault, the Software Hub → `cpd-cli` release resolver, and DataStax Mission Control's Helm values templates and shell helpers |
@@ -296,3 +298,67 @@ Choices worth knowing:
 - **Login**: `MC_ADMIN_EMAIL` with `MC_ADMIN_PASSWORD` (a Dex static password, bcrypt-hashed at render time with `htpasswd`, or the python `bcrypt` module as a fallback).
 
 Interactive shell: `source s_env.sh datastax_mc`. Teardown: `x_clean_or_debug_datastax_mc/x_uninstall_mission_control.sh`. It refuses while `MissionControlCluster` resources exist (`--force` overrides) and deletes PVCs unless `--keep-pvcs`. Use `--delete-namespace`, `--delete-crds` (only `clusterconfigs.datastax.com`, as DataStax does) and `--unlabel-nodes` to go further.
+
+---
+
+## Private registry mirroring
+
+Mirrors what the installs above pull - images, OLM operator catalogs, Helm charts and plain files - into a private registry, and then points the cluster and the installs at it. It follows IBM Software Hub 5.4's [private registry flow](https://www.ibm.com/docs/en/software-hub/5.4.x?topic=registry-mirroring-images-directly-private-container) (`cpd-cli manage mirror-images`, olm-utils from the private registry, IDMS/ITMS) and reuses each product's own mirroring where it has one (Concert's `1.1`). Two kinds of registry are supported, as two image sources next to `entitled`:
+
+- **`private`**: a cloud or remote registry such as `private.de.icr.io/<namespace>`. The install workstation stays online. Pushing from outside IBM Cloud goes through the public endpoint (`de.icr.io`) while the cluster pulls from `private.`; `MIRROR_REGISTRY_PUSH_FROM=cloud` pushes straight to where the cluster pulls.
+- **`local`**: a registry inside a disconnected network (device, bastion, on-prem host). `0.3_local_registry.sh up` can run one on this machine (`registry:2` under podman with its own CA, or Red Hat's mirror-registry on a RHEL x86 bastion). Content goes there either directly (one machine sees both sides) or through a **stop-over**: `--phase=save` writes a bundle on the internet side, the bundle is carried across, and `--phase=load` pushes it on the inside. The inside workstation is assumed to be Linux; macOS works too (`oc-mirror` then runs in a UBI container).
+
+`auto` decides between the two from the registry host; `0.1_detect_registry.sh` shows why.
+
+Every install gets its own path under the registry root (`<root>/cpd`, `<root>/confluent`, `<root>/datastax-mc`, `<root>/concert`), with images keeping their source layout below it. Operator catalogs and anything declared shared (`MIRROR_SHARED_DECLARE`, e.g. UBI base images) go to `<root>/shared`.
+
+Config lives in `configs/registry_mirror_config/registry_mirror_vars.sh` (loaded only by this track, `ENV_TARGET=registry_mirror`). Create it, copying the selections and registry settings from the installs' own configs:
+
+```bash
+./scripts/private_registry_mirroring/0_initial_setup/0.0_generate_mirror_config.sh --prefill-from-installs
+```
+
+**Nothing is mirrored until** `MIRROR_INSTALLS` and each install's `MIRROR_<ID>_COMPONENTS` / `_CONTENT` are filled in. Re-running the generator keeps your values (a `.bak` is kept) and adds new settings; `--installs cpd,shared` limits the sections. The Red Hat pull secret goes in `configs/registry_mirror_config/redhat-pull-secret.json`. Then run the track:
+
+```bash
+# one machine reaches the internet and the registry
+./scripts/private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh
+# stop-over: internet side, then inside the disconnected network
+./scripts/private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh --phase=save
+./scripts/private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh --phase=load
+```
+
+`--dry-run` maps and shows the cluster changes without mirroring or changing anything; `--no-cluster` stops after segment 2; `--cluster-only` runs only segment 3. Skip steps with `DO_<STEP>=false` (listed at the top of the wrapper). Without `--phase`, the phase is `MIRROR_PHASE`, or detected from what is reachable.
+
+| Step | What it does |
+| --- | --- |
+| `0_initial_setup/0.0` | Writes the config: the base template plus one section per install (`installs/<id>.sh.j2`). Prefilling asks each install's hook for its components, entitlement key and, where set, registry |
+| `0.1` | Classifies the registry root (`local` / `private`), probes it with the push credentials, and with `--write` stores the result in the config |
+| `0.2` | Checks the workstation tools and fetches `oc-mirror` (Linux-only: on macOS it runs in a container on the podman VM). `--for-inside` stages the inside workstation's tools (oc, oc-mirror, helm, cpd-cli, Python wheels) into the bundle |
+| `0.3` | Local registry on this machine: `up`, `status`, `trust` (adds its CA to this machine), `down`, `export`/`import`, `rm --yes` |
+| `1_map_content/1.0` | Builds the inventory from every selected install's `map` hook: per-path `targets.tsv` / `charts.tsv` / `files.tsv`, the operator `ImageSetConfiguration`, and `inventory/report.txt`. Stops on target collisions and reserved paths |
+| `1.1` / `1.2` | Checks that every source is reachable with the credentials (sorting failures into auth / missing / TLS / network); estimates the size (`--with-operators`, `--with-cpd`) |
+| `1.3` | Lists the images a running reference cluster actually uses, to compare with the inventory |
+| `2_download_and_mirror/2.0` | Each product's own mirroring: `cpd-cli manage` (CASE download, `mirror-images` or save/load through IBM's stop-over registry, olm-utils into the registry) and Concert's `1.1` |
+| `2.1` | All other images with `oc image mirror`, keeping manifest lists so digest references stay valid. `--path` mirrors one path only |
+| `2.2` | Operator catalogs with `oc-mirror` v2 (channel heads) into `<root>/shared`, with the generated IDMS/ITMS/CatalogSources kept for segment 3 |
+| `2.3` / `2.4` | Helm charts (OCI) and files; then checks that everything in the inventory is in the registry |
+| `2.5` / `2.6` | Stop-over only: builds the transfer bundle (the saved content, mapping, tools, the repository and the config **with secrets blanked**; `--include-configs` adds `configs/`), and verifies and restores it on the inside (`--quick` skips the checksums) |
+| `3_configure_cluster/3.0` | Read-only preflight: OpenShift ≥ 4.13, no ImageContentSourcePolicy left, managed platforms, existing mirror sets, CA and pull secret, the registry reachable from a node, and (local) Subscriptions whose package is not in the mirrored catalogs |
+| `3.1` / `3.2` | Pull credentials in the global pull secret (`--with-icr` keeps cp.icr.io too); the registry CA in the cluster's `additionalTrustedCA` |
+| `3.3` / `3.4` | One IDMS/ITMS for the track (`--prune` removes rules that dropped out), then the CatalogSources/ClusterCatalog. `3.2` - `3.4` wait for the MachineConfigPools to finish rolling |
+| `3.5` | Points each install at the registry by writing `configs/<install>_config/registry_overrides.sh`, which is sourced right after that install's `*_vars.sh`. Your generated configs are never edited. `--dry-run` shows the files, `--only <id>` limits it |
+| `3.6` | On a worker, pulls one image per path **by its source name**, which only works when the mirror set, pull secret and CA trust work together (`--all` for every image); then each install's `verify-cluster` check |
+
+Choices worth knowing:
+
+- **How each install is redirected** (`3.5`): CP4D gets `PRIVATE_REGISTRY_*`, `CPD_IMAGE_SOURCE` and an olm-utils image from the registry (`<root>/cpd/cpopen/cpd/olm-utils-v4:<version>`, plus `.<arch>` only when an arch is specified in `MIRROR_CPD_ARCH` or in `OLM_UTILS_IMAGE`), and IBM's `cpd-cli` flow continues from there. DataStax MC gets `MC_IMAGE_SOURCE`, the chart from the registry and `mc-values-registry.yaml` (every chart image, including Mimir's MinIO). Confluent gets the chart refs and image registry; Flink the OCI chart refs (`FLINK_CHART_SOURCE=oci`). Concert gets its mirrored-mode settings, and its own `1.2`/`1.3` step aside because the shared path covers them.
+- **The CP4D wrapper** runs segment 3 (`--cluster-only`) before the install when `CPD_IMAGE_SOURCE` is not `entitled` and the mirror config exists (`DO_REGISTRY_CLUSTER_CONFIG=auto`; `true`/`false` force it). Mirroring itself (segments 0 - 2) is not part of the install wrapper.
+- **The CP4D notebook** has a third image source, *Local Private Registry (air-gapped)*, and warns when the registry host looks like the other kind.
+- **Overrides on and off**: `PREG_SKIP_REGISTRY_OVERRIDES=1` loads the configs without `registry_overrides.sh`. `x_remove_mirror_config.sh` removes the track's cluster resources (`--include-ibm` also IBM's `cloud-pak-for-data-mirror`, `--overrides` the override files).
+- **DataStax database servers**: `MIRROR_DATASTAX_MC_HCD_VERSIONS` lists the HCD versions to mirror. Left empty, mapping takes the newest `MIRROR_DATASTAX_MC_HCD_LATEST` (default 3) tagged in `cp.icr.io/cp/ibm-ds-mission-control/hcd`. DSE images are mirrored only for versions listed in `MIRROR_DATASTAX_MC_DSE_VERSIONS`.
+- **OpenShift release images** are not mirrored; the cluster is assumed to exist.
+
+`x_clean_or_debug_registry/` lists what is in the registry per path (`x_list_registry_content.sh`) and deletes content that dropped out of the inventory (`x_prune_registry_paths.sh`, `--all` deletes a whole path; asks first unless `--yes`).
+
+**Adding a product**: copy the `_template` files (`0_initial_setup/installs/_template.{conf,sh.j2,sh}`, and `_template.sh` in segments 1 - 3) to `<id>.*`. The `.conf` holds its metadata (config target, default registry path, content kinds). The hooks are called with a verb: `components`/`prefill` (0), `map` (1, required; emits inventory lines), `download`/`verify-registry` (2, only for product-specific mirroring) and `cluster`/`tap`/`verify-cluster` (3). The numbered scripts loop over `MIRROR_INSTALLS` and need no change.
