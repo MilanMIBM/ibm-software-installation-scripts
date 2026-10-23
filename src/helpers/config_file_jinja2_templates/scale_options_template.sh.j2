@@ -427,16 +427,6 @@ wca_ansible:
   method: apply-scale-config
   component: wca_ansible
   scale: level_1
-{% endif %}{% if "wca_z" in components_to_install %}
----
-# ............................................................................
-# watsonx Code Assistant for Z
-#   --components=wca_z --scale=${SCALE}
-# ............................................................................
-wca_z:
-  method: apply-scale-config
-  component: wca_z
-  scale: level_1
 {% endif %}{% if "wca_z_agentic" in components_to_install %}
 ---
 # ............................................................................
@@ -446,26 +436,6 @@ wca_z:
 wca_z_agentic:
   method: apply-scale-config
   component: wca_z_agentic
-  scale: level_1
-{% endif %}{% if "wca_z_ce" in components_to_install %}
----
-# ............................................................................
-# watsonx Code Assistant for Z Code Explanation
-#   --components=wca_z_ce --scale=${SCALE}
-# ............................................................................
-wca_z_ce:
-  method: apply-scale-config
-  component: wca_z_ce
-  scale: level_1
-{% endif %}{% if "wca_z_cg" in components_to_install %}
----
-# ............................................................................
-# watsonx Code Assistant for Z Code Generation
-#   --components=wca_z_cg --scale=${SCALE}
-# ............................................................................
-wca_z_cg:
-  method: apply-scale-config
-  component: wca_z_cg
   scale: level_1
 {% endif %}{% if "wca_z_understand" in components_to_install %}
 ---

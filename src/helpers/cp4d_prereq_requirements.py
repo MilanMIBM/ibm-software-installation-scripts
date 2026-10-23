@@ -23,9 +23,9 @@ PREREQS = ("gpu", "rhoai", "mcg", "knative")
 # Always need the GPU operators and Red Hat OpenShift AI. watsonx_ai_ifm serves
 # the Inference foundation models and the rest of the wca_z family runs models
 # too; IBM's tables do not list them, so they are kept here to fail safe.
+# watsonx_data_premium_dependencies installs watsonx_ai and watsonx_ai_ifm.
 ALWAYS_GPU_RHOAI = {
-    "watsonx_ai", "watsonx_ai_ifm",
-    "wca", "wca_ansible", "wca_z", "wca_z_agentic", "wca_z_ce", "wca_z_cg", "wca_z_understand",
+    "wca", "wca_ansible", "wca_z_agentic", "wca_z_understand",
 }
 
 
