@@ -18,6 +18,16 @@
 export MIRROR_CONFIG_VERSION="1"
 
 # ------------------------------------------------------------------------------
+# cpd-cli behaviour
+# ------------------------------------------------------------------------------
+# skopeo-inspect every IBM source image (list-images --inspect_source_registry) in
+# 1.1 and before mirroring: catches entitlement problems early, but adds 1-2 h.
+# An exported value wins, e.g. MIRROR_CPD_INSPECT_SOURCE_REGISTRY=true ./full_...sh
+export MIRROR_CPD_INSPECT_SOURCE_REGISTRY="${MIRROR_CPD_INSPECT_SOURCE_REGISTRY:-false}"
+# Pass -v to the cpd-cli commands that support it (mirror-images).
+export MIRROR_CPD_VERBOSE="${MIRROR_CPD_VERBOSE:-true}"
+
+# ------------------------------------------------------------------------------
 # Registry
 # ------------------------------------------------------------------------------
 # Image source:

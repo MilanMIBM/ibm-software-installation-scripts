@@ -27,6 +27,7 @@ preg_require_config
 # ------------------------------------------------------------------------------
 #   ./full_registry_mirror_process.sh [--phase=mirror|save|load] [--cluster-only]
 #                                     [--no-cluster] [--dry-run]
+#                                     [--inspect-source-registry]
 #
 #   mirror (direct)       0.1 0.2 0.4 | 1.0 1.1 | 2.0 2.1 2.2 2.3 2.4 | 3.0 - 3.6
 #   save (stop-over, out) 0.2 0.4 | 1.0 1.1 | 2.0 2.1 2.2 2.3 (save) 2.5
@@ -35,6 +36,8 @@ preg_require_config
 #   --no-cluster          stop after segment 2
 #   --dry-run             map (1.0) and show segment 3 without changing the cluster;
 #                         nothing is mirrored
+#   --inspect-source-registry  have cpd-cli inspect every IBM source image (1.1 and
+#                         2.0); same as MIRROR_CPD_INSPECT_SOURCE_REGISTRY=true
 # Phase: --phase=, else MIRROR_PHASE, else detected (what is reachable from here).
 # Skip any step with DO_<STEP>=false, e.g.  DO_CHECK=false ./full_registry_mirror_process.sh
 # ==============================================================================
@@ -46,6 +49,7 @@ for _a in "${PREG_ARGS[@]}"; do
         --cluster-only) CLUSTER_ONLY=true ;;
         --no-cluster) NO_CLUSTER=true ;;
         --dry-run) DRY=true ;;
+        --inspect-source-registry) export MIRROR_CPD_INSPECT_SOURCE_REGISTRY=true ;;
         *) preg_die "Unknown argument: ${_a}" ;;
     esac
 done

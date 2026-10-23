@@ -24,7 +24,8 @@ preg_require_config
 #   charts  helm show chart
 #   files   HTTP HEAD
 #   native  installs/<id>.sh check (cpd: cpd-cli manage list-images
-#           --inspect_source_registry=true, IBM's own source check)
+#           --inspect_source_registry=true, IBM's own source check; only when
+#           MIRROR_CPD_INSPECT_SOURCE_REGISTRY=true)
 # Prints AUTH / MISSING / TLS / NETWORK problems and exits 1 when there are any.
 #
 #   ./1.1_check_sources.sh [--skip-native]

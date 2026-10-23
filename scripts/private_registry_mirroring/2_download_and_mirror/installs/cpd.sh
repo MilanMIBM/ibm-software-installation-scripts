@@ -4,8 +4,9 @@
 # IBM's documented flows (Software Hub 5.4 "Mirroring images directly" and
 # "Mirroring images using an intermediary container registry"), cpd-cli only:
 #
-#   mirror  case-download -> login-entitled-registry -> list-images
-#           --inspect_source_registry -> (EDB/WSL prunes) -> login-private-registry
+#   mirror  case-download -> login-entitled-registry -> [list-images
+#           --inspect_source_registry, when MIRROR_CPD_INSPECT_SOURCE_REGISTRY=true]
+#           -> (EDB/WSL prunes) -> login-private-registry
 #           -> mirror-images --target_registry=<root>/cpd -> list-images
 #           --target_registry (no level=fatal)
 #   save    same up to mirror-images, which goes to cpd-cli's own stop-over
@@ -51,6 +52,8 @@ common=(--release="${REL}")
 mirror_flags=()
 [[ "${ARCH}" != all ]] && mirror_flags+=(--arch="${ARCH}")
 has image-groups && [[ -n "${IMG_GROUPS}" ]] && mirror_flags+=(--groups="${IMG_GROUPS}")
+# -v: of the commands used here only mirror-images takes it
+preg_is_true "${MIRROR_CPD_VERBOSE:-true}" && mirror_flags+=(-v)
 oci=()
 preg_is_true "${MIRROR_CPD_CASE_FROM_OCI:-true}" && oci=(--from_oci=true)
 
@@ -131,9 +134,13 @@ download)
         if has ibm-images; then
             preg_require_vars MIRROR_IBM_ENTITLEMENT_KEY
             cpd-cli manage login-entitled-registry "${MIRROR_IBM_ENTITLEMENT_KEY}" >/dev/null
-            preg_info "cpd: list-images --inspect_source_registry=true"
-            cpd-cli manage list-images --components="${COMPS}" "${common[@]}" --inspect_source_registry=true "${oci[@]}"
-            fatal_check "cpd source check"
+            if preg_is_true "${MIRROR_CPD_INSPECT_SOURCE_REGISTRY:-false}"; then
+                preg_info "cpd: list-images --inspect_source_registry=true"
+                cpd-cli manage list-images --components="${COMPS}" "${common[@]}" --inspect_source_registry=true "${oci[@]}"
+                fatal_check "cpd source check"
+            else
+                preg_info "cpd: source inspection skipped (MIRROR_CPD_INSPECT_SOURCE_REGISTRY=false)"
+            fi
             apply_prunes
             if [[ "${PHASE}" == mirror ]]; then
                 private_login

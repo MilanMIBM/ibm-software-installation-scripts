@@ -27,8 +27,13 @@ comp() { preg_in_list "$1" "${COMPS}"; }
 
 # check: IBM's own source check (mirroring directly, step 3): log in to the
 # entitled registry, list-images --inspect_source_registry=true, no level=fatal.
+# Off unless MIRROR_CPD_INSPECT_SOURCE_REGISTRY=true (it inspects every image).
 if [[ "${VERB}" == check ]]; then
     has ibm-images || exit 0
+    if ! preg_is_true "${MIRROR_CPD_INSPECT_SOURCE_REGISTRY:-false}"; then
+        preg_info "cpd: source inspection skipped (MIRROR_CPD_INSPECT_SOURCE_REGISTRY=false)"
+        exit 0
+    fi
     command -v cpd-cli >/dev/null 2>&1 || preg_die "cpd-cli not on PATH (scripts/install_cloud_pak_for_data/0_initial_setup/0.2_install_cpd_cli-MAC-ONLY.sh)"
     [[ -n "${MIRROR_IBM_ENTITLEMENT_KEY:-}" ]] || preg_die "MIRROR_IBM_ENTITLEMENT_KEY is empty"
     preg_info "cpd: cpd-cli manage list-images --inspect_source_registry=true (${COMPS})"
