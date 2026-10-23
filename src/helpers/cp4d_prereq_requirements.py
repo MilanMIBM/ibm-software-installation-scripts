@@ -25,6 +25,7 @@ PREREQS = ("gpu", "rhoai", "mcg", "knative")
 # too; IBM's tables do not list them, so they are kept here to fail safe.
 # watsonx_data_premium_dependencies installs watsonx_ai and watsonx_ai_ifm.
 ALWAYS_GPU_RHOAI = {
+    "watsonx_ai", "watsonx_ai_ifm", "watsonx_data_premium_dependencies",
     "wca", "wca_ansible", "wca_z_agentic", "wca_z_understand",
 }
 
