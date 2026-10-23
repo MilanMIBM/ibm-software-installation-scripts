@@ -1000,7 +1000,7 @@ def _(
 def _(install_options_addon, render_template_from_environment, run_button):
     rendered_variables_file_inst_options = (
         render_template_from_environment(
-            template_path="src/helpers/config_file_jinja2_templates/install_options_template.sh.j2"
+            template_path="src/helpers/config_file_jinja2_templates/install_options_template_v2.sh.j2"
         )
         if run_button.value and install_options_addon.value
         else ""
@@ -1050,7 +1050,7 @@ def _(
 
         if install_options_addon.value:
             _inst_opts_content = inst_options_template_editor.value or render_template_from_environment(
-                template_path="src/helpers/config_file_jinja2_templates/install_options_template.sh.j2"
+                template_path="src/helpers/config_file_jinja2_templates/install_options_template_v2.sh.j2"
             )
             _inst_opts_path = os.path.join(_config_dir, inst_options_filename)
             with open(_inst_opts_path, "w") as _f:

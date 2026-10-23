@@ -1,0 +1,501 @@
+################################################################################
+# IBM Software Hub install-options.yml
+# Generated based on selected components
+#
+# Checked against the 5.4.0 (Patch 7) Helm charts. Each non_olm key below is
+# one the service chart actually renders into its CR - a key the chart does not
+# read is dropped silently. Helm "default" treats false as empty, so where a
+# chart falls back to an existing or true value, write "false" quoted to keep it.
+################################################################################
+{% if "analyticsengine" in components_to_install or "dp" in components_to_install or "dataproduct" in components_to_install or "wkc" in components_to_install or "ikc_premium" in components_to_install or "ikc_standard" in components_to_install or "datalineage" in components_to_install or "watsonx_bi_assistant" in components_to_install or "watsonx_data" in components_to_install or "watsonx_data_premium" in components_to_install or "watsonx_dataintelligence" in components_to_install or "watsonx_orchestrate" in components_to_install %}
+---
+# ............................................................................
+# Analytics Engine powered by Apache Spark parameters
+# ............................................................................
+non_olm:
+  analyticsengine:
+
+# ------------------------------------------------------------------------------
+# Analytics Engine powered by Apache Spark service configuration parameters
+# ------------------------------------------------------------------------------
+# This preset is meant to not over-commit nodes on the cluster which is very easy with larger configs of analyticsengine.
+# Booleans fall back to the existing CR value when false, so false is quoted.
+    serviceConfig:
+      enableImagePrepull: true
+      sparkAdvEnabled: true
+      jobAutoDeleteEnabled: true
+      kernelCullTime: 30
+      imagePullParallelism: "8"
+      imagePullCompletions: "6"
+      kernelCleanupSchedule: "*/30 * * * *"
+      jobCleanupSchedule: "*/30 * * * *"
+      skipSELinuxRelabeling: "false"
+#      pullWxdImagesOnly: "false" # The chart writes this to the CR, but no 5.4.0 operator reads it, so it has no effect.
+#      mountCustomizationsFromCchome: false # Not in the 5.4.0 chart or any operator; the chart drops it.
+#      skipSelinuxRelabeling: false # Wrong spelling from v1, which the chart ignores; use skipSELinuxRelabeling above.
+
+# ------------------------------------------------------------------------------
+# Spark runtime configuration parameters
+# ------------------------------------------------------------------------------
+    sparkRuntimeConfig:
+      maxDriverCpuCores: 2
+      maxExecutorCpuCores: 3
+      maxDriverMemory: "4g"
+      maxExecutorMemory: "4g"
+      maxNumWorkers: 6
+      localDirScaleFactor: 5
+{% endif %}{% if "replication" in components_to_install %}
+---
+# ............................................................................
+# Data Replication parameters 
+# Valid licenseType values:
+#   IDRC - Specify this option if you purchased the IBM Data Replication Cartridge for IBM Software Hub.
+#   IIDRC - Specify this option if you purchased the IBM InfoSphere® Data Replication Cartridge for IBM Software Hub.
+#   IDRM - Specify this option if you purchased IBM Data Replication Modernization.
+#   IIDRM - Specify this option if you purchased IBM InfoSphere Data Replication Modernization.
+#   IDRZOS - Specify this option if you purchased IBM Data Replication for Db2® z/OS® Cartridge.
+#   IIDRWXTO - Specify this option if you purchased IBM InfoSphere Data Replication for watsonx.data Cartridge.
+# ............................................................................
+non_olm:
+  replication:
+    licenseType: IDRC
+{% endif %}{% if "wkc" in components_to_install or ("datalineage" in components_to_install and not ("ikc_premium" in components_to_install or "ikc_standard" in components_to_install or "watsonx_dataintelligence" in components_to_install or "watsonx_data_premium" in components_to_install)) %}
+---
+# ............................................................................
+# IBM Knowledge Catalog parameters
+# Note: IBM Manta Data Lineage (datalineage) requires the catalog edition (wkc, ikcPremium or ikcStandard)
+#       to have enableKnowledgeGraph: true and useFDB: false
+# Note: enableDataQuality: true automatically installs DataStage Enterprise (datastage_ent)
+# ............................................................................
+non_olm:
+  wkc:
+    enableDataQuality: false
+    enableKnowledgeGraph: true
+    useFDB: false
+{% endif %}{% if "ikc_premium" in components_to_install %}
+---
+# ............................................................................
+# IBM Knowledge Catalog Premium parameters
+# enableModelsOn - valid options: 'cpu','gpu','remote' (remote = watsonx.ai)
+# ............................................................................
+non_olm:
+  ikcPremium:
+    enableDataQuality: false
+    enableKnowledgeGraph: true
+    useFDB: false
+    enableAISearch: false
+    enableSemanticAutomation: false
+    enableSemanticEnrichment: true
+    enableSemanticEmbedding: false
+    enableTextToSql: false
+    enableModelsOn: 'remote'
+#    customModelTextToSQL: granite-3-8b-instruct # leave commented out if enableModelsOn is set to 'remote'.
+{% endif %}{% if "ikc_standard" in components_to_install %}
+---
+# ............................................................................
+# IBM Knowledge Catalog Standard parameters
+# ............................................................................
+non_olm:
+  ikcStandard:
+    enableKnowledgeGraph: true
+    useFDB: false
+    enableAISearch: false
+    enableSemanticAutomation: false
+    enableSemanticEnrichment: true
+    enableSemanticEmbedding: false
+    enableTextToSql: false
+    enableModelsOn: 'remote'
+#    customModelTextToSQL: granite-3-8b-instruct
+{% endif %}{% if "match360" in components_to_install %}
+---
+# ............................................................................
+# IBM Master Data Management parameters
+# Valid scaleConfig values: x-small (PoC only), small_mincpureq, small, medium, large
+# ............................................................................
+non_olm:
+  match360:
+    scaleConfig: small
+{% endif %}{% if "informix_cp4d" in components_to_install %}
+---
+# ............................................................................
+# Informix parameters
+# The chart ignores ibmInformixCp4dOperator.licenseType and takes the license
+# from global.licenseType (default EE). global applies to every chart in the
+# same cpd-cli run, so only set it when installing informix_cp4d on its own:
+#   non_olm:
+#     global:
+#       licenseType: AEE
+# Valid license values:
+#   AEE - Specify this option if you purchased Advanced Enterprise Edition.
+#   EE - Specify this option if you purchased Enterprise Edition.
+#   WE - Specify this option if you purchased Workgroup Edition.
+# ............................................................................
+# No informix_cp4d install options are read by the chart.
+{% endif %}{% if "ws_pipelines" in components_to_install %}
+---
+# ............................................................................
+# Orchestration Pipelines parameters
+# The WSPipelines CR has rbsimage, but the chart does not render it from
+# install options. Set it on the CR after the install instead:
+#   oc patch wspipelines wspipelines-cr -n ${PROJECT_CPD_INST_OPERANDS} \
+#     --type merge -p '{"spec":{"rbsimage":"rbs-ext"}}'
+# Valid rbsimage values: rbs-ext (includes OpenSSH + Db2), run-bash-script (without)
+# Options the chart does read (left at the chart defaults):
+# ............................................................................
+#non_olm:
+#  wsPipelines:
+#    scaleConfig: small
+#    localTektonRuntime: true
+#    embeddedArtifactStore: true
+{% endif %}{% if "voice_gateway" in components_to_install %}
+---
+# ............................................................................
+# Voice Gateway parameters
+# More details here: https://www.ibm.com/docs/en/software-hub/5.3.x?topic=services-specifying-installation-options#install-platform-param-file__voice-parms__title__1
+# ............................................................................
+override_components_meta:
+  voice_gateway:
+    # ------------------------------------------------------------------------------
+    # Number of replicas
+    # ------------------------------------------------------------------------------
+    replicas: 1
+    # ------------------------------------------------------------------------------
+    # Node selector parameters (optional, uncomment to use)
+    # ------------------------------------------------------------------------------
+    # nodeSelector:
+    #   key1: value
+    #   key2: value
+    # ------------------------------------------------------------------------------
+    # Toleration parameters (optional, uncomment to use)
+    # ------------------------------------------------------------------------------
+    # tolerations:
+    # - key: "key-name"
+    #   operator: "operator"
+    #   value: "value"
+    #   effect: "effect"
+    # ------------------------------------------------------------------------------
+    # SSL configuration parameters
+    # ------------------------------------------------------------------------------
+    sslConfig:
+      disableSslCertValidation: false
+      mediaRelay:
+        enableSsl: false
+        sslClientCACertSecret: client-ca-cert-secret
+        enableMutualAuth: false
+        sslClientPkcs12FileSecret: ssl-client-pkcs12-file-secret
+        sslClientPassphraseSecret: ssl-client-passphrase-secret
+      sipOrchestrator:
+        enableSslorMutualAuth: false
+        sslKeyTrustStoreSecret: trust-store-file-secret
+        sslFileType: "JKS"
+        sslPassphraseSecret: ssl-passphrase-secret
+    # ------------------------------------------------------------------------------
+    # Port parameters
+    # ------------------------------------------------------------------------------
+    ports:
+      sipSignalingPortUdp: 5060
+      sipSignalingPortTcp: 5060
+      sipSignalingPortTls: 5061
+      sipOrchestratorHttpPort: 9086
+      sipOrchestratorHttpsPort: 9446
+      mediaRelayWsPort: 8080
+      rtpUdpPortRange: "16384-16394"
+    # ------------------------------------------------------------------------------
+    # Environment variable parameters (optional, uncomment to use)
+    # ------------------------------------------------------------------------------
+    # env:
+    #   sipOrchestrator:
+    #     - name: variable-name
+    #       value: "value"
+    #   mediaRelay:
+    #     - name: variable-name
+    #       value: "value"
+    # ------------------------------------------------------------------------------
+    # Storage parameters
+    # ------------------------------------------------------------------------------
+    storage:
+      recordings:
+        enablePersistentRecordings: false
+        storageClassName: ""
+        size: 15Gi
+      logs:
+        enablePersistentLogs: false
+        storageClassName: ""
+        size: 10Gi
+    # ------------------------------------------------------------------------------
+    # Container resource parameters
+    # ------------------------------------------------------------------------------
+    resources:
+      sipOrchestrator:
+        requests:
+          cpu: "1.0"
+          memory: 1Gi
+        limits:
+          cpu: "2.0"
+          memory: 2Gi
+      mediaRelay:
+        requests:
+          cpu: "1"
+          memory: 1Gi
+        limits:
+          cpu: "4"
+          memory: 4Gi
+      g729Codec:
+        requests:
+          cpu: "0.5"
+          memory: 0.5Gi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+    # ------------------------------------------------------------------------------
+    # G729 Codec Service parameters
+    # ------------------------------------------------------------------------------
+    g729Codec:
+      enabled: false
+      logLevel: "INFO"
+      webSocketServerPort: 9001
+    # ------------------------------------------------------------------------------
+    # Media Resource Control Protocol parameters
+    # ------------------------------------------------------------------------------
+    mrcp:
+      enableMrcp: false
+      unimrcpConfigSecretName: unimrcp-config-secret
+      mrcpv2SipPort: 5555
+{% endif %}{% if "watson_discovery" in components_to_install %}
+---
+# ............................................................................
+# Watson Discovery parameters
+# Valid deploymentType values: Starter, Production
+# ............................................................................
+non_olm:
+  watsonDiscovery:
+    discovery_deployment_type: Production
+{% endif %}{% if "watson_speech" in components_to_install %}
+---
+# ............................................................................
+# Watson Speech services parameters (STT & TTS)
+# scaleConfig options - xsmall,small,medium,large,custom
+# ............................................................................
+non_olm:
+  watsonSpeech:
+    tags:
+      sttRuntime: true # Installs Watson Speech to Text service.
+      sttAsync: false
+      sttCustomization: false # When you set this property to true, it enables the following interfaces: /v1/customizations for language model customization. /v1/acoustic_customizations for acoustic model customization.
+      ttsRuntime: true # Installs Watson Text to Speech service.
+      ttsCustomization: false # When you set this property to true, it enables the /v1/customizations interface for customization.
+    scaleConfig:
+      stt:
+        size: xsmall
+      tts:
+        size: xsmall
+    sttModels:
+      - enUsBroadbandModel
+      - enUsNarrowbandModel
+      - enUsShortFormNarrowbandModel
+      - enUsTelephony
+      - enUsMultimedia
+    ttsVoices:
+      - enUSAllisonV3Voice
+      - enUSLisaV3Voice
+      - enUSMichaelV3Voice
+{% endif %}{% if "ws_runtimes" in components_to_install %}
+---
+# ............................................................................
+# Watson Studio Runtimes parameters
+# ............................................................................
+non_olm:
+  wsRuntimes:
+    kinds:
+#      - ibm-cpd-ws-runtime-251-pygpu
+#      - ibm-cpd-ws-runtime-251-r
+{% endif %}{% if "watsonx_ai" in components_to_install or "wca_ansible" in components_to_install %}
+---
+# ............................................................................
+# watsonx.ai parameters
+# ............................................................................
+non_olm:
+  watsonxAi:
+    liteInstall: false # true installs the lightweight engine only
+#    tuningDisabled: true # Uncomment only on 5.3.0 (watsonx.ai 12.0.0), where it turns off Tuning Studio; 5.3.1+ and 5.4.0 ignore it.
+#    tuning_disabled: true # Never works as an install option - this is the CR field name, which no 5.3.1+ operator reads.
+{% endif %}{% if "watson_assistant" in components_to_install %}
+---
+# ............................................................................
+# watsonx Assistant parameters 
+# Valid size values (case-sensitive): Starter, Production, small_mincpureq,
+#   small, medium, large, xlarge, custom
+# bigpv only matters when the block storage class is not
+#   ocs-storagecluster-ceph-rbd or ibmc-block-gold (those always get big PVs)
+# analytics cannot be turned off here - the chart drops false. Patch
+#   spec.features.analytics.enabled on the CR instead.
+# ............................................................................
+non_olm:
+  watsonAssistant:
+    size: Starter
+    bigpv: false
+    analytics: true # store chatlogs
+    watsonxAiType: none # 'embedded' will install watsonx_ai_ifm and requires GPUs, 'none' disables gpu features
+    # watsonxAiType is written to the CR's top-level configOverrides (watsonx_enabled, enabled_components.store.ifm), not to spec; 'external' uses a remote watsonx.ai.
+#   syomModels: []
+#   ootbModels: []
+{% endif %}{% if "watsonx_bi_assistant" in components_to_install %}
+---
+# ............................................................................
+# watsonx BI parameters
+# licenseType and enableFlatFile are not read by the chart; the license comes
+# from the watsonx BI entitlement (3.4_apply_entitlements.sh).
+# installIFM - true (chart default) installs watsonx.ai foundation models on
+#   this cluster and needs GPUs; false skips them.
+# ............................................................................
+non_olm:
+  watsonxBiAssistant:
+    installIFM: true
+#    licenseType: Premium # Not in the 5.4.0 chart, CRD or operator; the license comes from the entitlement.
+#    enableFlatFile: False # Not in the 5.4.0 chart, CRD or operator (BI 3.5.6), so it has no effect.
+{% endif %}{% if "watsonx_data" in components_to_install or "watsonx_orchestrate" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data parameters
+# Valid scaleConfig values: starter, small_mincpureq, small, medium, large
+# Valid components values: standard (full), spark (Spark only),
+#   mds_standalone (metadata service only, combines with spark)
+# ............................................................................
+non_olm:
+  watsonxData:
+    enable_lite_milvus: false
+    scaleConfig: small
+    enable_watsonx_platform: true # Set to true if you want to have the watsonx.data premium UI Context even if you don't install all components.
+#    components:
+#      - standard
+{% endif %}{% if "watsonx_data_premium" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data Premium parameters
+# Checked against the watsonx-data-premium Helm chart and lakehouse operator
+# (CASE 7.0.0 / 7.0.5, 5.4.0 to Patch 9). Where IBM's docs differ:
+#   - The key is components (a list). The documented "component:" is ignored
+#     by the chart, so every documented variant installs standard.
+#   - licenseType is ignored here. The license comes from the
+#     watsonx-data-premium entitlement (3.4_apply_entitlements.sh).
+# Valid components values:
+#   standard       - limited features, no GPU: Presto, Prestissimo, Milvus, Spark
+#   spark          - Spark features only (UI, API, AMS, Postgres and Spark)
+#   premium        - all features incl. gen AI, needs GPU. Also add
+#                    watsonx_data_premium_dependencies to the components, or the
+#                    operator waits on WML, WS, UDP and watsonx.data intelligence
+#                    and never completes.
+#   mds_standalone - undocumented: metadata service only, combines with spark
+# wxd_premium_enable_models_on - gpu, cpu, remote (watsonx.ai). Read only with
+#   premium (IBM documents gpu); for other components the operator forces cpu.
+# scaleConfig - starter, small_mincpureq, small, medium, large
+# ............................................................................
+non_olm:
+  watsonxDataPremium:
+    components:
+      - standard
+    wxd_premium_enable_models_on: cpu
+#    licenseType: premium # Ignored by the chart; the license comes from the watsonx-data-premium entitlement.
+#    component: # IBM docs' singular key - ignored by the chart, so it always installs standard; use components.
+#      - standard
+#    scaleConfig: small
+#    enable_watsonx_platform: true # watsonx.data Premium platform UI; premium turns it on itself
+# Spark features only:
+#    components:
+#      - spark
+# All features (GPU), with watsonx_data_premium_dependencies in the components:
+#    components:
+#      - premium
+#    wxd_premium_enable_models_on: gpu
+#  watsonxAi:
+#    liteInstall: false # only if the watsonx.ai lightweight engine is installed
+{% endif %}{% if "watsonx_dataintegration" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data integration parameters
+# ............................................................................
+# Unset flags default to true. A flag already true on the cluster stays true:
+# the chart keeps the existing CR value, so disable it on the CR instead.
+# The key is watsonxDataintegration; v1's watsonx_dataintegration was ignored, so every flag fell back to true.
+non_olm: # for 5.4.0+ versions
+  watsonxDataintegration:
+    enableBatchBulkETL: true # datastage
+    enableRealtimeStreaming: true # streamsets
+    enableDataObservability: true # databand
+    enableUnstructuredDataIntegration: false # udc
+    enableReplication: false
+{% endif %}{% if "watsonx_dataintelligence" in components_to_install or "watsonx_data_premium" in components_to_install %}
+---
+# ............................................................................
+# watsonx.data intelligence parameters
+# Valid enableModelsOn values: cpu, gpu, remote (watsonx.ai)
+# ............................................................................
+non_olm:
+  watsonxDataintelligence:
+    enableAISearch: false
+    enableDataGovernanceCatalog: true
+    enableKnowledgeGraph: true
+    enableDataQuality: false
+    enableDataLineage: true # manta data lineage
+    enableDataProduct: true # data product hub
+    enableGenerativeAICapabilities: true
+    enableSemanticEnrichment: true
+    enableSemanticEmbedding: false
+    enableTextToSql: false
+    enableModelsOn: remote
+#    customModelTextToSQL: granite-3-8b-instruct
+{% endif %}{% if "watsonx_governance" in components_to_install %}
+---
+# ............................................................................
+# watsonx.governance parameters 
+# installType Valid values:
+#   all - Specify this option if you purchased both Model Management and Risk and Compliance Foundation entitlement.
+#   mm - Specify this option if you purchased Model Management entitlement.
+#   rcf - Specify this option if you purchased Risk and Compliance Foundation entitlement.
+# On s390x the chart always uses mm.
+# enableFactsheet/enableOpenscale/enableOpenpages default to true and a plain
+# false is dropped - write "false" quoted to turn one off.
+# ............................................................................
+non_olm:
+  watsonxGovernance:
+    installType: all
+    enableFactsheet: true
+    enableOpenscale: true
+    enableOpenpages: true
+#    openPages:
+#      openpagesInstanceCR: "op-wxgov-instance"
+#      databaseType: internal
+#      database: Db2
+#      dbSecretName: <secret-name>
+{% endif %}
+{% if "watsonx_orchestrate" in components_to_install %}
+---
+# ............................................................................
+# watsonx Orchestrate parameters 
+# installMode Valid values
+#   agentic - Install only the agentic AI features. (default)
+#   agentic_assistant - Install the agentic AI features and Assistant Builder features.
+# ............................................................................
+non_olm:
+  watsonxOrchestrate:
+    # Valid size values: small, medium, large
+    # Must be set explicitly - leaving it unset makes the operator default to an unresolved 'medium' which will make the installation get stuck.
+    size: small
+    installMode: "agentic"
+    watsonxAI:
+      watsonxaiifm: false # Use remote models, if true requires GPUs for on-prem deployment.
+      syomModels: []
+      # ootbModels: [ibm-slate-30m-english-rtrvr] this model is required if you set watsonxaiifm to true.
+{% endif %}
+{% if "dv" in components_to_install or "dmc" in components_to_install %}
+---
+# ............................................................................
+# Db2 Management Console
+# The dmc chart renders no install options (version and storage size are
+# fixed by the chart), so nothing is set here.
+# ............................................................................
+#non_olm:
+#  Dmcaddon: # Wrong key from v1 - the chart's key is dmc, and it reads neither option below.
+#    version: 5.4.0 # Not read; the chart fixes the DMC CR version (5.4.2 at Patch 7).
+#    storageSize: 20Gi # Not read by the chart or the dmc operator.
+{% endif %}

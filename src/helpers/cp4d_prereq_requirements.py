@@ -24,7 +24,7 @@ PREREQS = ("gpu", "rhoai", "mcg", "knative")
 # the Inference foundation models and the rest of the wca_z family runs models
 # too; IBM's tables do not list them, so they are kept here to fail safe.
 ALWAYS_GPU_RHOAI = {
-    "watsonx_ai", "watsonx_ai_ifm", "watsonx_bi_assistant",
+    "watsonx_ai", "watsonx_ai_ifm",
     "wca", "wca_ansible", "wca_z", "wca_z_agentic", "wca_z_ce", "wca_z_cg", "wca_z_understand",
 }
 
@@ -113,17 +113,17 @@ def assess(c, opts):
         return {"mcg": (True, "always required"), "knative": (True, "always required"),
                 **gpu_rhoai(t == "embedded", f"watsonAssistant.watsonxAiType={t} (needed only for embedded/GPU features)")}
 
+    if c == "watsonx_bi_assistant":
+        ifm = on(get(block("watsonxBiAssistant"), "installIFM", True))
+        return gpu_rhoai(ifm, f"watsonxBiAssistant.installIFM={str(ifm).lower()} (chart default true)")
+
     if c == "watsonx_data_premium":
-        cfg = block("watsonxDataPremium")
-        comps = get(cfg, "component", [])
+        # The chart reads components (default standard) and ignores the
+        # documented "component" key; the operator runs models only for premium.
+        comps = get(block("watsonxDataPremium"), "components", ["standard"])
         comps = [text(x) for x in (comps if isinstance(comps, list) else [comps])]
-        if not cfg:
-            return gpu_rhoai(True, "no watsonxDataPremium options - assuming all features")
-        if "premium" in comps or text(get(cfg, "wxd_premium_enable_models_on", "")) == "gpu":
-            return gpu_rhoai(True, "all features (component premium / models on gpu)")
-        if not comps:
-            return gpu_rhoai(True, "watsonxDataPremium.component not set - assuming all features")
-        return gpu_rhoai(False, f"watsonxDataPremium.component={','.join(comps)} (limited features)")
+        return gpu_rhoai("premium" in comps,
+                         f"watsonxDataPremium.components={','.join(comps)} (needed only for premium)")
 
     if c == "watsonx_dataintegration":
         u = on(get(block("watsonxDataintegration", "watsonx_dataintegration"),

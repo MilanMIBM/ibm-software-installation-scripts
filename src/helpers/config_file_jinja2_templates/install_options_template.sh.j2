@@ -342,13 +342,41 @@ non_olm:
 {% endif %}{% if "watsonx_data_premium" in components_to_install %}
 ---
 # ............................................................................
-# watsonx.data Premium parameters 
-# Valid wxd_premium_enable_models_on values: gpu, cpu
+# watsonx.data Premium parameters
+# Checked against the watsonx-data-premium Helm chart and lakehouse operator
+# (CASE 7.0.0 / 7.0.5, 5.4.0 to Patch 9). Where IBM's docs differ:
+#   - The key is components (a list). The documented "component:" is ignored
+#     by the chart, so every documented variant installs standard.
+#   - licenseType is ignored here. The license comes from the
+#     watsonx-data-premium entitlement (3.4_apply_entitlements.sh).
+# Valid components values:
+#   standard       - limited features, no GPU: Presto, Prestissimo, Milvus, Spark
+#   spark          - Spark features only (UI, API, AMS, Postgres and Spark)
+#   premium        - all features incl. gen AI, needs GPU. Also add
+#                    watsonx_data_premium_dependencies to the components, or the
+#                    operator waits on WML, WS, UDP and watsonx.data intelligence
+#                    and never completes.
+#   mds_standalone - undocumented: metadata service only, combines with spark
+# wxd_premium_enable_models_on - gpu, cpu, remote (watsonx.ai). Read only with
+#   premium (IBM documents gpu); for other components the operator forces cpu.
+# scaleConfig - starter, small_mincpureq, small, medium, large
 # ............................................................................
 non_olm:
   watsonxDataPremium:
-    wxd_premium_enable_models_on: gpu
-    licenseType: premium
+    components:
+      - standard
+    wxd_premium_enable_models_on: cpu
+#    scaleConfig: small
+#    enable_watsonx_platform: true # watsonx.data Premium platform UI; premium turns it on itself
+# Spark features only:
+#    components:
+#      - spark
+# All features (GPU), with watsonx_data_premium_dependencies in the components:
+#    components:
+#      - premium
+#    wxd_premium_enable_models_on: gpu
+#  watsonxAi:
+#    liteInstall: false # only if the watsonx.ai lightweight engine is installed
 {% endif %}{% if "watsonx_dataintegration" in components_to_install %}
 ---
 # ............................................................................
