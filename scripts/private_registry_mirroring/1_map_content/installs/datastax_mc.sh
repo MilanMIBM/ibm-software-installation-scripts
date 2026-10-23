@@ -72,19 +72,8 @@ import sys, yaml
 t = (((yaml.safe_load(sys.stdin) or {}).get("global") or {}).get("imageConfig") or {}).get("types", {}).get("hcd") or {}
 print("/".join(p for p in (t.get("registry") or "docker.io", t.get("repository") or "", t.get("name") or "") if p) + "\t" + (t.get("suffix") or ""))')"
     hcd_repo="${hcd%%$'\t'*}" hcd_sfx="${hcd#*$'\t'}"
-    tmp="$(preg_private_tmpdir)"
-    preg_write_authfile "${tmp}/auth.json" none --sources
-    tags="$(skopeo list-tags --authfile "${tmp}/auth.json" "docker://${hcd_repo}" 2>"${tmp}/err")" || {
-        err="$(tail -1 "${tmp}/err")"; rm -rf "${tmp}"
-        preg_die "hcd: could not list the tags of ${hcd_repo} (${err}) - check MIRROR_IBM_ENTITLEMENT_KEY, or set MIRROR_DATASTAX_MC_HCD_VERSIONS"
-    }
-    rm -rf "${tmp}"
-    HCD_VERSIONS="$(print -r -- "${tags}" | SFX="${hcd_sfx}" N="${N}" preg_python -c '
-import json, os, re, sys
-sfx = os.environ["SFX"]
-pat = re.compile(r"^(\d+)\.(\d+)\.(\d+)" + re.escape(sfx) + "$")
-vs = sorted({tuple(map(int, m.groups())) for m in map(pat.match, json.load(sys.stdin).get("Tags") or []) if m})
-print(",".join(".".join(map(str, v)) for v in vs[-int(os.environ["N"]):]))')"
+    tags="$(preg_version_tags "${hcd_repo}" "${N}" "^(\\d+)\\.(\\d+)\\.(\\d+)${hcd_sfx}\$")"
+    HCD_VERSIONS="${tags//${hcd_sfx},/,}"; HCD_VERSIONS="${HCD_VERSIONS%${hcd_sfx}}"
     [[ -n "${HCD_VERSIONS}" ]] || preg_die "hcd: no <x.y.z>${hcd_sfx} tags found in ${hcd_repo} - set MIRROR_DATASTAX_MC_HCD_VERSIONS"
     preg_info "hcd: MIRROR_DATASTAX_MC_HCD_VERSIONS empty - the newest ${N} in ${hcd_repo}: ${HCD_VERSIONS}"
 fi

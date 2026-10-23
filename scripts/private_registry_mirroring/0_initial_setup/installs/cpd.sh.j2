@@ -13,8 +13,12 @@
 #   prereq-operators  Red Hat/certified operators the 2.x scripts install
 #                     (cert-manager, NFD/GPU, OpenShift AI, Service Mesh, Serverless,
 #                     MCG) - gated like 2.2, mirrored into <root>/shared
-#   extra-images      images the CP4D scripts use outside CASE (Databand Postgres)
-#                     plus MIRROR_CPD_EXTRA_IMAGES
+#   extra-images      images the CP4D scripts use outside CASE, by component:
+#                     Databand Postgres (ibm-databand); StreamSets engine + stage
+#                     libs (streamsets, ibm-streamsets-sdi, or watsonx_dataintegration
+#                     with enableRealtimeStreaming: true in the install options);
+#                     HCD versions (watsonx_data_premium, datastax_mc); plus
+#                     MIRROR_CPD_EXTRA_IMAGES
 #   vllm              vLLM images for ibm-watsonx-ai-ifm (MIRROR_CPD_VLLM)
 #   oadp              OADP operator + backup plugin images (src/utilities/oadp_*)
 #   cli               cpd-cli for the inside workstation (stop-over bundle only)
@@ -27,6 +31,13 @@ export MIRROR_CPD_IMAGE_GROUPS=""
 # mistral, rhaiis-cuda, rhoai-cuda (x86_64) or spyre (s390x), comma-separated
 export MIRROR_CPD_VLLM=""
 export MIRROR_CPD_EXTRA_IMAGES=""
+# StreamSets engine tags (e.g. JDK17_7.7.0) / watsonx.data HCD versions (e.g.
+# 2.0.6), comma-separated. Empty = the newest *_LATEST in the registry (plus
+# SSET_IMAGE_TAG / DS_SERVER_VERSION when cpd_vars.sh pins one).
+export MIRROR_CPD_STREAMSETS_VERSIONS=""
+export MIRROR_CPD_STREAMSETS_LATEST="3"
+export MIRROR_CPD_HCD_VERSIONS=""
+export MIRROR_CPD_HCD_LATEST="3"
 # IBM's optional prunes before mirror-images (EDB Postgres Standard customers;
 # Watson Studio GPU / NLP images)
 export MIRROR_CPD_EDB_STANDARD_ONLY="false"

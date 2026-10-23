@@ -215,6 +215,22 @@ def _(custom_pull_prefix, image_pull_creds_select):
     return
 
 
+@app.cell(hide_code=True)
+def _(ibm_entitlement_key_input):
+    # Required with every image source: private/local registries are filled from
+    # IBM's registry with this key (mirroring, CASE packages).
+    _key_check = None
+    if not str(ibm_entitlement_key_input.value or "").strip():
+        _key_check = mo.callout(
+            mo.md("**IBM entitlement key is empty.** It is required with every image source - "
+                  "with a private or local registry it is still needed to pull the images from IBM "
+                  "for mirroring."),
+            kind="warn",
+        )
+    _key_check
+    return
+
+
 @app.cell
 def _():
     widget_labels = {

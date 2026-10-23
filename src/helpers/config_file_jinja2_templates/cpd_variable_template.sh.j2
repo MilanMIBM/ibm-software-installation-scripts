@@ -57,13 +57,15 @@ export PROJECT_CPD_INST_OPERANDS="{{ cp4d_install_project_naming.get("PROJECT_CP
 
 export STG_CLASS_BLOCK="{{ block_storage_class_select.value }}"
 export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
-{% if image_pull_creds_select.selected_key == "IBM Entitled Registry" -%}
 # ------------------------------------------------------------------------------
 # IBM Entitled Registry Key
 # ------------------------------------------------------------------------------
-
+{% if image_pull_creds_select.selected_key != "IBM Entitled Registry" -%}
+# Still required: mirroring (scripts/private_registry_mirroring/) pulls the
+# images from cp.icr.io with this key. The cluster pulls from the registry below.
+{% endif %}
 export IBM_ENTITLEMENT_KEY="{{ ibm_entitlement_key_input.value }}"
-{% else -%}
+{% if image_pull_creds_select.selected_key != "IBM Entitled Registry" %}
 # ------------------------------------------------------------------------------
 # Private container registry
 # ------------------------------------------------------------------------------
@@ -72,10 +74,6 @@ export IBM_ENTITLEMENT_KEY="{{ ibm_entitlement_key_input.value }}"
 # registry_overrides.sh next to this file (sourced after it) with the exact
 # registry path, OLM_UTILS_IMAGE and, for local, CPD_CASE_SOURCE=offline.
 export CPD_IMAGE_SOURCE="{{ 'local' if image_pull_creds_select.selected_key == 'Local Private Registry (air-gapped)' else 'private' }}"
-{% if ibm_entitlement_key_input.value -%}
-# Entitlement key: mirroring needs it on the internet side.
-export IBM_ENTITLEMENT_KEY="{{ ibm_entitlement_key_input.value }}"
-{% endif -%}
 export PRIVATE_REGISTRY_LOCATION="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_LOCATION") }}"
 export PRIVATE_REGISTRY_PUSH_USER="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PUSH_USER") }}"
 export PRIVATE_REGISTRY_PUSH_PASSWORD="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PUSH_PASSWORD") }}"

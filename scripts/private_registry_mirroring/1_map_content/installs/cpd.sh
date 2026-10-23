@@ -5,7 +5,8 @@
 #            CASE packages, IBM images (+ image groups), olm-utils, cpd-cli itself
 #   operator Red Hat / certified operators the CP4D scripts install, gated with
 #            the same rules as 2.2 (src/helpers/cp4d_prereq_requirements.py) - shared
-#   image    Databand Postgres, vLLM (IBM's digests), OADP plugins, extras
+#   image    Databand Postgres, StreamSets engine + stage libs, watsonx.data
+#            HCD versions, vLLM (IBM's digests), OADP plugins, extras
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
@@ -61,16 +62,20 @@ if (( ${#native_kinds} )); then
         "\"components\":$(_preg_json "${COMPS}"),\"extra_cases\":$(_preg_json "${(j:,:)extra_cases}"),\"release\":$(_preg_json "${REL}"),\"patch_id\":$(_preg_json "${PATCH}"),\"arch\":$(_preg_json "${ARCH}"),\"groups\":$(_preg_json "${groups}"),\"content\":$(_preg_json "${(j:,:)native_kinds}")"
 fi
 
+# install-options YAML next to the cpd_vars.sh in use (when INSTALL_OPTIONS=true)
+opts=""
+if preg_is_true "${INSTALL_OPTIONS:-false}" && [[ -n "${INSTALL_OPTIONS_FILE:-}" ]]; then
+    for opts in "${ENV_TARGET_FILE:+${ENV_TARGET_FILE:h}/${INSTALL_OPTIONS_FILE}}" "${CONFIG_DIR:-}/${INSTALL_OPTIONS_FILE}"; do
+        [[ -n "${opts}" && -f "${opts}" ]] && break
+        opts=""
+    done
+fi
+
 # --- Red Hat / certified operators the CP4D scripts install (shared) ------------------
 if has prereq-operators; then
     # 1.0 always installs the OpenShift cert-manager operator.
     preg_emit_operator redhat-operators openshift-cert-manager-operator stable-v1 cert-manager
     # Same verdicts as 2.2: "[needed] <component>: why" lines per prerequisite.
-    opts=""
-    if preg_is_true "${INSTALL_OPTIONS:-false}" && [[ -n "${INSTALL_OPTIONS_FILE:-}" ]]; then
-        opts="${CONFIG_DIR:-}/${INSTALL_OPTIONS_FILE}"
-        [[ -f "${opts}" ]] || opts=""
-    fi
     needed() {
         local out
         out="$(CPD_COMPONENTS="${COMPS}" preg_python "${_CP4D_REPO_ROOT}/src/helpers/cp4d_prereq_requirements.py" "$1" ${opts:+"${opts}"} 2>/dev/null || true)"
@@ -114,6 +119,62 @@ if has extra-images; then
     for img in ${=MIRROR_CPD_EXTRA_IMAGES:-}; do
         preg_emit_image "${img}" MIRROR_CPD_EXTRA_IMAGES
     done
+
+    # StreamSets engines (5_component_specific_scripts/cp4d_streamsets): engine +
+    # stage-libs image per version. The CASE has one engine tag and no libs image.
+    # Explicit MIRROR_CPD_STREAMSETS_VERSIONS, else the newest N versions that
+    # have a libs image, plus SSET_IMAGE_TAG / SSET_ENGINE_VERSION when pinned.
+    realtime_streaming() {
+        [[ -n "${opts}" ]] || return 1
+        preg_python -c '
+import sys, yaml
+def walk(n):
+    if isinstance(n, dict):
+        w = n.get("watsonx_dataintegration")
+        if isinstance(w, dict) and str(w.get("enableRealtimeStreaming")).lower() == "true":
+            return True
+        return any(walk(v) for v in n.values())
+    return isinstance(n, list) and any(walk(v) for v in n)
+sys.exit(0 if any(walk(d) for d in yaml.safe_load_all(open(sys.argv[1]))) else 1)' "${opts}"
+    }
+    if comp ibm-streamsets-sdi || comp streamsets || { comp watsonx_dataintegration && realtime_streaming; }; then
+        sset="cp.icr.io/cp/cpd/ibm-streamsets-datacollector"
+        libs=("${(@s:,:)$(preg_version_tags "${sset}-libs" 0 '^JDK(\d+)_(\d+)\.(\d+)\.(\d+)$')}")   # oldest first
+        tags="${MIRROR_CPD_STREAMSETS_VERSIONS:-}"
+        if [[ -z "${tags}" ]]; then
+            n="${MIRROR_CPD_STREAMSETS_LATEST:-3}"
+            [[ "${n}" == <1-> ]] || preg_die "MIRROR_CPD_STREAMSETS_LATEST must be a positive number (got '${n}')"
+            tags="${(j:,:)libs[$(( n >= ${#libs} ? 1 : ${#libs} - n + 1 )),-1]}"
+            tags+="${SSET_IMAGE_TAG:+,${SSET_IMAGE_TAG}}${SSET_ENGINE_VERSION:+,${SSET_ENGINE_VERSION}}"
+            preg_info "streamsets: MIRROR_CPD_STREAMSETS_VERSIONS empty - the newest ${n} with stage libs${SSET_IMAGE_TAG:+ + SSET_IMAGE_TAG}${SSET_ENGINE_VERSION:+ + SSET_ENGINE_VERSION}: ${tags}"
+        fi
+        for t in ${(u)${(s:,:)tags}}; do
+            preg_emit_image "${sset}:${t}" streamsets
+            if (( ${libs[(Ie)${t}]} )); then
+                preg_emit_image "${sset}-libs:${t}" streamsets
+            else
+                preg_warn "streamsets: no stage-libs image for ${t} - engine image only"
+            fi
+        done
+    fi
+
+    # watsonx.data's DataStax HCD (4.5_provision_datastax_hcd.sh, DS_SERVER_VERSION):
+    # the CASE ships one HCD version. Explicit MIRROR_CPD_HCD_VERSIONS, else the
+    # newest N plus DS_SERVER_VERSION when pinned.
+    if comp watsonx_data_premium || comp datastax_mc; then
+        hcd="cp.icr.io/cp/cpd/ibm-datastax-hcd/hcd"
+        vers="${MIRROR_CPD_HCD_VERSIONS:-}"
+        if [[ -z "${vers}" ]]; then
+            n="${MIRROR_CPD_HCD_LATEST:-3}"
+            [[ "${n}" == <1-> ]] || preg_die "MIRROR_CPD_HCD_LATEST must be a positive number (got '${n}')"
+            vers="$(preg_version_tags "${hcd}" "${n}" '^(\d+)\.(\d+)\.(\d+)-ubi$')"
+            vers="${vers//-ubi/}${DS_SERVER_VERSION:+,${DS_SERVER_VERSION}}"
+            preg_info "hcd (watsonx.data): MIRROR_CPD_HCD_VERSIONS empty - the newest ${n}${DS_SERVER_VERSION:+ + DS_SERVER_VERSION}: ${vers}"
+        fi
+        for v in ${(u)${(s:,:)vers}}; do
+            preg_emit_image "${hcd}:${v}-ubi" hcd
+        done
+    fi
 fi
 
 # --- vLLM for ibm-watsonx-ai-ifm (IBM's digests, 5.4.x docs) ---------------------------

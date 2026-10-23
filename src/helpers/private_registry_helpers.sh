@@ -409,6 +409,26 @@ preg_olm_arch_suffix() {
     print -r -- "${a:+.${a}}"
 }
 
+# Tags of <repo> matching <pattern> (a Python regex whose groups are the numeric
+# version parts), oldest first, comma-separated: the newest <n>, or all with n=0.
+# Lists with the source credentials; fails loudly so nothing is skipped silently.
+preg_version_tags() {   # <repo> <n> <pattern>
+    local repo="$1" n="$2" pat="$3" tmp tags err
+    tmp="$(preg_private_tmpdir)"
+    preg_write_authfile "${tmp}/auth.json" none --sources
+    if ! tags="$(skopeo list-tags --authfile "${tmp}/auth.json" "docker://${repo}" 2>"${tmp}/err")"; then
+        err="$(tail -1 "${tmp}/err")"; rm -rf "${tmp}"
+        preg_die "Could not list the tags of ${repo} (${err}) - check MIRROR_IBM_ENTITLEMENT_KEY, or list the versions explicitly"
+    fi
+    rm -rf "${tmp}"
+    print -r -- "${tags}" | PAT="${pat}" N="${n}" preg_python -c '
+import json, os, re, sys
+pat = re.compile(os.environ["PAT"])
+found = sorted((tuple(map(int, m.groups())), t) for t in json.load(sys.stdin).get("Tags") or [] for m in [pat.match(t)] if m)
+n = int(os.environ["N"])
+print(",".join(t for _, t in (found[-n:] if n else found)))'
+}
+
 # Architecture of the machine that runs Linux tools: this host on Linux, the
 # podman VM elsewhere (arm64 on Apple Silicon).
 preg_linux_arch() {
