@@ -96,7 +96,7 @@ if [[ -n "${CPD_PATH}" && -d "${BUNDLE}/${CPD_PATH}/cpd-cli-work" ]]; then
     WORK="${HOME}/cpd-cli/work"
     mkdir -p "${WORK}"
     preg_info "Restoring cpd-cli's work dir -> ${WORK}"
-    rsync -a "${BUNDLE}/${CPD_PATH}/cpd-cli-work/" "${WORK}/"
+    preg_rsync "bundle -> cpd-cli work dir" -a "${BUNDLE}/${CPD_PATH}/cpd-cli-work/" "${WORK}/"
     # IBM: chown -R 1001 ./work; chmod -R 775 ./work; cpd-cli manage restart-container
     chmod -R 775 "${WORK}"
     if [[ "$(uname -s)" == Linux ]]; then

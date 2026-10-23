@@ -13,7 +13,8 @@
 #     registry paths, selections, and running a segment's install hook
 #   - registry: image source (detect), pull/push roots, auth files, probes
 #   - phases (mirror | save | load) and the transfer bundle
-#   - tools: oc-mirror (native on Linux, container elsewhere)
+#   - tools: oc-mirror (native on Linux, container elsewhere); cpd-cli
+#     list-images and rsync with a progress row
 #   - cluster: login through an install's config, waits
 #   - hook output: preg_emit_* (JSON lines on file descriptor 3)
 #
@@ -407,6 +408,127 @@ preg_olm_arch_suffix() {
         [[ "${tag}" == *.(amd64|arm64|ppc64le|s390x) ]] && a="${tag##*.}"
     fi
     print -r -- "${a:+.${a}}"
+}
+
+# cpd-cli manage list-images with one progress row (progress_panel_helpers.sh);
+# its own output goes to <log>. Its playbook writes a mapping file per CASE,
+# then (--target_registry / --inspect_source_registry=true) it skopeo-inspects
+# every mapping line into list_images.csv and prints nothing until the end -
+# 45 min for a full watsonx set. A CASE shared by components is inspected once
+# per component, so the total is IBM's own per-component CASE list
+# (find_case_info.py with the run's metadata file), read in the olm-utils
+# container by podman exec only: any other cpd-cli manage call restarts the
+# container and kills the run.
+preg_cpd_list_images() {   # <title> <log> <list-images args...>
+    local title="$1" log="$2" a rc=0
+    shift 2
+    source "${_CP4D_REPO_ROOT}/src/helpers/progress_panel_helpers.sh"
+    _PREG_LI_WORK="${CPD_CLI_WORK_PATH:-${HOME}/cpd-cli/work}" _PREG_LI_C="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
+    _PREG_LI_LOG="${log}" _PREG_LI_COMPS="" _PREG_LI_REL="" _PREG_LI_SKIP="" _PREG_LI_MAP=images-mapping.txt
+    for a in "$@"; do
+        case "${a}" in
+            --components=*) _PREG_LI_COMPS="${a#*=}" ;;
+            --release=*) _PREG_LI_REL="${a#*=}" ;;
+            --skip_components=*) _PREG_LI_SKIP="${a#*=}" ;;
+            --target_registry=*) _PREG_LI_MAP=images-mapping-from-registry.txt ;;
+        esac
+    done
+    _PREG_LI_CASES="$(preg_private_tmpdir)/cases" _PREG_LI_TRY=0 _PREG_LI_TOTAL=""
+    _PREG_LI_MARK="${_PREG_LI_WORK}/.preg-list-images-start"
+    : > "${_PREG_LI_MARK}"
+    mkdir -p "${log:h}"
+    : > "${log}"
+    preg_info "${title}: cpd-cli manage list-images (output: ${log#${_CP4D_REPO_ROOT}/})"
+    ppanel_watch_start -p _preg_li_probe -t "${title}" -u images
+    cpd-cli manage list-images "$@" > "${log}" 2>&1 || rc=$?
+    ppanel_watch_stop
+    rm -rf -- "${_PREG_LI_MARK}" "${_PREG_LI_CASES:h}"
+    # cpd-cli's own lines ("[SUCCESS] 2026-...Z ..."), not ansible's
+    sed -E $'s/\e\\[[0-9;]*m//g; s/\r$//' "${log}" | grep -E '^\[(SUCCESS|WARN|WARNING|ERROR)\] [0-9]{4}-[0-9]{2}-[0-9]{2}T' || true
+    if (( rc )); then
+        sed -E $'s/\e\\[[0-9;]*m//g; s/\r$//' "${log}" | tail -n 20 >&2
+        preg_error "${title}: list-images failed (exit ${rc}) - full output: ${log}"
+    fi
+    return "${rc}"
+}
+
+# Background: the CASE list list-images inspects, in its order (one line per
+# component; utils.sh check_and_add_zen adds zen next to cpd_platform).
+_preg_li_cases_job() {
+    local comps="${(j: :)${(s:,:)_PREG_LI_COMPS}}"
+    [[ ",${_PREG_LI_COMPS}," == *,cpd_platform,* && ",${_PREG_LI_COMPS}," != *,zen,* ]] && comps+=" zen"
+    podman exec "${_PREG_LI_C}" sh -c 'cd /opt/ansible/ansible-play/config-vars || exit 1
+md="$(find . -maxdepth 1 -name "list-images-*.yaml" -newer /tmp/work/'"${_PREG_LI_MARK:t}"' | head -1)"
+[ -n "${md}" ] || exit 1
+for c in '"${comps}"'; do
+    python3 /opt/ansible/bin/find_case_info.py --component "${c}" --release '"${_PREG_LI_REL}"' --metadata_filename="${md#./}" --skip_components='"${_PREG_LI_SKIP}"' || exit 1
+done' > "${_PREG_LI_CASES}.tmp" 2>/dev/null && mv -f "${_PREG_LI_CASES}.tmp" "${_PREG_LI_CASES}"
+}
+
+# Probe (in the drawer): stage from the log, then CASEs manifested / lines inspected.
+_preg_li_probe() {
+    local -a v cases
+    local c n csv="${_PREG_LI_WORK}/offline/${_PREG_LI_REL}/list_images.csv"
+    v=("${(@ps:\t:)$(awk '
+{ gsub(/\033\[[0-9;]*m/, ""); sub(/\r$/, "") }
+/^PLAY \[/ && !st                               { st = 1 }
+/^TASK \[utils : generate mirror manifests for / { c = $0; sub(/.*manifests for /, "", c); sub(/\].*/, "", c)
+                                                  if (!(c in seen)) { seen[c] = 1; n++ }; cur = c }
+/^========logging to/                           { st = 2 }
+/^========manifest info logged/                 { st = 3 }
+END { printf "%d\t%d\t%s", st, n, cur }' "${_PREG_LI_LOG}" 2>/dev/null)}")
+    if (( ${v[1]:-0} == 0 )); then
+        PPANEL_DETAIL="starting (olm-utils container, CASE metadata)"
+        return 0
+    fi
+    # the CASE list, once the run's metadata file exists (retried every 15 s)
+    if [[ ! -s "${_PREG_LI_CASES}" ]] && (( EPOCHSECONDS >= _PREG_LI_TRY )); then
+        _PREG_LI_TRY=$(( EPOCHSECONDS + 15 ))
+        _preg_li_cases_job &!
+    fi
+    [[ -s "${_PREG_LI_CASES}" ]] && cases=(${=$(<"${_PREG_LI_CASES}")})
+    case "${v[1]}" in
+        1)  PPANEL_UNITS=CASEs PPANEL_DONE="${v[2]}" PPANEL_DETAIL="playbook${v[3]:+: mapping files - ${v[3]}}"
+            (( ${#cases} )) && PPANEL_TOTAL="${#${(@u)cases}}" ;;
+        2)  if [[ -z "${_PREG_LI_TOTAL}" ]] && (( ${#cases} )); then
+                _PREG_LI_TOTAL=0
+                for c in "${cases[@]}"; do
+                    n="$(grep -c . "${_PREG_LI_WORK}/offline/${_PREG_LI_REL}/.ibm-pak/data/mirror/${c}/${_PREG_LI_MAP}" 2>/dev/null)"
+                    (( _PREG_LI_TOTAL += ${n:-0} ))
+                done
+            fi
+            v=(${=$(awk 'NF && !/level=/ && !/^[ \t"]/ { n++ } /level=fatal/ { f++ } END { print n + 0, f + 0 }' "${csv}" 2>/dev/null)})
+            PPANEL_TOTAL="${_PREG_LI_TOTAL}" PPANEL_DONE="${v[1]:-0}" PPANEL_DETAIL="skopeo inspect per image"
+            (( ${v[2]:-0} )) && PPANEL_DETAIL+=" · ${v[2]} level=fatal" ;;
+        *)  PPANEL_TOTAL="${_PREG_LI_TOTAL}" PPANEL_DONE="${_PREG_LI_TOTAL}" PPANEL_DETAIL="finishing" ;;
+    esac
+    return 0
+}
+
+# rsync with one progress row: the destination's size against the source's
+# (du, every 5 s - excluded paths count in the source, so it may end below 100%).
+preg_rsync() {   # <title> <rsync args...> <src/> <dst/>
+    local title="$1" log rc=0
+    shift
+    source "${_CP4D_REPO_ROOT}/src/helpers/progress_panel_helpers.sh"
+    _PREG_RS_DST="${@[-1]}" _PREG_RS_SRC_KB="$(du -sk "${@[-2]}" 2>/dev/null | awk '{ print $1 }')"
+    log="$(preg_private_tmpdir)/rsync.log"
+    ppanel_watch_start -p _preg_rsync_probe -t "${title}" -u MB -i 5
+    rsync "$@" > "${log}" 2>&1 || rc=$?
+    ppanel_watch_stop
+    (( rc == 0 )) || { tail -n 20 "${log}" >&2; preg_error "${title}: rsync failed (exit ${rc})"; }
+    rm -rf -- "${log:h}"
+    return "${rc}"
+}
+
+_preg_rsync_probe() {
+    local -i kb
+    kb="$(du -sk "${_PREG_RS_DST}" 2>/dev/null | awk '{ print $1 }')"
+    if (( ${_PREG_RS_SRC_KB:-0} >= 10 * 1024 * 1024 )); then
+        PPANEL_UNITS=GB PPANEL_DONE=$(( kb / 1048576 )) PPANEL_TOTAL=$(( _PREG_RS_SRC_KB / 1048576 ))
+    else
+        PPANEL_DONE=$(( kb / 1024 )) PPANEL_TOTAL=$(( ${_PREG_RS_SRC_KB:-0} / 1024 ))
+    fi
 }
 
 # Tags of <repo> matching <pattern> (a Python regex whose groups are the numeric

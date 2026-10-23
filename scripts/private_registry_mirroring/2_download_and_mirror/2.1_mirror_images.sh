@@ -13,6 +13,7 @@ export ENV_TARGET="${MIRROR_CONFIG_FILE:-registry_mirror}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/private_registry_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/progress_panel_helpers.sh"
 preg_require_config
 
 # ==============================================================================
@@ -25,6 +26,7 @@ preg_require_config
 #   save    source -> <bundle>/<path>/images  (--dir)
 #   load    <bundle>/<path>/images -> <push root>/<path>/...  (--from-dir)
 # Credentials: one host-level auth file (target + sources) in a private tmpdir.
+# One progress row per path while oc runs (progress_panel_helpers.sh).
 #
 #   ./2.1_mirror_images.sh [--phase=...] [--path P]   (--path: one registry path only)
 # ==============================================================================
@@ -55,6 +57,23 @@ else
     preg_write_authfile "${RUN}/auth.json" push --sources
 fi
 
+# oc image mirror's log: one "sha256:<digest> <target>:<tag>" line per mapping
+# line pushed, "uploading: / mounted: <repo> <blob> <size>" per layer.
+LOG="" TOTAL=0
+oc_probe() {
+    PPANEL_TOTAL="${TOTAL}" PPANEL_DETAIL="planning"
+    [[ -s "${LOG}" ]] || return 0
+    local -a v=("${(@ps:\t:)$(awk '
+/^sha256:[0-9a-f]+ [^ ]+:[^\/ ]+$/ { if (!($2 in seen)) { seen[$2] = 1; p++ }; n = split($2, a, "/"); last = "pushed " a[n]; next }
+/^info: Planning completed/       { pl = 1; next }
+/^info: Mirroring completed/      { last = "finishing"; next }
+/^(uploading|mounted|skipped): /  { n = split($2, a, "/"); last = substr($1, 1, length($1) - 1) " " a[n] ($4 != "" ? " " $4 : "") }
+END { printf "%d\t%d\t%s", p, pl, last }' "${LOG}")}")
+    PPANEL_DONE="${v[1]}"
+    (( v[2] )) && PPANEL_DETAIL="${v[3]:-copying}"
+    return 0
+}
+
 failed=() done_paths=()
 for t in "${WS}"/*/targets.tsv(N); do
     rp="${t:h:t}"
@@ -72,7 +91,11 @@ for t in "${WS}"/*/targets.tsv(N); do
               args+=(--from-dir="${BUNDLE}/${rp}/images") ;;
     esac
     preg_info "== <root>/${rp}: ${n} image(s)"
-    if oc image mirror "${args[@]}" 2>&1 | tee "${RUN}/oc.${rp}.log" | grep -E '^(info: Mirroring completed|error|F[0-9]{4}|W[0-9]{4})' ; then :; fi
+    LOG="${RUN}/oc.${rp}.log" TOTAL="$(grep -c . "${map}" || true)"
+    ppanel_watch_start -p oc_probe -t "<root>/${rp}" -u images
+    oc image mirror "${args[@]}" > "${LOG}" 2>&1 || true
+    ppanel_watch_stop
+    grep -E '^(info: Mirroring completed|error|F[0-9]{4}|W[0-9]{4})' "${LOG}" || true
     if grep -q -E '^(error:|F[0-9]{4})' "${RUN}/oc.${rp}.log" || ! grep -q 'info: Mirroring completed' "${RUN}/oc.${rp}.log"; then
         cp "${RUN}/oc.${rp}.log" "${WS}/${rp}/mirror-${PHASE}.log"
         failed+=("${rp}")

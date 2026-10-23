@@ -18,6 +18,9 @@
 #                                 last call - for probes that parse a log
 #   - pool: ppanel_pool_run runs jobs N at a time with retries; one header row
 #     plus one row per slot (bar, count, elapsed, detail from a probe).
+#   - watch: ppanel_watch_start / ppanel_watch_stop keep one row (bar, count,
+#     elapsed, time left) for a command that runs in the foreground with its
+#     output in a file.
 #
 # Event levels: INFO (shown only without a terminal - in a terminal the rows
 # already show it), NOTE (always, printed as [INFO]), WARN, ERROR (stderr).
@@ -466,5 +469,94 @@ ppanel_pool_run() {
         return 1
     fi
     _ppanel_emit plain NOTE "${title}: ${ok}/${njobs} ${noun} done in ${REPLY}"
+    return 0
+}
+
+# =============================================================================
+# Watch
+# =============================================================================
+# One row for a command that runs in the FOREGROUND with its output in a file
+# (it may need the terminal's stdin - cpd-cli runs podman exec -it). A drawer
+# in the background asks a probe on every refresh:
+#
+#     ppanel_watch_start -p my_probe -t "cpd target check" -u images
+#     cpd-cli manage list-images ... > "${log}" 2>&1 || rc=$?
+#     ppanel_watch_stop
+#
+#   -p FN     probe (required): `FN` runs in the drawer's shell on every
+#             refresh. It sets PPANEL_DONE, PPANEL_TOTAL (whole numbers, may
+#             stay empty), PPANEL_DETAIL and PPANEL_UNITS (default -u), and
+#             may call ppanel_event. A new total starts a new stage: the time
+#             left is measured from there.
+#   -t TEXT   title   -u WORD  units (items)   -i S  refresh seconds (1)
+# Row: title [bar] done/total units (pct%) · elapsed · ~time left · detail.
+# Without a terminal: the row as a line every PPANEL_PLAIN_EVERY seconds (60)
+# and once at the end.
+# Nothing else may write to the terminal until ppanel_watch_stop (it draws a
+# last time and leaves the row on screen): run the command as `cmd || rc=$?`,
+# not bare under errexit. The drawer also stops on INT / TERM / HUP and when
+# this shell is gone.
+# =============================================================================
+
+typeset -g _PPANEL_WATCH_PID=""
+
+_ppanel_watch_loop() {   # <probe> <title> <units> <refresh> <parent pid>
+    setopt localoptions localtraps unset noerrexit nopipefail
+    local probe="$1" title="$2" unit="$3" stage="" row cnt pct left
+    local -i every=$4 parent=$5 stop=0 t0=${EPOCHSECONDS} d t st0 sd0 plain_every=${PPANEL_PLAIN_EVERY:-60} next_plain
+    next_plain=$(( EPOCHSECONDS + plain_every ))
+    trap 'stop=1' INT TERM HUP
+    ppanel_open 1
+    while :; do
+        PPANEL_DONE="" PPANEL_TOTAL="" PPANEL_DETAIL="" PPANEL_UNITS=""
+        "${probe}"
+        d=${PPANEL_DONE:-0} t=${PPANEL_TOTAL:-0}
+        (( t > 0 && d > t )) && d=t
+        if [[ "${PPANEL_TOTAL}" != "${stage}" ]]; then
+            stage="${PPANEL_TOTAL}" st0=${EPOCHSECONDS} sd0=d
+        fi
+        cnt="${d}" pct="" left=""
+        if (( t > 0 )); then
+            cnt="${d}/${t}" pct=" ($(( d * 100 / t ))%)"
+            if (( d > sd0 && d < t && EPOCHSECONDS - st0 >= 10 )); then
+                ppanel_duration $(( (EPOCHSECONDS - st0) * (t - d) / (d - sd0) ))
+                left=" · ~${REPLY} left"
+            fi
+        fi
+        ppanel_bar "${d}" "${t}" 20
+        row="${title}  ${REPLY} ${cnt} ${PPANEL_UNITS:-${unit}}${pct}"
+        ppanel_duration $(( EPOCHSECONDS - t0 ))
+        row+=" · ${REPLY}${left}${PPANEL_DETAIL:+ · ${PPANEL_DETAIL}}"
+        ppanel_row 1 "${row}"
+        if [[ "${_PPANEL_MODE}" == plain ]] && (( stop || EPOCHSECONDS >= next_plain )); then
+            ppanel_event INFO "${row}"
+            next_plain=$(( EPOCHSECONDS + plain_every ))
+        fi
+        ppanel_draw
+        (( stop )) && break
+        kill -0 "${parent}" 2>/dev/null || break
+        _ppanel_sleep "${every}"
+    done
+    ppanel_close keep
+}
+
+ppanel_watch_start() {
+    setopt localoptions unset noerrexit nopipefail
+    local -A o
+    zparseopts -D -F -A o p: t: u: i: \
+        || { print -u2 -r -- "ppanel_watch_start: unknown option"; return 2; }
+    [[ -n "${o[-p]:-}" ]] || { print -u2 -r -- "ppanel_watch_start: -p <probe> is required"; return 2; }
+    ppanel_watch_stop
+    _ppanel_watch_loop "${o[-p]}" "${o[-t]:-progress}" "${o[-u]:-items}" "${o[-i]:-1}" $$ </dev/null &
+    _PPANEL_WATCH_PID=$!
+    return 0
+}
+
+ppanel_watch_stop() {
+    setopt localoptions unset noerrexit nopipefail
+    [[ -n "${_PPANEL_WATCH_PID}" ]] || return 0
+    kill -TERM "${_PPANEL_WATCH_PID}" 2>/dev/null
+    wait "${_PPANEL_WATCH_PID}" 2>/dev/null
+    _PPANEL_WATCH_PID=""
     return 0
 }

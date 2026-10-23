@@ -69,7 +69,7 @@ if [[ -n "${CPD_PATH}" && -s "${WS}/${CPD_PATH}/native.jsonl" ]]; then
     [[ -d "${WORK}" ]] || preg_die "cpd-cli work dir not found: ${WORK}"
     preg_info "Copying cpd-cli's work dir (without secrets) -> ${CPD_PATH}/cpd-cli-work"
     mkdir -p "${BUNDLE}/${CPD_PATH}/cpd-cli-work"
-    rsync -a --delete \
+    preg_rsync "cpd-cli work dir -> bundle" -a --delete \
         --exclude '.airgap/secrets/' --exclude 'global_pull_secret.cfg' --exclude '.olm-utils/' \
         --exclude 'cp4d_config/' --exclude 'olm-utils-ansible-log/' --exclude '*.log' --exclude '.DS_Store' \
         "${WORK}/" "${BUNDLE}/${CPD_PATH}/cpd-cli-work/"

@@ -36,9 +36,9 @@ if [[ "${VERB}" == check ]]; then
     fi
     command -v cpd-cli >/dev/null 2>&1 || preg_die "cpd-cli not on PATH (scripts/install_cloud_pak_for_data/0_initial_setup/0.2_install_cpd_cli-MAC-ONLY.sh)"
     [[ -n "${MIRROR_IBM_ENTITLEMENT_KEY:-}" ]] || preg_die "MIRROR_IBM_ENTITLEMENT_KEY is empty"
-    preg_info "cpd: cpd-cli manage list-images --inspect_source_registry=true (${COMPS})"
     cpd-cli manage login-entitled-registry "${MIRROR_IBM_ENTITLEMENT_KEY}" >/dev/null
-    cpd-cli manage list-images --components="${COMPS}" --release="${REL}" ${PATCH:+--patch_id=${PATCH}} \
+    preg_cpd_list_images "cpd source check" "${MIRROR_INSTALL_WORKDIR}/list-images-source.log" \
+        --components="${COMPS}" --release="${REL}" ${PATCH:+--patch_id=${PATCH}} \
         --inspect_source_registry=true $(preg_is_true "${MIRROR_CPD_CASE_FROM_OCI:-true}" && print -r -- --from_oci=true)
     csv="${CPD_CLI_WORK_PATH:-${HOME}/cpd-cli/work}/offline/${REL}/list_images.csv"
     [[ -f "${csv}" ]] || preg_die "list_images.csv not found at ${csv}"

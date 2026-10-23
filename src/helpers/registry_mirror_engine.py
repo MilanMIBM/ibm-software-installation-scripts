@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 
 MANAGED_BY = "private-registry-mirroring"
@@ -51,6 +52,36 @@ def die(msg, code=1):
 
 def warn(msg):
     print(f"[WARN] {msg}", file=sys.stderr)
+
+
+def _dur(s):
+    """45s, 14m03s, 1h02m - like progress_panel_helpers.sh's ppanel_duration."""
+    s = int(s)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s // 3600}h{s % 3600 // 60:02d}m"
+
+
+class Progress:
+    """'[INFO] <what>: done/total <unit> (pct%), elapsed, ~left' on stderr every
+    MIRROR_PROGRESS_EVERY seconds (10); a run shorter than that prints nothing."""
+
+    def __init__(self, what, total, unit, fmt=str):
+        self.what, self.total, self.unit, self.fmt = what, total, unit, fmt
+        self.every = float(os.environ.get("MIRROR_PROGRESS_EVERY") or 10)
+        self.t0 = self.last = time.monotonic()
+
+    def update(self, done, extra=""):
+        now = time.monotonic()
+        if now - self.last < self.every or not self.total or done >= self.total:
+            return
+        self.last = now
+        el = now - self.t0
+        left = f", ~{_dur(el * (self.total - done) / done)} left" if done else ""
+        print(f"[INFO] {self.what}: {self.fmt(done)}/{self.fmt(self.total)} {self.unit} "
+              f"({done * 100 // self.total}%){extra}, {_dur(el)}{left}", file=sys.stderr, flush=True)
 
 
 # =============================================================================
@@ -322,6 +353,12 @@ def cmd_build(a):
                     if d["default"]:
                         warn(f"{pkg}: some installs want its default channel, others {sorted(d['channels'])}; "
                              f"only the named channels are mirrored")
+                    # oc-mirror v2 refuses to filter out the catalog's default channel unless the
+                    # package names a new one (rhods-operator: catalog default stable-3.x, Software
+                    # Hub 5.4.0 pins stable-2.25). With several channels the highest one wins.
+                    top = max(d["channels"], key=lambda c: [int(t) if t.isdigit() else t
+                                                            for t in re.split(r"(\d+)", c)])
+                    lines.append(f"      defaultChannel: {top}")
                     lines.append("      channels:")
                     lines += [f"      - name: {ch}" for ch in sorted(d["channels"])]
         with open(isc_path, "w") as out:
@@ -716,7 +753,7 @@ def _inspect_one(ref, opts, sizes):
 
 
 def cmd_inspect(a):
-    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+    from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
     refs = [l.strip() for l in open(a.refs_file) if l.strip() and not l.startswith("#")]
     opts = []
     if a.authfile:
@@ -725,8 +762,14 @@ def cmd_inspect(a):
         opts += ["--cert-dir", a.cert_dir]
     if a.tls_verify_false:
         opts += ["--tls-verify=false"]
+    results = [None] * len(refs)
+    progress, problems = Progress("inspect", len(refs), "image(s)"), 0
     with ThreadPoolExecutor(max_workers=a.jobs) as ex:
-        results = list(ex.map(lambda r: _inspect_one(r, opts, a.sizes), refs))
+        futures = {ex.submit(_inspect_one, r, opts, a.sizes): i for i, r in enumerate(refs)}
+        for n, f in enumerate(as_completed(futures), 1):
+            results[futures[f]] = f.result()
+            problems += results[futures[f]]["status"] != "OK"
+            progress.update(n, f", {problems} problem(s)" if problems else "")
     unique, bad = {}, []
     for r in results:
         if r["status"] != "OK":
@@ -776,12 +819,15 @@ def _sha256(path):
 
 def cmd_bundle_manifest(a):
     root = a.dir
+    gb = lambda n: f"{n / 1e9:.1f}"  # noqa: E731
     if a.action == "write":
         sums = {}
-        total = 0
-        for rel, full in sorted(_walk(root)):
+        files = sorted(_walk(root))
+        total, progress = 0, Progress("checksums", sum(os.path.getsize(full) for _, full in files), "GB", gb)
+        for rel, full in files:
             sums[rel] = _sha256(full)
             total += os.path.getsize(full)
+            progress.update(total)
         with open(os.path.join(root, "SHA256SUMS"), "w") as fh:
             for rel, s in sorted(sums.items()):
                 fh.write(f"{s}  {rel}\n")
@@ -801,12 +847,17 @@ def cmd_bundle_manifest(a):
             s, rel = line.rstrip("\n").split("  ", 1)
             expected[rel] = s
     bad = []
+    present = [os.path.join(root, rel) for rel in expected if os.path.isfile(os.path.join(root, rel))]
+    done, progress = 0, Progress("checksums", 0 if a.quick else sum(map(os.path.getsize, present)), "GB", gb)
     for rel, s in expected.items():
         full = os.path.join(root, rel)
         if not os.path.isfile(full):
             bad.append(f"missing  {rel}")
-        elif not a.quick and _sha256(full) != s:
-            bad.append(f"changed  {rel}")
+        elif not a.quick:
+            if _sha256(full) != s:
+                bad.append(f"changed  {rel}")
+            done += os.path.getsize(full)
+            progress.update(done)
     extra = sorted(set(r for r, _ in _walk(root)) - set(expected))
     for b in bad:
         print(b)

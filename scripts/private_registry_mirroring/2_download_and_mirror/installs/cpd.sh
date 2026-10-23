@@ -18,6 +18,8 @@
 #
 # Every mirror-images step pushes MIRROR_CPD_PARALLEL_JOBS CASEs at a time
 # (MIRROR_CPD_PARALLEL=true, the default; false = IBM's serial run, see mirror_images).
+# The list-images checks show one progress row; their output goes to
+# <workspace>/<cpd path>/list-images-{target,source}.log.
 #
 # olm-utils lands as <root>/cpd/cpopen/cpd/olm-utils-v4:<release>[.<arch>] (the
 # CASE tags, pinned to the patch build's digest; there is no <release>.<patch>
@@ -75,6 +77,14 @@ fatal_check() {   # <label>: list_images.csv must have no level=fatal lines
         preg_die "$1: ${n} image(s) failed (authorization or network) - ${csv}"
     fi
     preg_info "$1: no level=fatal in list_images.csv"
+}
+
+# list-images output (preg_cpd_list_images shows a progress row instead)
+LI_LOG="${MIRROR_INSTALL_WORKDIR}/list-images"
+target_check() {   # every mirrored image must be inspectable in the target
+    preg_cpd_list_images "cpd target check" "${LI_LOG}-target.log" \
+        --components="${COMPS}" "${common[@]}" --target_registry="${TARGET}" --case_download=false
+    fatal_check "cpd target check"
 }
 
 # IBM's optional prunes (EDB Postgres Standard; Watson Studio GPU / NLP) - a
@@ -252,8 +262,8 @@ download)
             preg_require_vars MIRROR_IBM_ENTITLEMENT_KEY
             cpd-cli manage login-entitled-registry "${MIRROR_IBM_ENTITLEMENT_KEY}" >/dev/null
             if preg_is_true "${MIRROR_CPD_INSPECT_SOURCE_REGISTRY:-false}"; then
-                preg_info "cpd: list-images --inspect_source_registry=true"
-                cpd-cli manage list-images --components="${COMPS}" "${common[@]}" --inspect_source_registry=true "${oci[@]}"
+                preg_cpd_list_images "cpd source check" "${LI_LOG}-source.log" \
+                    --components="${COMPS}" "${common[@]}" --inspect_source_registry=true "${oci[@]}"
                 fatal_check "cpd source check"
             else
                 preg_info "cpd: source inspection skipped (MIRROR_CPD_INSPECT_SOURCE_REGISTRY=false)"
@@ -271,8 +281,7 @@ download)
             fi
             mirror_logs_check "${marker}"
             if [[ "${PHASE}" == mirror ]]; then
-                cpd-cli manage list-images --components="${COMPS}" "${common[@]}" --target_registry="${TARGET}" --case_download=false
-                fatal_check "cpd target check"
+                target_check
             fi
         fi
         if has olm-utils; then
@@ -310,16 +319,14 @@ download)
             mirror_images images-mapping-from-registry.txt --components="${COMPS}" "${common[@]}" --source_registry="${STOPOVER}" \
                 --target_registry="${TARGET}" "${mirror_flags[@]}" --case_download=false
             mirror_logs_check "${marker}"
-            cpd-cli manage list-images --components="${COMPS}" "${common[@]}" --target_registry="${TARGET}" --case_download=false
-            fatal_check "cpd target check"
+            target_check
         fi
     fi
     ;;
 verify-registry)
     if has ibm-images; then
         private_login
-        cpd-cli manage list-images --components="${COMPS}" "${common[@]}" --target_registry="${TARGET}" --case_download=false
-        fatal_check "cpd target check"
+        target_check
     fi
     ;;
 *) preg_die "usage: $0 download --phase=... | verify-registry" ;;
