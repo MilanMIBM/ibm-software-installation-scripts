@@ -27,6 +27,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/private_registry_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/progress_panel_helpers.sh"
 
 VERB="${1:-}"; shift || true
 NATIVE="${MIRROR_INSTALL_WORKDIR:?run through 2.0 / 2.4}/native.jsonl"
@@ -112,7 +113,78 @@ private_login() {
 # do_mirror_manifests vars, through the documented --param-file), then the
 # oc image mirror the playbook would run per CASE runs here, MIRROR_CPD_PARALLEL_JOBS
 # CASEs at a time, largest first - same flags, auth, log (mirror_<case>.log) and
-# retries (3, 60 s apart).
+# retries (3, 60 s apart). In a terminal one pinned row per running CASE shows
+# its progress (progress_panel_helpers.sh; PPANEL_MODE=plain for log lines).
+
+# A pool job is a mapping file path relative to the work dir
+# (.../mirror/<case>/<version>/<file>; /tmp/work/<path> in the container).
+case_label() { REPLY="${${1:h:h}:t}"; }
+
+mirror_case() {   # <job> - pool worker
+    local c="${${1:h:h}:t}" rc=0 n
+    rm -f -- "${WORK}/mirror_${c}.log"   # the probe reads only this attempt's log
+    podman exec "${OLM_C}" sh -c "oc image mirror -f /tmp/work/$1 --max-per-registry=1 --skip-multiple-scopes=true --continue-on-error=true --filter-by-os \".*\" -a /opt/ansible/.airgap/secrets/config.json --insecure > /tmp/work/mirror_${c}.log 2>&1" \
+        || rc=$?
+    (( rc )) || return 0
+    n="$(grep -c '^error' "${WORK}/mirror_${c}.log" 2>/dev/null)"
+    ppanel_job_reason "${n:-0} error line(s) in mirror_${c}.log"
+    return "${rc}"
+}
+
+# oc image mirror's log: one "sha256:<digest> <target>:<tag>" line per tag
+# pushed (one per mapping line), "uploading: / mounted: <repo> <blob> <size>"
+# per layer, "error: ..." per image it could not copy (it carries on).
+typeset -gA probe_vals probe_warned
+mirror_case_probe() {   # <job> <attempt> - pool probe
+    local c="${${1:h:h}:t}" log
+    log="${WORK}/mirror_${c}.log"
+    if ppanel_changed "${log}"; then
+        probe_vals[$1]=""
+        [[ -s "${log}" ]] && probe_vals[$1]="$(awk '
+/^sha256:[0-9a-f]+ [^ ]/          { p++; n = split($2, a, "/"); last = "pushed " a[n]; next }
+/^error/                          { e++; if (fe == "") fe = $0; next }
+/^info: Planning completed/       { pl = 1; next }
+/^info: Mirroring completed/      { last = "finishing"; next }
+/^(uploading|mounted|skipped): /  { n = split($2, a, "/"); last = substr($1, 1, length($1) - 1) " " a[n] ($4 != "" ? " " $4 : "") }
+END { printf "%d\t%d\t%d\t%s\t%s", p, e, pl, last, fe }' "${log}")"
+    fi
+    if [[ -z "${probe_vals[$1]}" ]]; then
+        PPANEL_DETAIL="starting"
+        return 0
+    fi
+    local -a v=("${(@ps:\t:)probe_vals[$1]}")
+    local key="${1}:${2}"
+    PPANEL_DONE="${v[1]}" PPANEL_DETAIL="planning"
+    (( v[3] )) && PPANEL_DETAIL="${v[4]:-copying}"
+    if (( v[2] )); then
+        PPANEL_DETAIL+=" · ${v[2]} error(s)"
+        if [[ -z "${probe_warned[$key]:-}" ]]; then
+            probe_warned[$key]=1
+            ppanel_event WARN "cpd: ${c}: ${v[5]#error: } (attempt $2; oc carries on - see mirror_${c}.log)"
+        fi
+    fi
+    return 0
+}
+
+# Mirror processes in the olm-utils container: podman exec does not pass signals
+# on, so an interrupted run leaves them pushing (into the same logs) - its
+# mirror-images playbook (which would start the next CASE) and oc image mirror.
+# Only called when no mirror-images of this run is active. Prints how many it
+# stopped. The patterns are split (${m}) so this shell's own command line does
+# not match them.
+stop_container_mirrors() {
+    podman exec "${OLM_C}" sh -c 'm=mirror n=0
+for pat in "/opt/ansible/bin/${m}-images " "ansible-playbook ./${m}-playbook.yml " "bin/oc image ${m} -f /tmp/work/"; do
+    for p in /proc/[0-9]*; do
+        [ "${p#/proc/}" = "$$" ] && continue
+        case "$(tr "\0" " " < "${p}/cmdline" 2>/dev/null)" in
+            *"${pat}"*) kill "${p#/proc/}" 2>/dev/null && n=$((n + 1)) ;;
+        esac
+    done
+done
+echo "${n}"' 2>/dev/null || print 0
+}
+
 mirror_images() {   # <mapping file name> <mirror-images args...>
     local map_name="$1"; shift
     if ! ${PARALLEL}; then
@@ -130,19 +202,17 @@ mirror_images() {   # <mapping file name> <mirror-images args...>
     (( ${#maps} )) || preg_die "cpd: mirror-images wrote no ${map_name} - re-run with MIRROR_CPD_PARALLEL=false"
     podman exec "${OLM_C}" sh -c "test -s /opt/ansible/.airgap/secrets/config.json" \
         || preg_die "cpd: no registry auth in ${OLM_C} - re-run with MIRROR_CPD_PARALLEL=false"
+    local n
+    n="$(stop_container_mirrors)"
+    (( n == 0 )) || preg_warn "cpd: stopped ${n} mirror process(es) an interrupted run left in ${OLM_C}"
+    # images per CASE (mapping lines): the panel's totals and the order, largest first
+    local -A map_lines
+    for f in "${maps[@]}"; do map_lines[$f]="$(grep -c . "${WORK}/${f}" || true)"; done
+    maps=("${(@f)$(for f in "${maps[@]}"; do print -r -- "${map_lines[$f]} ${f}"; done | sort -rn | cut -d' ' -f2-)}")
     preg_info "cpd: oc image mirror for ${#maps} CASE(s), ${PARALLEL_JOBS} at a time (logs: ${WORK}/mirror_<case>.log)"
-    # One CASE per worker; <path relative to the work dir> -> /tmp/work/<path> in the container.
-    local worker='
-c="${${1:h:h}:t}" log="/tmp/work/mirror_${${1:h:h}:t}.log"
-for try in 1 2 3 4; do
-    podman exec "${OLM_C}" sh -c "oc image mirror -f /tmp/work/$1 --max-per-registry=1 --skip-multiple-scopes=true --continue-on-error=true --filter-by-os \".*\" -a /opt/ansible/.airgap/secrets/config.json --insecure > ${log} 2>&1" \
-        && { print -r -- "[INFO] cpd: ${c} mirrored"; exit 0; }
-    (( try < 4 )) && { print -r -- "[WARN] cpd: ${c} attempt ${try} failed, retrying in 60 s" >&2; sleep 60; }
-done
-print -r -- "[ERROR] cpd: ${c} failed - see mirror_${c}.log in the cpd-cli work dir" >&2; exit 1'
-    for f in "${maps[@]}"; do print -r -- "$(( $(wc -l < "${WORK}/${f}") )) ${f}"; done | sort -rn | cut -d' ' -f2- \
-        | OLM_C="${OLM_C}" xargs -P "${PARALLEL_JOBS}" -n 1 zsh -c "${worker}" _ \
-        || preg_die "cpd: some CASEs failed to mirror (above) - fix and re-run (mirroring resumes)"
+    ppanel_pool_run -j "${PARALLEL_JOBS}" -a 4 -d 60 -t cpd -k CASEs -u images -W map_lines \
+        -w mirror_case -p mirror_case_probe -l case_label -c stop_container_mirrors -- "${maps[@]}" \
+        || preg_die "cpd: ${#PPANEL_FAILED} CASE(s) failed to mirror (${(j:, :)${PPANEL_FAILED[@]:h:h:t}}) - see mirror_<case>.log in ${WORK}, fix and re-run (mirroring resumes)"
 }
 
 mirror_logs_check() {   # mirror_*.log written after the marker must have no "error"
