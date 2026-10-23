@@ -10,6 +10,13 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Config target: the mirror config only (MIRROR_CONFIG_FILE selects another file) ---
 export ENV_TARGET="${MIRROR_CONFIG_FILE:-registry_mirror}"
+_cfg="${SCRIPT_DIR:h:h:h}/configs/registry_mirror_config/registry_mirror_vars.sh"
+if [[ -z "${MIRROR_CONFIG_FILE:-}" && ! -f "${_cfg}" ]]; then
+    echo "[ERROR] No mirror config yet: ${_cfg}" >&2
+    echo "[ERROR] Create it first: ${SCRIPT_DIR:h}/0_initial_setup/0.0_generate_mirror_config.sh --prefill-from-installs" >&2
+    exit 1
+fi
+unset _cfg
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/private_registry_helpers.sh"
