@@ -26,6 +26,12 @@ export MIRROR_CONFIG_VERSION="1"
 export MIRROR_CPD_INSPECT_SOURCE_REGISTRY="${MIRROR_CPD_INSPECT_SOURCE_REGISTRY:-false}"
 # Pass -v to the cpd-cli commands that support it (mirror-images).
 export MIRROR_CPD_VERBOSE="${MIRROR_CPD_VERBOSE:-true}"
+# Push MIRROR_CPD_PARALLEL_JOBS CASEs at a time (mirror-images writes the mapping
+# files, the same oc image mirror per CASE runs in parallel). false = IBM's own
+# serial run (one CASE, one upload at a time). Set by 0.0_generate_mirror_config.sh
+# on every run (--cpd-parallel / --cpd-parallel-jobs), not kept from this file.
+export MIRROR_CPD_PARALLEL="${MIRROR_CPD_PARALLEL:-true}"
+export MIRROR_CPD_PARALLEL_JOBS="${MIRROR_CPD_PARALLEL_JOBS:-6}"
 
 # ------------------------------------------------------------------------------
 # Registry

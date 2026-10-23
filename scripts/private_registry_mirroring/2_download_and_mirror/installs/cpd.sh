@@ -16,6 +16,9 @@
 #           mirror-images --source_registry=127.0.0.1:12443
 #           --target_registry=<root>/cpd -> list-images --target_registry
 #
+# Every mirror-images step pushes MIRROR_CPD_PARALLEL_JOBS CASEs at a time
+# (MIRROR_CPD_PARALLEL=true, the default; false = IBM's serial run, see mirror_images).
+#
 # olm-utils lands as <root>/cpd/cpopen/cpd/olm-utils-v4:<release>[.<arch>] (the
 # CASE tags, pinned to the patch build's digest; there is no <release>.<patch>
 # tag in a private registry). The arch suffix is added only when one is
@@ -56,6 +59,11 @@ has image-groups && [[ -n "${IMG_GROUPS}" ]] && mirror_flags+=(--groups="${IMG_G
 preg_is_true "${MIRROR_CPD_VERBOSE:-true}" && mirror_flags+=(-v)
 oci=()
 preg_is_true "${MIRROR_CPD_CASE_FROM_OCI:-true}" && oci=(--from_oci=true)
+PARALLEL=false
+preg_is_true "${MIRROR_CPD_PARALLEL:-true}" && PARALLEL=true
+PARALLEL_JOBS="${MIRROR_CPD_PARALLEL_JOBS:-6}"
+[[ "${PARALLEL_JOBS}" == <1-> ]] || preg_die "MIRROR_CPD_PARALLEL_JOBS must be a whole number >= 1 (is '${PARALLEL_JOBS}')"
+OLM_C="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
 
 fatal_check() {   # <label>: list_images.csv must have no level=fatal lines
     local csv="${WORK}/offline/${REL}/list_images.csv" n
@@ -96,6 +104,45 @@ private_login() {
     # IBM's command takes the credentials as arguments and stores them scoped to
     # this path (spike S2); 2.1 - 2.3 use their own host-level auth files.
     cpd-cli manage login-private-registry "${TARGET}" "${MIRROR_REGISTRY_PUSH_USER}" "${MIRROR_REGISTRY_PUSH_PASSWORD}" >/dev/null
+}
+
+# mirror-images, serial (IBM's playbook: one CASE after another, one upload at a
+# time) or with MIRROR_CPD_PARALLEL=true: mirror-images only prunes (--arch) and
+# writes each CASE's mapping file (the playbook's skip_do_mirror +
+# do_mirror_manifests vars, through the documented --param-file), then the
+# oc image mirror the playbook would run per CASE runs here, MIRROR_CPD_PARALLEL_JOBS
+# CASEs at a time, largest first - same flags, auth, log (mirror_<case>.log) and
+# retries (3, 60 s apart).
+mirror_images() {   # <mapping file name> <mirror-images args...>
+    local map_name="$1"; shift
+    if ! ${PARALLEL}; then
+        cpd-cli manage mirror-images "$@"
+        return
+    fi
+    local params="${WORK}/mirror_manifests_only.yml" gen_marker f maps=()
+    print -r -- $'skip_do_mirror: true\ndo_mirror_manifests: true' > "${params}"
+    gen_marker="$(preg_private_tmpdir)/marker"; : > "${gen_marker}"
+    preg_info "cpd: mirror-images (mapping files only; MIRROR_CPD_PARALLEL=true)"
+    cpd-cli manage mirror-images "$@" --param-file="/tmp/work/${params:t}"
+    for f in "${WORK}/offline/${REL}/.ibm-pak/data/mirror"/*/*/"${map_name}"(N); do
+        [[ "${f}" -nt "${gen_marker}" ]] && maps+=("${f#${WORK}/}")
+    done
+    (( ${#maps} )) || preg_die "cpd: mirror-images wrote no ${map_name} - re-run with MIRROR_CPD_PARALLEL=false"
+    podman exec "${OLM_C}" sh -c "test -s /opt/ansible/.airgap/secrets/config.json" \
+        || preg_die "cpd: no registry auth in ${OLM_C} - re-run with MIRROR_CPD_PARALLEL=false"
+    preg_info "cpd: oc image mirror for ${#maps} CASE(s), ${PARALLEL_JOBS} at a time (logs: ${WORK}/mirror_<case>.log)"
+    # One CASE per worker; <path relative to the work dir> -> /tmp/work/<path> in the container.
+    local worker='
+c="${${1:h:h}:t}" log="/tmp/work/mirror_${${1:h:h}:t}.log"
+for try in 1 2 3 4; do
+    podman exec "${OLM_C}" sh -c "oc image mirror -f /tmp/work/$1 --max-per-registry=1 --skip-multiple-scopes=true --continue-on-error=true --filter-by-os \".*\" -a /opt/ansible/.airgap/secrets/config.json --insecure > ${log} 2>&1" \
+        && { print -r -- "[INFO] cpd: ${c} mirrored"; exit 0; }
+    (( try < 4 )) && { print -r -- "[WARN] cpd: ${c} attempt ${try} failed, retrying in 60 s" >&2; sleep 60; }
+done
+print -r -- "[ERROR] cpd: ${c} failed - see mirror_${c}.log in the cpd-cli work dir" >&2; exit 1'
+    for f in "${maps[@]}"; do print -r -- "$(( $(wc -l < "${WORK}/${f}") )) ${f}"; done | sort -rn | cut -d' ' -f2- \
+        | OLM_C="${OLM_C}" xargs -P "${PARALLEL_JOBS}" -n 1 zsh -c "${worker}" _ \
+        || preg_die "cpd: some CASEs failed to mirror (above) - fix and re-run (mirroring resumes)"
 }
 
 mirror_logs_check() {   # mirror_*.log written after the marker must have no "error"
@@ -145,11 +192,11 @@ download)
             if [[ "${PHASE}" == mirror ]]; then
                 private_login
                 preg_info "cpd: mirror-images -> ${TARGET}"
-                cpd-cli manage mirror-images --components="${COMPS}" "${common[@]}" --target_registry="${TARGET}" \
+                mirror_images images-mapping.txt --components="${COMPS}" "${common[@]}" --target_registry="${TARGET}" \
                     "${mirror_flags[@]}" --case_download=false
             else
                 preg_info "cpd: mirror-images -> stop-over ${STOPOVER} (in ${WORK}/registry-storage)"
-                cpd-cli manage mirror-images --components="${COMPS}" "${common[@]}" --target_registry="${STOPOVER}" \
+                mirror_images images-mapping.txt --components="${COMPS}" "${common[@]}" --target_registry="${STOPOVER}" \
                     "${mirror_flags[@]}" --case_download=false
             fi
             mirror_logs_check "${marker}"
@@ -190,7 +237,7 @@ download)
         if has ibm-images; then
             private_login
             preg_info "cpd: mirror-images ${STOPOVER} -> ${TARGET}"
-            cpd-cli manage mirror-images --components="${COMPS}" "${common[@]}" --source_registry="${STOPOVER}" \
+            mirror_images images-mapping-from-registry.txt --components="${COMPS}" "${common[@]}" --source_registry="${STOPOVER}" \
                 --target_registry="${TARGET}" "${mirror_flags[@]}" --case_download=false
             mirror_logs_check "${marker}"
             cpd-cli manage list-images --components="${COMPS}" "${common[@]}" --target_registry="${TARGET}" --case_download=false

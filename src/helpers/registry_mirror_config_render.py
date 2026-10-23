@@ -3,14 +3,16 @@ registry mirroring track (called by 0_initial_setup/0.0_generate_mirror_config.s
 
     python3 registry_mirror_config_render.py --template FILE --installs-dir DIR
         --out FILE [--existing FILE] [--prefill FILE] [--catalogs-dir DIR]
-        [--installs id,id,...]
+        [--installs id,id,...] [--set KEY=VALUE ...]
 
 - The base template gets one section per install from <installs-dir>/<id>.sh.j2,
   rendered with the install's .conf values and its catalogs
   (<catalogs-dir>/<id>.tsv: "catalog<TAB>id<TAB>description" lines from the
   segment-0 hook, verb "components").
-- Merge: for every `export KEY=...` line, the value from --prefill wins (explicit
-  request), then the value already in --existing, then the template default.
+- Merge: for every `export KEY=...` line, --set KEY=VALUE wins (generator
+  options; written as "${KEY:-VALUE}", so an exported value still wins at run
+  time), then the value from --prefill (explicit request), then the value already
+  in --existing, then the template default.
   Keys of the existing file the template no longer has are kept at the end.
 - Writes atomically with mode 0600 (the file holds registry credentials).
 """
@@ -99,7 +101,9 @@ def main(argv):
     p.add_argument("--prefill", default="")
     p.add_argument("--catalogs-dir", default="")
     p.add_argument("--installs", default="")
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     a = p.parse_args(argv[1:])
+    forced = dict(s.split("=", 1) for s in a.set)
 
     ids = [i for i in a.installs.split(",") if i] if a.installs else sorted(
         f[:-5] for f in os.listdir(a.installs_dir) if f.endswith(".conf") and not f.startswith("_"))
@@ -148,11 +152,17 @@ def main(argv):
         if m:
             key = m.group(2)
             seen.add(key)
-            if key in prefill:
+            if key in forced:
+                line = f'{m.group(1)}{key}="${{{key}:-{forced[key]}}}"'
+            elif key in prefill:
                 line = f"{m.group(1)}{key}={shell_quote(prefill[key])}"
             elif key in existing:
                 line = f"{m.group(1)}{key}={existing[key]}"
         out_lines.append(line)
+    missing = sorted(set(forced) - seen)
+    if missing:
+        print(f"[ERROR] --set keys not in the template: {', '.join(missing)}", file=sys.stderr)
+        return 1
     leftovers = [k for k in existing if k not in seen]
     if leftovers:
         out_lines += ["", "# ------------------------------------------------------------------------------",
@@ -166,7 +176,7 @@ def main(argv):
         f.write("\n".join(out_lines) + "\n")
     os.chmod(tmp, 0o600)
     os.replace(tmp, a.out)
-    print(f"kept={len([k for k in existing if k in seen and k not in prefill])} "
+    print(f"kept={len([k for k in existing if k in seen and k not in prefill and k not in forced])} "
           f"prefilled={len([k for k in prefill if k in seen])} carried_over={len(leftovers)}")
     return 0
 

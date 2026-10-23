@@ -40,6 +40,11 @@ Options:
                               MIRROR_CONFIG_FILE=FILE when running the steps.
   --reset                     Ignore the values in the existing file (it is still
                               backed up)
+  --cpd-parallel true|false   MIRROR_CPD_PARALLEL: cpd mirrors several CASEs at
+                              once (default: true; false = IBM's serial run)
+  --cpd-parallel-jobs N       MIRROR_CPD_PARALLEL_JOBS: CASEs at a time (default: 6)
+                              Both are written on every run from these options
+                              (or their defaults), not kept from the existing file.
   -h, --help                  Show this help
 
 Next: 0.1_detect_registry.sh to check the registry, then 1_map_content/.
@@ -51,6 +56,8 @@ INSTALLS=""
 PREFILL=false
 PREFILL_IDS=""
 RESET=false
+CPD_PARALLEL=true
+CPD_PARALLEL_JOBS=6
 while (( $# )); do
     case "$1" in
         --installs) INSTALLS="${2:?--installs needs a list}"; shift 2 ;;
@@ -59,10 +66,20 @@ while (( $# )); do
             if [[ $# -gt 0 && "$1" != -* ]]; then PREFILL_IDS="$1"; shift; fi ;;
         --out)      OUT_FILE="${2:?--out needs a path}"; shift 2 ;;
         --reset)    RESET=true; shift ;;
+        --cpd-parallel)      CPD_PARALLEL="${2:?--cpd-parallel needs true|false}"; shift 2 ;;
+        --cpd-parallel=*)    CPD_PARALLEL="${1#*=}"; shift ;;
+        --cpd-parallel-jobs) CPD_PARALLEL_JOBS="${2:?--cpd-parallel-jobs needs a number}"; shift 2 ;;
+        --cpd-parallel-jobs=*) CPD_PARALLEL_JOBS="${1#*=}"; shift ;;
         -h|--help)  usage; exit 0 ;;
         *) preg_error "Unknown option: $1"; usage >&2; exit 1 ;;
     esac
 done
+case "${CPD_PARALLEL:l}" in
+    true|yes|y|1)   CPD_PARALLEL=true ;;
+    false|no|n|0)   CPD_PARALLEL=false ;;
+    *) preg_die "--cpd-parallel must be true or false (is '${CPD_PARALLEL}')" ;;
+esac
+[[ "${CPD_PARALLEL_JOBS}" == <1-> ]] || preg_die "--cpd-parallel-jobs must be a whole number >= 1 (is '${CPD_PARALLEL_JOBS}')"
 
 KNOWN=("${(@f)$(preg_known_installs)}")
 if [[ -n "${INSTALLS}" ]]; then
@@ -142,7 +159,10 @@ existing_args=()
     --installs "${(j:,:)IDS}" \
     --out "${OUT_FILE}" \
     "${existing_args[@]}" \
+    --set "MIRROR_CPD_PARALLEL=${CPD_PARALLEL}" \
+    --set "MIRROR_CPD_PARALLEL_JOBS=${CPD_PARALLEL_JOBS}" \
     --prefill "${TMP}/prefill.tsv" >/dev/null || preg_die "Rendering the config failed (previous file unchanged)."
+preg_info "cpd: MIRROR_CPD_PARALLEL=${CPD_PARALLEL}, MIRROR_CPD_PARALLEL_JOBS=${CPD_PARALLEL_JOBS}"
 
 zsh -n "${OUT_FILE}" || preg_die "The generated file has a syntax error: ${OUT_FILE}"
 preg_info "Wrote ${OUT_FILE#${REPO_ROOT}/} (mode 600)"
