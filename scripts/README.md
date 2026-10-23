@@ -51,7 +51,7 @@ Run the full install for your target products, like:
    - `MIRROR_REGISTRY_ROOT` and the push/pull credentials (ICR: user `iamapikey`, password = API key). For C1 with a registry started by `0.3_local_registry.sh` (below), leave these empty.
    - `MIRROR_IBM_ENTITLEMENT_KEY`.
    - `MIRROR_INSTALLS`, and per install `MIRROR_<ID>_COMPONENTS` / `MIRROR_<ID>_CONTENT`. **Empty means nothing is mirrored.**
-3. Save your Red Hat pull secret as `configs/registry_mirror_config/redhat-pull-secret.json`.
+3. Save your Red Hat pull secret as `configs/registry_mirror_config/redhat-pull-secret.json`. `0_initial_setup/0.4_fetch_redhat_pull_secret.sh` copies it from the cluster in your install configs (cpd first). The full process runs it on its own when the file is missing. Alternatively, download it from console.redhat.com.
 4. Optional: `private_registry_mirroring/0_initial_setup/0.1_detect_registry.sh` checks the registry and the credentials; `full_registry_mirror_process.sh --dry-run` shows what goes where without mirroring anything.
 
 Keep `IBM_ENTITLEMENT_KEY` in the install configs too: the images are still pulled from IBM first.

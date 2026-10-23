@@ -28,8 +28,8 @@ preg_require_config
 #   ./full_registry_mirror_process.sh [--phase=mirror|save|load] [--cluster-only]
 #                                     [--no-cluster] [--dry-run]
 #
-#   mirror (direct)       0.1 0.2 | 1.0 1.1 | 2.0 2.1 2.2 2.3 2.4 | 3.0 - 3.6
-#   save (stop-over, out) 0.2 | 1.0 1.1 | 2.0 2.1 2.2 2.3 (save) 2.5
+#   mirror (direct)       0.1 0.2 0.4 | 1.0 1.1 | 2.0 2.1 2.2 2.3 2.4 | 3.0 - 3.6
+#   save (stop-over, out) 0.2 0.4 | 1.0 1.1 | 2.0 2.1 2.2 2.3 (save) 2.5
 #   load (stop-over, in)  2.6 | 2.0 2.1 2.2 2.3 (load) 2.4 | 3.0 - 3.6
 #   --cluster-only        3.0 - 3.6 (the CP4D install wrapper calls this)
 #   --no-cluster          stop after segment 2
@@ -52,6 +52,7 @@ done
 
 DO_DETECT="${DO_DETECT:-true}"            # 0.1 detect the registry
 DO_TOOLS="${DO_TOOLS:-true}"              # 0.2 tools (oc-mirror, ...)
+DO_RH_SECRET="${DO_RH_SECRET:-true}"      # 0.4 Red Hat pull secret from the cluster (when missing)
 DO_MAP="${DO_MAP:-true}"                  # 1.0 build the inventory
 DO_CHECK="${DO_CHECK:-true}"              # 1.1 check the sources
 DO_ESTIMATE="${DO_ESTIMATE:-false}"       # 1.2 estimate the size
@@ -108,6 +109,7 @@ case "${PHASE}" in
     mirror)
         run "${DO_DETECT}"   "0.1 detect the registry"      0_initial_setup/0.1_detect_registry.sh
         run "${DO_TOOLS}"    "0.2 tools"                     0_initial_setup/0.2_fetch_mirror_tools.sh
+        run "${DO_RH_SECRET}" "0.4 Red Hat pull secret"      0_initial_setup/0.4_fetch_redhat_pull_secret.sh
         run "${DO_MAP}"      "1.0 build the inventory"       1_map_content/1.0_build_inventory.sh
         run "${DO_CHECK}"    "1.1 check the sources"         1_map_content/1.1_check_sources.sh
         run "${DO_ESTIMATE}" "1.2 estimate the size"         1_map_content/1.2_estimate_size.sh
@@ -122,6 +124,7 @@ case "${PHASE}" in
         ;;
     save)
         run "${DO_TOOLS}"    "0.2 tools"                     0_initial_setup/0.2_fetch_mirror_tools.sh
+        run "${DO_RH_SECRET}" "0.4 Red Hat pull secret"      0_initial_setup/0.4_fetch_redhat_pull_secret.sh
         run "${DO_MAP}"      "1.0 build the inventory"       1_map_content/1.0_build_inventory.sh
         run "${DO_CHECK}"    "1.1 check the sources"         1_map_content/1.1_check_sources.sh
         run "${DO_ESTIMATE}" "1.2 estimate the size"         1_map_content/1.2_estimate_size.sh
