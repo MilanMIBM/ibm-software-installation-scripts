@@ -14,7 +14,6 @@
 # ............................................................................
 non_olm:
   analyticsengine:
-
 # ------------------------------------------------------------------------------
 # Analytics Engine powered by Apache Spark service configuration parameters
 # ------------------------------------------------------------------------------
@@ -32,7 +31,6 @@ non_olm:
       skipSELinuxRelabeling: "false"
 #      pullWxdImagesOnly: "false" # The chart writes this to the CR, but no 5.4.0 operator reads it, so it has no effect.
 #      mountCustomizationsFromCchome: false # Not in the 5.4.0 chart or any operator; the chart drops it.
-#      skipSelinuxRelabeling: false # Wrong spelling from v1, which the chart ignores; use skipSELinuxRelabeling above.
 
 # ------------------------------------------------------------------------------
 # Spark runtime configuration parameters
@@ -130,7 +128,9 @@ non_olm:
 #   EE - Specify this option if you purchased Enterprise Edition.
 #   WE - Specify this option if you purchased Workgroup Edition.
 # ............................................................................
-# No informix_cp4d install options are read by the chart.
+non_olm:
+  ibmInformixCp4dOperator:
+    licenseType: AEE
 {% endif %}{% if "ws_pipelines" in components_to_install %}
 ---
 # ............................................................................
@@ -142,11 +142,11 @@ non_olm:
 # Valid rbsimage values: rbs-ext (includes OpenSSH + Db2), run-bash-script (without)
 # Options the chart does read (left at the chart defaults):
 # ............................................................................
-#non_olm:
-#  wsPipelines:
-#    scaleConfig: small
-#    localTektonRuntime: true
-#    embeddedArtifactStore: true
+non_olm:
+  wsPipelines:
+    scaleConfig: small
+    localTektonRuntime: true
+    embeddedArtifactStore: true
 {% endif %}{% if "voice_gateway" in components_to_install %}
 ---
 # ............................................................................
@@ -317,7 +317,6 @@ non_olm:
 non_olm:
   watsonxAi:
     liteInstall: false # true installs the lightweight engine only
-#    tuningDisabled: true # Uncomment only on 5.3.0 (watsonx.ai 12.0.0), where it turns off Tuning Studio; 5.3.1+ and 5.4.0 ignore it.
 #    tuning_disabled: true # Never works as an install option - this is the CR field name, which no 5.3.1+ operator reads.
 {% endif %}{% if "watson_assistant" in components_to_install %}
 ---
@@ -366,8 +365,10 @@ non_olm:
     enable_lite_milvus: false
     scaleConfig: small
     enable_watsonx_platform: true # Set to true if you want to have the watsonx.data premium UI Context even if you don't install all components.
-#    components:
-#      - standard
+    components:
+      - standard         # full
+#      - spark            # Spark only
+#      - mds_standalone   # metadata service only, combines with spark
 {% endif %}{% if "watsonx_data_premium" in components_to_install %}
 ---
 # ............................................................................
@@ -393,20 +394,13 @@ non_olm:
 non_olm:
   watsonxDataPremium:
     components:
-      - standard
-    wxd_premium_enable_models_on: cpu
-#    licenseType: premium # Ignored by the chart; the license comes from the watsonx-data-premium entitlement.
-#    component: # IBM docs' singular key - ignored by the chart, so it always installs standard; use components.
-#      - standard
+      - standard         # limited features, no GPU
+#      - spark            # Spark features only
+#      - premium          # all features (GPU); also add watsonx_data_premium_dependencies to the components
+#      - mds_standalone   # metadata service only, combines with spark
+    wxd_premium_enable_models_on: remote # gpu, cpu or remote; only read with premium
 #    scaleConfig: small
 #    enable_watsonx_platform: true # watsonx.data Premium platform UI; premium turns it on itself
-# Spark features only:
-#    components:
-#      - spark
-# All features (GPU), with watsonx_data_premium_dependencies in the components:
-#    components:
-#      - premium
-#    wxd_premium_enable_models_on: gpu
 #  watsonxAi:
 #    liteInstall: false # only if the watsonx.ai lightweight engine is installed
 {% endif %}{% if "watsonx_dataintegration" in components_to_install %}
@@ -479,7 +473,7 @@ non_olm:
 non_olm:
   watsonxOrchestrate:
     # Valid size values: small, medium, large
-    # Must be set explicitly - leaving it unset makes the operator default to an unresolved 'medium' which will make the installation get stuck.
+    # Must be set explicitly - leaving it unset makes the operator default to an unresolved 'medium' which might make the installation get stuck if there isn't enough capacity on the cluster.
     size: small
     installMode: "agentic"
     watsonxAI:
@@ -494,8 +488,8 @@ non_olm:
 # The dmc chart renders no install options (version and storage size are
 # fixed by the chart), so nothing is set here.
 # ............................................................................
-#non_olm:
-#  Dmcaddon: # Wrong key from v1 - the chart's key is dmc, and it reads neither option below.
-#    version: 5.4.0 # Not read; the chart fixes the DMC CR version (5.4.2 at Patch 7).
-#    storageSize: 20Gi # Not read by the chart or the dmc operator.
+non_olm:
+  Dmcaddon:
+    version: 5.4.0
+    storageSize: 20Gi 
 {% endif %}

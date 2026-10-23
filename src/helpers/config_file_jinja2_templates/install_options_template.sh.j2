@@ -365,7 +365,7 @@ non_olm:
   watsonxDataPremium:
     components:
       - standard
-    wxd_premium_enable_models_on: cpu
+    wxd_premium_enable_models_on: remote
 #    scaleConfig: small
 #    enable_watsonx_platform: true # watsonx.data Premium platform UI; premium turns it on itself
 # Spark features only:
@@ -442,7 +442,7 @@ non_olm:
 non_olm:
   watsonxOrchestrate:
     # Valid size values: small, medium, large
-    # Must be set explicitly - leaving it unset makes the operator default to an unresolved 'medium' which will make the installation get stuck.
+    # Must be set explicitly - leaving it unset makes the operator default to an unresolved 'medium' which might make the installation get stuck if there isn't enough capacity on the cluster.
     size: small
     installMode: "agentic"
     watsonxAI:
