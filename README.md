@@ -22,10 +22,10 @@ The Cloud Pak for Data workflow has two stages:
 | `scripts/private_registry_mirroring/` | Mirrors the images, operator catalogs, charts and files of the installs above into a private registry (cloud, or local/air-gapped), and points the cluster and the installs at it: config generator and registry tools (0), mapping (1), mirroring and the stop-over bundle (2), cluster configuration (3), plus cleanup/listing under `x_clean_or_debug_registry/` |
 | `registry_mirror_workspace/` | The mirroring track's inventory, tools, local registry and default stop-over bundle (gitignored) |
 | `concert_workspace/` | IBM Concert installer archives, the extracted installer, runner build context and copied logs (gitignored) |
-| `scripts/*.sh` | Shared script plumbing: `source_env_setup.sh` (config loading), `0.0_make_executable.sh`, and `operator_install_helpers.sh` (idempotency checks so OLM operator installs are safe to re-run) |
+| `scripts/*.sh` | Shared script plumbing: `0_initial_check_in.sh` (POSIX `sh` zsh check / install, run first), `source_env_setup.sh` (config loading), `0.0_make_executable.sh`, and `operator_install_helpers.sh` (idempotency checks so OLM operator installs are safe to re-run) |
 | `src/helpers/` | Jinja2 templates and marimo widgets backing the notebooks, plus Python/zsh helpers: IBM Cloud IAM auth, watsonx.data database registration, IBM License Service, IBM Cloud Secrets Manager, the Software Hub internal vault, the Software Hub → `cpd-cli` release resolver, and DataStax Mission Control's Helm values templates and shell helpers |
 | `src/cr_yaml_examples/` | Jinja2 custom resource templates rendered by `src/utilities/cpd-cli_utils/create_cr_instance.sh` |
-| `src/utilities/` | Extras: `cpd-cli` maintenance (upgrade, OLM image, workspace cleanup, premium features, CR create/delete), IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group/htpasswd/service ID helpers, Software Hub checks and API key vault storage, OADP tenant backup/restore |
+| `src/utilities/` | Extras: `cpd-cli` maintenance (upgrade, OLM image, workspace cleanup, premium features, CR create/delete), IBM Cloud Secrets Manager config storage, OpenShift pull secret/access group/htpasswd/service ID helpers, Software Hub checks and API key vault storage, OADP tenant backup/restore, `helm` / `kubectl` installers |
 | `env_bootstrap.sh` | Sourced by every script to find the repo root and load `configs/` (via `scripts/source_env_setup.sh`) |
 | `s_env.sh` | `source s_env.sh` in your shell to load the configs and log in to the cluster with `oc` |
 | `service_instances/` | Output folder for payloads written by the `4.5_service_instance_setups/` provisioning scripts (gitignored) |
@@ -37,7 +37,7 @@ The Cloud Pak for Data workflow has two stages:
 ## Prerequisites
 
 - OpenShift cluster + `oc` and `cpd-cli` (installers for both under [scripts/install_cloud_pak_for_data/0_initial_setup/](scripts/install_cloud_pak_for_data/0_initial_setup/), macOS only)
-- `zsh` - the scripts are zsh scripts; run them directly (`./script.sh`), not with `sh script.sh`
+- `zsh` - the scripts are zsh scripts; run them directly (`./script.sh`), not with `sh script.sh`. To check for it, run `sh scripts/0_initial_check_in.sh` first (plain `sh`, so it runs before zsh exists, on macOS, Linux, WSL, Git Bash, MSYS2 or Cygwin). If zsh is missing, it offers to install it with the OS's own package manager. If zsh is installed somewhere other than `/bin/zsh`, it offers to link `/bin/zsh` to it.
 - `podman` (macOS: scripts start the podman machine automatically when needed)
 - Python 3.14+ and [uv](https://docs.astral.sh/uv/)
 - An IBM entitlement key - *[You can get one here if you have entitlements or IBM Software Access Catalog](https://myibm.ibm.com/products-services/containerlibrary)*
@@ -142,6 +142,11 @@ After the base install is up:
   - `wxai_model_gateway_model_import/` - register providers/models with the watsonx.ai model gateway (model definitions under `models/`)
 
 `src/utilities/ibmcloud_secrets_manager_variable_management/` can upload your generated configs to IBM Cloud Secrets Manager and rebuild them from there later (run either script with `--help`).
+
+`src/utilities/cli_tool_utils/` installs workstation CLIs on macOS, Linux and Windows (Git Bash / MSYS2), sha256 verified, into `/usr/local/bin` by default (`--dir` to change it, `--check` to only report). Both do nothing when the tool is already on PATH, and never touch a copy installed elsewhere (e.g. Homebrew's):
+
+- `install_helm.sh` installs Helm `v3.18.4` by default, the version this repo pins for Mission Control and Concert (`--version latest` / `latest-3` for others).
+- `install_kubectl.sh` matches the Kubernetes minor of the cluster you are logged in to, else the latest stable, and warns when the kubectl on PATH is more than one minor away from the cluster. On OpenShift, `oc` already ships a kubectl.
 
 `src/utilities/cpd-cli_utils/` covers `cpd-cli` upkeep: upgrading to a Software Hub version, refreshing/toggling the OLM utils image, cleaning the workspace, enabling premium features, and creating/deleting CR instances from `src/cr_yaml_examples/`.
 

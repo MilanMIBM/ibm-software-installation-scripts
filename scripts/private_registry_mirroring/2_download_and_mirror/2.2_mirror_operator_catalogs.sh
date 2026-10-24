@@ -26,6 +26,10 @@ preg_require_config
 #   save    -> file://<bundle>/shared/oc-mirror      (mirror-to-disk)
 #   load    file://<bundle>/shared/oc-mirror -> docker://<push root>/shared
 # oc-mirror is Linux-only: native on Linux, in a UBI container on macOS (0.2).
+# Per image: MIRROR_OC_MIRROR_IMAGE_TIMEOUT (all architectures together),
+# MIRROR_OC_MIRROR_PARALLEL_IMAGES at once - oc-mirror's own 10m / 4 time out on
+# RHOAI's 8-20 GB GPU images over a slow uplink. A re-run skips the layers the
+# registry already has.
 # The generated IDMS/ITMS/CatalogSources are applied by 3.4.
 # ==============================================================================
 
@@ -46,7 +50,8 @@ if [[ ! -f "${ISC}" ]]; then
     print -r -- none > "${WS}/${SHARED}/last-cluster-resources"
     exit 0
 fi
-preg_info "Phase: ${PHASE}   catalogs: $(grep -c 'catalog:' "${ISC}")   packages: $(grep -c '^    - name:' "${ISC}")"
+tune=(--image-timeout "${MIRROR_OC_MIRROR_IMAGE_TIMEOUT:-6h}" --parallel-images "${MIRROR_OC_MIRROR_PARALLEL_IMAGES:-4}")
+preg_info "Phase: ${PHASE}   catalogs: $(grep -c 'catalog:' "${ISC}")   packages: $(grep -c '^    - name:' "${ISC}")   ${tune[*]}"
 
 # The auth file must sit inside a directory the oc-mirror container mounts.
 AUTH="${OCWS}/.auth.json"
@@ -63,18 +68,18 @@ tls=()
 case "${PHASE}" in
     mirror)
         preg_oc_mirror "${OCWS}" --v2 -c "${ISC}" --workspace "file://${OCWS}" "docker://${PUSH}/${SHARED}" \
-            --authfile "${AUTH}" "${tls[@]}"
+            --authfile "${AUTH}" "${tls[@]}" "${tune[@]}"
         RES="${OCWS}/working-dir/cluster-resources" ;;
     save)
         mkdir -p "${BUNDLE}/${SHARED}"
         cp "${ISC}" "${BUNDLE}/${SHARED}/imageset-config.yaml"
-        preg_oc_mirror "${OCWS}" --v2 -c "${ISC}" "file://${BUNDLE}/${SHARED}/oc-mirror" --authfile "${AUTH}"
+        preg_oc_mirror "${OCWS}" --v2 -c "${ISC}" "file://${BUNDLE}/${SHARED}/oc-mirror" --authfile "${AUTH}" "${tune[@]}"
         preg_info "Saved to ${BUNDLE}/${SHARED}/oc-mirror"
         exit 0 ;;
     load)
         [[ -d "${BUNDLE}/${SHARED}/oc-mirror" ]] || preg_die "No ${BUNDLE}/${SHARED}/oc-mirror (save phase output)."
         preg_oc_mirror "${OCWS}" --v2 -c "${ISC}" --from "file://${BUNDLE}/${SHARED}/oc-mirror" "docker://${PUSH}/${SHARED}" \
-            --authfile "${AUTH}" "${tls[@]}"
+            --authfile "${AUTH}" "${tls[@]}" "${tune[@]}"
         RES="${BUNDLE}/${SHARED}/oc-mirror/working-dir/cluster-resources" ;;
 esac
 [[ -d "${RES}" ]] || preg_die "oc-mirror wrote no cluster-resources (${RES})."

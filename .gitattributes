@@ -1,2 +1,10 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts keep LF line endings in every checkout. On Windows, Git's
+# default core.autocrlf=true would check them out with CRLF, and sh / zsh
+# (Git Bash, MSYS2, Cygwin, WSL) then fail on the trailing \r.
+*.sh       text eol=lf
+*.zsh      text eol=lf
+*.sh.j2    text eol=lf
+src/helpers/concert_runner/bin/* text eol=lf

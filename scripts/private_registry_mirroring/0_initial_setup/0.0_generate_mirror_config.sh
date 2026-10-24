@@ -43,7 +43,14 @@ Options:
   --cpd-parallel true|false   MIRROR_CPD_PARALLEL: cpd mirrors several CASEs at
                               once (default: true; false = IBM's serial run)
   --cpd-parallel-jobs N       MIRROR_CPD_PARALLEL_JOBS: CASEs at a time (default: 6)
-                              Both are written on every run from these options
+  --oc-mirror-image-timeout D MIRROR_OC_MIRROR_IMAGE_TIMEOUT: time oc-mirror (2.2)
+                              allows per image, all architectures together, as a Go
+                              duration: 90m, 6h, 1h30m (default: 6h; oc-mirror's own
+                              10m times out on RHOAI's 8-20 GB GPU images)
+  --oc-mirror-parallel-images N
+                              MIRROR_OC_MIRROR_PARALLEL_IMAGES: images oc-mirror
+                              copies at once (default: 4; they share the uplink)
+                              These four are written on every run from these options
                               (or their defaults), not kept from the existing file.
   -h, --help                  Show this help
 
@@ -58,6 +65,8 @@ PREFILL_IDS=""
 RESET=false
 CPD_PARALLEL=true
 CPD_PARALLEL_JOBS=6
+OCM_IMAGE_TIMEOUT=6h
+OCM_PARALLEL_IMAGES=2
 while (( $# )); do
     case "$1" in
         --installs) INSTALLS="${2:?--installs needs a list}"; shift 2 ;;
@@ -70,6 +79,10 @@ while (( $# )); do
         --cpd-parallel=*)    CPD_PARALLEL="${1#*=}"; shift ;;
         --cpd-parallel-jobs) CPD_PARALLEL_JOBS="${2:?--cpd-parallel-jobs needs a number}"; shift 2 ;;
         --cpd-parallel-jobs=*) CPD_PARALLEL_JOBS="${1#*=}"; shift ;;
+        --oc-mirror-image-timeout) OCM_IMAGE_TIMEOUT="${2:?--oc-mirror-image-timeout needs a duration}"; shift 2 ;;
+        --oc-mirror-image-timeout=*) OCM_IMAGE_TIMEOUT="${1#*=}"; shift ;;
+        --oc-mirror-parallel-images) OCM_PARALLEL_IMAGES="${2:?--oc-mirror-parallel-images needs a number}"; shift 2 ;;
+        --oc-mirror-parallel-images=*) OCM_PARALLEL_IMAGES="${1#*=}"; shift ;;
         -h|--help)  usage; exit 0 ;;
         *) preg_error "Unknown option: $1"; usage >&2; exit 1 ;;
     esac
@@ -80,6 +93,8 @@ case "${CPD_PARALLEL:l}" in
     *) preg_die "--cpd-parallel must be true or false (is '${CPD_PARALLEL}')" ;;
 esac
 [[ "${CPD_PARALLEL_JOBS}" == <1-> ]] || preg_die "--cpd-parallel-jobs must be a whole number >= 1 (is '${CPD_PARALLEL_JOBS}')"
+[[ "${OCM_IMAGE_TIMEOUT}" =~ '^([0-9]+(h|m|s))+$' ]] || preg_die "--oc-mirror-image-timeout must be a duration like 90m, 6h or 1h30m (is '${OCM_IMAGE_TIMEOUT}')"
+[[ "${OCM_PARALLEL_IMAGES}" == <1-> ]] || preg_die "--oc-mirror-parallel-images must be a whole number >= 1 (is '${OCM_PARALLEL_IMAGES}')"
 
 KNOWN=("${(@f)$(preg_known_installs)}")
 if [[ -n "${INSTALLS}" ]]; then
@@ -161,8 +176,11 @@ existing_args=()
     "${existing_args[@]}" \
     --set "MIRROR_CPD_PARALLEL=${CPD_PARALLEL}" \
     --set "MIRROR_CPD_PARALLEL_JOBS=${CPD_PARALLEL_JOBS}" \
+    --set "MIRROR_OC_MIRROR_IMAGE_TIMEOUT=${OCM_IMAGE_TIMEOUT}" \
+    --set "MIRROR_OC_MIRROR_PARALLEL_IMAGES=${OCM_PARALLEL_IMAGES}" \
     --prefill "${TMP}/prefill.tsv" >/dev/null || preg_die "Rendering the config failed (previous file unchanged)."
 preg_info "cpd: MIRROR_CPD_PARALLEL=${CPD_PARALLEL}, MIRROR_CPD_PARALLEL_JOBS=${CPD_PARALLEL_JOBS}"
+preg_info "oc-mirror: MIRROR_OC_MIRROR_IMAGE_TIMEOUT=${OCM_IMAGE_TIMEOUT}, MIRROR_OC_MIRROR_PARALLEL_IMAGES=${OCM_PARALLEL_IMAGES}"
 
 zsh -n "${OUT_FILE}" || preg_die "The generated file has a syntax error: ${OUT_FILE}"
 preg_info "Wrote ${OUT_FILE#${REPO_ROOT}/} (mode 600)"

@@ -92,6 +92,13 @@ export MIRROR_BUNDLE_DIR=""
 export MIRROR_INSIDE_PLATFORM="linux"
 # Parallel pushes per registry for oc image mirror.
 export MIRROR_PARALLEL="4"
+# oc-mirror (2.2, operator catalogs): time allowed per image (all its
+# architectures together) and images copied at once. oc-mirror's own 10m / 4 time
+# out on the GPU images (RHOAI's CUDA / vLLM: 8-20 GB each) over a slow uplink.
+# Set by 0.0_generate_mirror_config.sh on every run (--oc-mirror-image-timeout /
+# --oc-mirror-parallel-images), not kept from this file.
+export MIRROR_OC_MIRROR_IMAGE_TIMEOUT="${MIRROR_OC_MIRROR_IMAGE_TIMEOUT:-6h}"
+export MIRROR_OC_MIRROR_PARALLEL_IMAGES="${MIRROR_OC_MIRROR_PARALLEL_IMAGES:-4}"
 
 # ------------------------------------------------------------------------------
 # Cluster

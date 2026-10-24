@@ -89,9 +89,9 @@ for f in "${files[@]}"; do
     if ! oc diff -f "${f}" >/dev/null 2>&1; then
         oc apply -f "${f}" >/dev/null
         changed=true
-        preg_info "applied ${f:t%.yaml} (IDMS + ITMS, $(( n / 2 )) source(s) each)"
+        preg_info "applied ${f:t:r} (IDMS + ITMS, $(( n / 2 )) source(s) each)"
     else
-        preg_info "unchanged ${f:t%.yaml}"
+        preg_info "unchanged ${f:t:r}"
     fi
 done
 
