@@ -19,7 +19,8 @@ preg_require_config
 # CP4D patch update - 4.0, 4.1, 4.2 in order
 # ------------------------------------------------------------------------------
 #   ./4.x_full_cpd_patch_update.sh [--phase=mirror|save|load] [--to N] [--from N]
-#                                  [--all] [--estimate] [--bundle DIR] [--quick]
+#                                  [--all] [--estimate] [--regenerate | --reuse-mapping]
+#                                  [--bundle DIR] [--quick]
 #                                  [--full] [--no-tap] [--plan-only]
 #
 #   mirror  plan (probe the registry) -> copy the delta -> verify, version tags,
@@ -27,7 +28,7 @@ preg_require_config
 #   save    plan (against the last save) -> write the patch bundle -> record
 #   load    plan (verify the bundle, probe) -> push -> verify, record, 3.5
 #   --plan-only  stop after 4.0 (report.txt shows what would be copied)
-# 4.0's options (--to --from --all --estimate --bundle --quick) and 4.2's
+# 4.0's options (--to --from --all --estimate --regenerate --reuse-mapping --bundle --quick) and 4.2's
 # (--full --no-tap) are passed on.
 # ==============================================================================
 
@@ -37,7 +38,7 @@ set -- "${PREG_ARGS[@]}"
 while (( $# )); do
     case "$1" in
         --to|--from|--bundle) PLAN_ARGS+=("$1" "${2?$1 needs a value}"); shift 2 ;;
-        --all|--estimate|--quick) PLAN_ARGS+=("$1"); shift ;;
+        --all|--estimate|--quick|--regenerate|--reuse-mapping) PLAN_ARGS+=("$1"); shift ;;
         --full|--no-tap) RECORD_ARGS+=("$1"); shift ;;
         --plan-only) PLAN_ONLY=true; shift ;;
         *) preg_die "Unknown argument: $1" ;;

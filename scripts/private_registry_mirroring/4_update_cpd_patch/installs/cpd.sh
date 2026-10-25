@@ -41,6 +41,7 @@ preg_parse_phase_args "$@"
 PHASE="${PREG_PHASE_ARG:-${MIRROR_PHASE:-mirror}}"
 set -- "${PREG_ARGS[@]}"
 TO_ARG="" FROM_ARG="" FROM_SET=false ALL=false FULL=false ESTIMATE=false QUICK=false BUNDLE_ARG=""
+REGENERATE=false REUSE_MAPPING=false
 while (( $# )); do
     case "$1" in
         --to) TO_ARG="${2:?--to needs a patch number}"; shift 2 ;;
@@ -49,6 +50,8 @@ while (( $# )); do
         --full) FULL=true; shift ;;
         --estimate) ESTIMATE=true; shift ;;
         --quick) QUICK=true; shift ;;
+        --regenerate) REGENERATE=true; shift ;;
+        --reuse-mapping) REUSE_MAPPING=true; shift ;;
         --bundle) BUNDLE_ARG="${2:?--bundle needs a directory}"; shift 2 ;;
         *) preg_die "Unknown argument: $1" ;;
     esac
@@ -202,10 +205,16 @@ cpd_watched() {   # <title> <log> <probe> <cpd-cli manage args...>
     fi
     return "${rc}"
 }
-_dl_probe() {   # CASE versions case-download added since the start
-    local -a n
+_dl_probe() {   # components case-download has reached (one offline directory each), new CASE versions
+    local -a v n
+    v=(${=$(awk '
+{ gsub(/\033\[[0-9;]*m/, "") }
+/^TASK \[utils : Create offline directory for / { c = $0; sub(/.*directory for /, "", c); sub(/ .*/, "", c)
+                                                 if (!(c in s)) { s[c] = 1; k++ }; cur = c }
+END { print k + 0, cur }' "${_W_LOG}" 2>/dev/null)})
     n=("${WORK}/offline/${REL}/.ibm-pak/data/cases"/*/*(N/e:'[[ ${REPLY} -nt ${_W_MARK} ]]':))
-    PPANEL_DONE="${#n}" PPANEL_DETAIL="new CASE versions (cached ones are reused)"
+    PPANEL_TOTAL="${_W_TOTAL}" PPANEL_DONE="${v[1]:-0}"
+    PPANEL_DETAIL="${v[2]:+${v[2]} · }${#n} new CASE version(s) (cached ones are reused)"
 }
 _map_probe() {   # CASEs whose mapping file mirror-images generated
     local -a v
@@ -220,30 +229,60 @@ END { print n + 0, cur }' "${_W_LOG}" 2>/dev/null)})
 }
 
 # CASE packages + patch metadata for <patch>, then its mapping -> <out> (TSV).
+# A generation that completed for the same patch and selection is reused
+# (<dir>/mapping-p<n>.files: its settings, then the mapping files): the two
+# cpd-cli runs are slow (~40 min for a watsonx set when olm-utils runs emulated,
+# amd64 on Apple Silicon). --regenerate runs them again; --reuse-mapping takes
+# the mapping files an interrupted plan wrote (newer than <dir>/.started) when
+# there is no record yet.
 generate_mapping() {   # <patch> <out tsv> <expected CASEs or "">
-    local p="$1" out="$2" target="${TARGET}" f
+    local p="$1" out="$2" target="${TARGET}" f sig rec
     local -a flags
+    # save: mapping only, as 2.0's save phase; the host is dropped by cpd-collect
+    [[ "${PHASE}" == mirror ]] || target="${STOPOVER}"
     common_flags "${p}"; flags=("${reply[@]}")
-    _W_MARK="${RUN}/dl-start"; : > "${_W_MARK}"
-    preg_info "cpd: case-download, release ${REL} $(plabel "${p}")"
-    cpd_watched "cpd case-download ($(plabel "${p}"))" "${out:h}/case-download-p${p:-0}.log" _dl_probe \
-        cpd-cli manage case-download --components="${COMPS}${EXTRA:+,${EXTRA}}" "${flags[@]}" \
-        $(preg_is_true "${MIRROR_CPD_CASE_FROM_OCI:-true}" && print -r -- --from_oci=true) || return 1
-    cpdm_apply_prunes "${REL}"
-    if [[ "${PHASE}" == mirror ]]; then
-        private_login
-    else
-        target="${STOPOVER}"   # mapping only, as 2.0's save phase; the host is dropped below
+    sig="release=${REL} patch=${p} components=${COMPS} extra=${EXTRA} arch=${ARCH} groups=${IMG_GROUPS} target=${target}"
+    sig+=" prunes=${MIRROR_CPD_EDB_STANDARD_ONLY:-false},${MIRROR_CPD_WSL_EXCLUDE_GPU:-false},${MIRROR_CPD_WSL_EXCLUDE_NLP:-false}"
+    rec="${out:h}/mapping-p${p:-0}.files"
+    CPDM_MAPS=()
+    if ! ${REGENERATE} && [[ -f "${rec}" && "$(head -n 1 "${rec}")" == "${sig}" ]]; then
+        CPDM_MAPS=("${(@f)$(tail -n +2 "${rec}")}")
+        for f in "${CPDM_MAPS[@]}"; do [[ -f "${WORK}/${f}" ]] || { CPDM_MAPS=(); break; }; done
+        (( ${#CPDM_MAPS} )) && preg_info "cpd: $(plabel "${p}"): reusing the last generation's mapping files (${#CPDM_MAPS} CASEs; --regenerate runs cpd-cli again)"
+    elif ${REUSE_MAPPING} && [[ -f "${out:h}/.started" ]]; then
+        for f in "${WORK}/offline/${REL}/.ibm-pak/data/mirror"/*/*/images-mapping.txt(N); do
+            [[ "${f}" -nt "${out:h}/.started" ]] && CPDM_MAPS+=("${f#${WORK}/}")
+        done
+        (( ${#CPDM_MAPS} )) && preg_info "cpd: $(plabel "${p}"): --reuse-mapping - ${#CPDM_MAPS} mapping file(s) written since the last plan started"
     fi
-    local -a mflags=(--components="${COMPS}" "${flags[@]}" --target_registry="${target}" --case_download=false)
-    [[ "${ARCH}" != all ]] && mflags+=(--arch="${ARCH}")
-    preg_in_list image-groups "${CONTENT}" && [[ -n "${IMG_GROUPS}" ]] && mflags+=(--groups="${IMG_GROUPS}")
-    _W_TOTAL="$3"
-    preg_info "cpd: mirror-images, mapping files only ($(plabel "${p}"); nothing is pushed)"
-    cpd_watched "cpd mapping ($(plabel "${p}"))" "${out:h}/mapping-p${p:-0}.log" _map_probe \
-        cpdm_mapping_only "${REL}" images-mapping.txt "${mflags[@]}" || return 1
-    preg_engine cpd-collect --prefix "${target}" "${WORK}/${^CPDM_MAPS[@]}" | sort -u > "${out}" \
-        || preg_die "cpd: unexpected lines in the mapping files (see the warnings above)"
+    if (( ${#CPDM_MAPS} == 0 )); then
+        : > "${out:h}/.started"
+        _W_MARK="${RUN}/dl-start"; : > "${_W_MARK}"
+        _W_TOTAL=""
+        # components seen by the last case-download of this release (any patch), as the total
+        f="$(print -rl -- "${PATCHES}"/"${REL}"-p*/case-download-p*.log(N.om[1]))"
+        [[ -n "${f}" && "${f}" != "${out:h}/case-download-p${p:-0}.log" ]] \
+            && _W_TOTAL="$(sed -E $'s/\e\\[[0-9;]*m//g' "${f}" | grep -oE 'Create offline directory for [a-z0-9_]+' | sort -u | grep -c . || true)"
+        [[ "${_W_TOTAL}" == 0 ]] && _W_TOTAL=""
+        preg_info "cpd: case-download, release ${REL} $(plabel "${p}")"
+        cpd_watched "cpd case-download ($(plabel "${p}"))" "${out:h}/case-download-p${p:-0}.log" _dl_probe \
+            cpd-cli manage case-download --components="${COMPS}${EXTRA:+,${EXTRA}}" "${flags[@]}" \
+            $(preg_is_true "${MIRROR_CPD_CASE_FROM_OCI:-true}" && print -r -- --from_oci=true) || return 1
+        cpdm_apply_prunes "${REL}"
+        [[ "${PHASE}" == mirror ]] && private_login
+        local -a mflags=(--components="${COMPS}" "${flags[@]}" --target_registry="${target}" --case_download=false)
+        [[ "${ARCH}" != all ]] && mflags+=(--arch="${ARCH}")
+        preg_in_list image-groups "${CONTENT}" && [[ -n "${IMG_GROUPS}" ]] && mflags+=(--groups="${IMG_GROUPS}")
+        _W_TOTAL="$3"
+        preg_info "cpd: mirror-images, mapping files only ($(plabel "${p}"); nothing is pushed)"
+        cpd_watched "cpd mapping ($(plabel "${p}"))" "${out:h}/mapping-p${p:-0}.log" _map_probe \
+            cpdm_mapping_only "${REL}" images-mapping.txt "${mflags[@]}" || return 1
+    fi
+    { print -r -- "${sig}"; print -rl -- "${CPDM_MAPS[@]}"; } > "${rec}"
+    # CASE packages and Helm charts are mapped by tag: resolved to their digest at the source
+    preg_engine cpd-collect --prefix "${target}" --resolve-authfile "${AUTH}" --jobs "${PROBE_JOBS}" \
+        "${WORK}/${^CPDM_MAPS[@]}" | sort -u > "${out}" \
+        || preg_die "cpd: problems in the mapping files (see the warnings above)"
     preg_info "cpd: $(plabel "${p}"): $(grep -c . "${out}") mapping line(s) in ${#CPDM_MAPS} CASE(s)"
 }
 
@@ -316,7 +355,6 @@ plan_online() {   # mirror | save
     mkdir -p "${dir}"
     preg_info "cpd: release ${REL}, $(plabel "${from}") -> $(plabel "${to}") (phase ${PHASE})"
     [[ "${from}" == "${to}" ]] && preg_info "cpd: the registry is recorded at $(plabel "${to}") already - checking what is missing$(${ALL} && print -r -- ' (--all: every line)')"
-    : > "${dir}/.started"
     # cpd-cli's olm-utils for this patch (online here), not the one the tap set
     export OLM_UTILS_IMAGE="icr.io/${OLM_REPO}:${REL}.${to}${OLM_SFX}"
     write_auth
@@ -341,10 +379,11 @@ plan_online() {   # mirror | save
     [[ -n "${known}" ]] && expect="$(cut -f1 "${known}" | sort -u | grep -c . || true)"
     generate_mapping "${to}" "${dir}/mapping.tsv" "${expect}" || preg_die "cpd: mapping of $(plabel "${to}") failed"
 
-    local pyaml="${WORK}/offline/patch/patch-${REL}-${to}.yaml" oyaml=""
+    local pyaml="${WORK}/offline/patch/patch-${REL}-${to}.yaml"
+    local -a old=()
     [[ -f "${pyaml}" ]] || preg_die "cpd: no patch metadata ${pyaml} - is patch ${to} published for ${REL}?"
-    [[ -n "${from}" && -f "${WORK}/offline/patch/patch-${REL}-${from}.yaml" ]] && oyaml="${WORK}/offline/patch/patch-${REL}-${from}.yaml"
-    preg_engine patch-diff ${oyaml:+--old "${oyaml}"} --new "${pyaml}" --components "${COMPS},${EXTRA}" > "${dir}/changed-components.tsv"
+    [[ -n "${from}" && -f "${WORK}/offline/patch/patch-${REL}-${from}.yaml" ]] && old=(--old "${WORK}/offline/patch/patch-${REL}-${from}.yaml")
+    preg_engine patch-diff "${old[@]}" --new "${pyaml}" --components "${COMPS},${EXTRA}" > "${dir}/changed-components.tsv"
 
     local -a dargs=(--mapping "${dir}/mapping.tsv" --out "${dir}/delta.tsv" --summary "${dir}/delta-summary.json" --jobs "${PROBE_JOBS}")
     [[ -n "${known}" ]] && dargs+=(--known "${known}")
@@ -677,7 +716,7 @@ case "${VERB}" in
     copy)   copy_verb ;;
     record) record_verb ;;
     list)   list_verb ;;
-    *) preg_die "usage: $0 plan|copy|record|list [--phase=mirror|save|load] [--to N] [--from N] [--all] [--full] [--estimate] [--bundle DIR] [--quick]" ;;
+    *) preg_die "usage: $0 plan|copy|record|list [--phase=mirror|save|load] [--to N] [--from N] [--all] [--full] [--estimate] [--regenerate|--reuse-mapping] [--bundle DIR] [--quick]" ;;
 esac
 
 exit 0

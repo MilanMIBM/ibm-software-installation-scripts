@@ -23,7 +23,7 @@ Subcommands (all output paths are created as needed):
   hauler FILE                                            -> JSON lines (images, charts) from a Hauler manifest
   bundle-manifest write|verify --dir D [--meta K=V]... [--quick]
   patch-diff [--old PATCH_YAML] --new PATCH_YAML [--components LIST]  -> changed components (TSV)
-  cpd-collect --prefix TARGET images-mapping.txt...      -> cpd mapping TSV (4_update_cpd_patch)
+  cpd-collect --prefix TARGET [--resolve-authfile A] images-mapping.txt...  -> cpd mapping TSV
   cpd-delta --mapping TSV [--known TSV]... [--root R] [--authfile A] [--all|--check]
             [--out DELTA_TSV] [--summary JSON]           -> what still has to be copied
 """
@@ -715,10 +715,14 @@ def _skopeo_raw(ref, opts):
 
 
 def _classify(err):
+    # The message repeats the reference, whose tag may contain "401" / "403" / "404"
+    # (5.4.8-4039): registry phrases first, status codes only as whole numbers.
     e = err.lower()
-    if "unauthorized" in e or "authentication required" in e or "denied" in e or "401" in e or "403" in e:
+    if "manifest unknown" in e or "name unknown" in e or "not found" in e:
+        return "MISSING"
+    if "unauthorized" in e or "authentication required" in e or "denied" in e or re.search(r"(?<![\w.-])40[13](?![\w.-])", e):
         return "AUTH"
-    if "manifest unknown" in e or "not found" in e or "name unknown" in e or "404" in e:
+    if re.search(r"(?<![\w.-])404(?![\w.-])", e):
         return "MISSING"
     if "x509" in e or "certificate" in e or "tls" in e:
         return "TLS"
@@ -859,10 +863,22 @@ def _read_tsv(path, cols):
     return rows
 
 
+def _split_tag(ref):
+    """repo:tag -> (repo, tag); the tag is after the last ':' that follows the last '/'."""
+    head, _, last = ref.rpartition("/")
+    if ":" not in last:
+        return ref, ""
+    name, tag = last.split(":", 1)
+    return f"{head}/{name}" if head else name, tag
+
+
 def cmd_cpd_collect(a):
-    """images-mapping.txt files (.../mirror/<case>/<version>/...) -> mapping TSV on stdout."""
+    """images-mapping.txt files (.../mirror/<case>/<version>/...) -> mapping TSV on stdout.
+    Sources by tag (the CASE packages and Helm charts as OCI artifacts) are resolved
+    to the digest the tag has now (--resolve-authfile), so every line is by digest."""
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
     prefix = a.prefix.rstrip("/") + "/"
-    seen, bad = set(), 0
+    rows, bad = [], 0
     for f in a.files:
         version = os.path.basename(os.path.dirname(f))
         case = os.path.basename(os.path.dirname(os.path.dirname(f)))
@@ -872,14 +888,33 @@ def cmd_cpd_collect(a):
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 src, dst = line.split("=", 1)
-                if not dst.startswith(prefix) or "@sha256:" not in src:
+                if not dst.startswith(prefix):
                     bad += 1
                     warn(f"{case}: unexpected mapping line skipped: {line[:160]}")
                     continue
-                row = (case, version, src, dst[len(prefix):])
-                if row not in seen:
-                    seen.add(row)
-                    print("\t".join(row))
+                rows.append([case, version, src, dst[len(prefix):]])
+    by_tag = sorted({r[2] for r in rows if "@sha256:" not in r[2]})
+    resolved = {}
+    if by_tag:
+        opts = ["--authfile", a.resolve_authfile] if a.resolve_authfile else []
+        progress, failed = Progress("resolve tags", len(by_tag), "source(s)"), []
+        with ThreadPoolExecutor(max_workers=a.jobs) as ex:
+            for n, (src, (digest, err)) in enumerate(zip(by_tag, ex.map(lambda s: _manifest_digest(s, opts), by_tag)), 1):
+                if digest:
+                    resolved[src] = f"{_split_tag(src)[0]}@{digest}"
+                else:
+                    failed.append(f"{src} ({err[:120]})")
+                progress.update(n)
+        for f in failed:
+            warn(f"cannot resolve {f}")
+        bad += len(failed)
+    seen = set()
+    for r in rows:
+        src = r[2] if "@sha256:" in r[2] else resolved.get(r[2])
+        row = (r[0], r[1], src, r[3]) if src else None
+        if row and row not in seen:
+            seen.add(row)
+            print("\t".join(row))
     return 1 if bad else 0
 
 
@@ -1100,6 +1135,8 @@ def main(argv):
     s.add_argument("--components", default="")
     s = sub.add_parser("cpd-collect")
     s.add_argument("--prefix", required=True)
+    s.add_argument("--resolve-authfile", default="")
+    s.add_argument("--jobs", type=int, default=16)
     s.add_argument("files", nargs="*")
     s = sub.add_parser("cpd-delta")
     s.add_argument("--mapping", required=True)

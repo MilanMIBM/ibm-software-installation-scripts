@@ -38,9 +38,15 @@ export PREG_SKIP_REGISTRY_OVERRIDES=1   # the hook reads cpd_vars.sh itself, not
 # delta.tsv, changed-components.tsv); 4.1 and 4.2 continue from it.
 #
 #   ./4.0_plan_cpd_patch_update.sh [--phase=...] [--to N] [--from N] [--all]
-#                                  [--estimate] [--bundle DIR] [--quick]
+#                                  [--estimate] [--regenerate | --reuse-mapping]
+#                                  [--bundle DIR] [--quick]
 #     --all       probe every line, even those recorded for <from> (repair)
 #     --estimate  also add up the delta's layer sizes at the source
+#     --regenerate     run case-download + mapping again, even when the last
+#                      generation for this patch and selection is recorded
+#                      (patches/<release>-p<to>/mapping-p<to>.files) and reused
+#     --reuse-mapping  after an interrupted plan: take the mapping files it
+#                      already wrote instead of running cpd-cli again
 #     --bundle    load: the patch bundle (default: the newest in
 #                 MIRROR_CPD_PATCH_BUNDLE_DIR); --quick skips its checksums
 # ==============================================================================
