@@ -22,6 +22,10 @@ Subcommands (all output paths are created as needed):
   yaml-images                                            -> image refs found in YAML on stdin
   hauler FILE                                            -> JSON lines (images, charts) from a Hauler manifest
   bundle-manifest write|verify --dir D [--meta K=V]... [--quick]
+  patch-diff [--old PATCH_YAML] --new PATCH_YAML [--components LIST]  -> changed components (TSV)
+  cpd-collect --prefix TARGET images-mapping.txt...      -> cpd mapping TSV (4_update_cpd_patch)
+  cpd-delta --mapping TSV [--known TSV]... [--root R] [--authfile A] [--all|--check]
+            [--out DELTA_TSV] [--summary JSON]           -> what still has to be copied
 """
 
 import argparse
@@ -795,6 +799,179 @@ def cmd_inspect(a):
 
 
 # =============================================================================
+# cpd patch updates (4_update_cpd_patch): patch metadata, mapping, delta
+# =============================================================================
+# Mapping TSV (one line per oc image mirror mapping line of cpd-cli's mirror-images):
+#   case  version  source (repo@sha256:...)  target relative to <root>/cpd (repo:tag)
+# Delta TSV: the same four columns plus status (missing | moved) and the digest the
+# tag points at now (moved only).
+PATCH_KEYS = ("case_version", "csv_version", "cr_version", "sub_channel")
+
+
+def _patch_meta(path):
+    """patch_components_meta of cpd-cli's patch-<release>-<n>.yaml as {component: {key: value}};
+    scalar keys only (list items such as block_upgrade_patch are skipped)."""
+    meta, comp, inside = {}, None, False
+    with open(path) as fh:
+        for raw in fh:
+            line = raw.rstrip()
+            text = line.strip()
+            if not text or text.startswith("#"):
+                continue
+            ind = len(line) - len(line.lstrip())
+            if ind == 0:
+                inside, comp = text == "patch_components_meta:", None
+                continue
+            if not inside or text.startswith("-"):
+                continue
+            key, _, val = text.partition(":")
+            val = val.strip().strip("'\"")
+            if ind == 2:
+                comp = key
+                meta.setdefault(comp, {})
+            elif ind == 4 and comp and val:
+                meta[comp][key] = val
+    meta.pop("patch_info", None)
+    return meta
+
+
+def cmd_patch_diff(a):
+    old = _patch_meta(a.old) if a.old else {}
+    new = _patch_meta(a.new)
+    sel = set(filter(None, (a.components or "").split(",")))
+    for comp in sorted(set(old) | set(new)):
+        o, n = old.get(comp, {}), new.get(comp, {})
+        changed = [k for k in PATCH_KEYS if o.get(k) != n.get(k)]
+        if not changed:
+            continue
+        print("\t".join([comp, "selected" if comp in sel else "other",
+                         o.get("case_version", "-"), n.get("case_version", "-"), ",".join(changed)]))
+    return 0
+
+
+def _read_tsv(path, cols):
+    rows = []
+    with open(path) as fh:
+        for line in fh:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= cols and not parts[0].startswith("#"):
+                rows.append(parts)
+    return rows
+
+
+def cmd_cpd_collect(a):
+    """images-mapping.txt files (.../mirror/<case>/<version>/...) -> mapping TSV on stdout."""
+    prefix = a.prefix.rstrip("/") + "/"
+    seen, bad = set(), 0
+    for f in a.files:
+        version = os.path.basename(os.path.dirname(f))
+        case = os.path.basename(os.path.dirname(os.path.dirname(f)))
+        with open(f) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                src, dst = line.split("=", 1)
+                if not dst.startswith(prefix) or "@sha256:" not in src:
+                    bad += 1
+                    warn(f"{case}: unexpected mapping line skipped: {line[:160]}")
+                    continue
+                row = (case, version, src, dst[len(prefix):])
+                if row not in seen:
+                    seen.add(row)
+                    print("\t".join(row))
+    return 1 if bad else 0
+
+
+def _manifest_digest(ref, opts):
+    """Digest of the manifest <ref> points at (sha256 of skopeo inspect --raw's bytes)."""
+    import subprocess  # noqa: PLC0415
+    cmd = ["skopeo", "inspect", "--raw", "--retry-times", "2"] + opts + [f"docker://{ref}"]
+    p = subprocess.run(cmd, capture_output=True, timeout=180)
+    if p.returncode != 0:
+        err = p.stderr.decode(errors="replace").strip().splitlines()
+        return None, (err[-1] if err else f"skopeo exit {p.returncode}")
+    return "sha256:" + hashlib.sha256(p.stdout).hexdigest(), ""
+
+
+def cmd_cpd_delta(a):
+    """Which mapping lines still have to be copied. Lines also in a --known mapping
+    (a patch recorded earlier) are taken as present unless --all; the rest are probed in
+    <root> (present: the tag points at the source digest; moved: at another one) or,
+    without --root, counted as missing (moved when a --known mapping had the tag with
+    another digest). --check: probe every line, exit 1 unless all are present."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+    rows = _read_tsv(a.mapping, 4)
+    known, known_rel = set(), {}
+    for f in a.known or []:
+        if os.path.isfile(f):
+            for r in _read_tsv(f, 4):
+                known.add((r[2], r[3]))
+                known_rel[r[3]] = r[2].split("@", 1)[1]
+    # one probe per target; the first CASE that maps it owns it
+    by_rel, conflicts = {}, []
+    for r in rows:
+        prev = by_rel.setdefault(r[3], r)
+        if prev[2].split("@", 1)[1] != r[2].split("@", 1)[1]:
+            conflicts.append(f"{r[3]}: {prev[0]} and {r[0]} map different digests")
+    for c in conflicts:
+        warn(c)
+    todo = [r for rel, r in by_rel.items() if a.check or a.all or (r[2], rel) not in known]
+    recorded = len(by_rel) - len(todo)
+    status = {}
+    opts = []
+    if a.authfile:
+        opts += ["--authfile", a.authfile]
+    if a.cert_dir:
+        opts += ["--cert-dir", a.cert_dir]
+    if a.tls_verify_false:
+        opts += ["--tls-verify=false"]
+    errors = []
+    if a.root and todo:
+        root = a.root.rstrip("/")
+        progress = Progress("probe", len(todo), "image(s)")
+        with ThreadPoolExecutor(max_workers=a.jobs) as ex:
+            futures = {ex.submit(_manifest_digest, f"{root}/{r[3]}", opts): r for r in todo}
+            for n, fut in enumerate(as_completed(futures), 1):
+                r = futures[fut]
+                digest, err = fut.result()
+                want = r[2].split("@", 1)[1]
+                if digest == want:
+                    status[r[3]] = ("present", "")
+                elif digest:
+                    status[r[3]] = ("moved", digest)
+                elif _classify(err) == "MISSING":
+                    status[r[3]] = ("missing", "")
+                else:
+                    errors.append(f"{_classify(err):<8} {root}/{r[3]}  ({err[:160]})")
+                progress.update(n, f", {len(errors)} error(s)" if errors else "")
+    else:
+        status = {r[3]: ("moved", known_rel[r[3]]) if r[3] in known_rel else ("missing", "") for r in todo}
+    for e in errors[:20]:
+        print(e, file=sys.stderr)
+    counts = {"desired": len(by_rel), "recorded": recorded, "probed": len(todo) if a.root else 0,
+              "present": 0, "missing": 0, "moved": 0, "errors": len(errors), "conflicts": len(conflicts)}
+    per_case = {}
+    with open(a.out, "w") if a.out else open(os.devnull, "w") as out:
+        for rel, r in by_rel.items():
+            if rel not in status:   # recorded (not probed), or a probe error
+                continue
+            st, old = status[rel]
+            counts[st] += 1
+            if st != "present":
+                out.write("\t".join(r[:4] + [st, old]) + "\n")
+                per_case[r[0]] = per_case.get(r[0], 0) + 1
+    counts["present"] += recorded
+    if a.summary:
+        with open(a.summary, "w") as fh:
+            json.dump({"counts": counts, "per_case": per_case}, fh, indent=2, sort_keys=True)
+    print(" ".join(f"{k}={v}" for k, v in counts.items()))
+    if errors:
+        return 2
+    return 1 if a.check and (counts["missing"] or counts["moved"]) else 0
+
+
+# =============================================================================
 # bundle-manifest
 # =============================================================================
 SKIP = {"bundle-manifest.json", "SHA256SUMS"}
@@ -917,6 +1094,25 @@ def main(argv):
     s.add_argument("--sizes", action="store_true")
     s.add_argument("--jobs", type=int, default=8)
     s.add_argument("--out", default="")
+    s = sub.add_parser("patch-diff")
+    s.add_argument("--old", default="")
+    s.add_argument("--new", required=True)
+    s.add_argument("--components", default="")
+    s = sub.add_parser("cpd-collect")
+    s.add_argument("--prefix", required=True)
+    s.add_argument("files", nargs="*")
+    s = sub.add_parser("cpd-delta")
+    s.add_argument("--mapping", required=True)
+    s.add_argument("--known", action="append")
+    s.add_argument("--root", default="")
+    s.add_argument("--authfile", default="")
+    s.add_argument("--cert-dir", default="")
+    s.add_argument("--tls-verify-false", action="store_true")
+    s.add_argument("--jobs", type=int, default=16)
+    s.add_argument("--all", action="store_true")
+    s.add_argument("--check", action="store_true")
+    s.add_argument("--out", default="")
+    s.add_argument("--summary", default="")
     s = sub.add_parser("bundle-manifest")
     s.add_argument("action", choices=["write", "verify"])
     s.add_argument("--dir", required=True)
@@ -935,7 +1131,8 @@ def main(argv):
         "build": cmd_build, "mapping": cmd_mapping, "mirror-sets": cmd_mirror_sets,
         "catalog-resources": cmd_catalog_resources, "lookup": cmd_lookup, "authfile": cmd_authfile,
         "yaml-images": cmd_yaml_images, "hauler": cmd_hauler, "bundle-manifest": cmd_bundle_manifest,
-        "inspect": cmd_inspect,
+        "inspect": cmd_inspect, "patch-diff": cmd_patch_diff, "cpd-collect": cmd_cpd_collect,
+        "cpd-delta": cmd_cpd_delta,
     }[a.cmd](a)
 
 

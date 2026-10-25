@@ -357,7 +357,7 @@ Config lives in `configs/registry_mirror_config/registry_mirror_vars.sh` (loaded
 
 Choices worth knowing:
 
-- **How each install is redirected** (`3.5`): CP4D gets `PRIVATE_REGISTRY_*`, `CPD_IMAGE_SOURCE` and an olm-utils image from the registry (`<root>/cpd/cpopen/cpd/olm-utils-v4:<version>`, plus `.<arch>` only when an arch is specified in `MIRROR_CPD_ARCH` or in `OLM_UTILS_IMAGE`), and IBM's `cpd-cli` flow continues from there. DataStax MC gets `MC_IMAGE_SOURCE`, the chart from the registry and `mc-values-registry.yaml` (every chart image, including Mimir's MinIO). Confluent gets the chart refs and image registry; Flink the OCI chart refs (`FLINK_CHART_SOURCE=oci`). Concert gets its mirrored-mode settings, and its own `1.2`/`1.3` step aside because the shared path covers them.
+- **How each install is redirected** (`3.5`): CP4D gets `PRIVATE_REGISTRY_*`, `CPD_IMAGE_SOURCE` and an olm-utils image from the registry (`<root>/cpd/cpopen/cpd/olm-utils-v4:<version>.<patch>` when that tag is there, else `:<version>`; plus `.<arch>` only when an arch is specified in `MIRROR_CPD_ARCH` or in `OLM_UTILS_IMAGE`), and IBM's `cpd-cli` flow continues from there. DataStax MC gets `MC_IMAGE_SOURCE`, the chart from the registry and `mc-values-registry.yaml` (every chart image, including Mimir's MinIO). Confluent gets the chart refs and image registry; Flink the OCI chart refs (`FLINK_CHART_SOURCE=oci`). Concert gets its mirrored-mode settings, and its own `1.2`/`1.3` step aside because the shared path covers them.
 - **The CP4D wrapper** runs segment 3 (`--cluster-only`) before the install when `CPD_IMAGE_SOURCE` is not `entitled` and the mirror config exists (`DO_REGISTRY_CLUSTER_CONFIG=auto`; `true`/`false` force it). Mirroring itself (segments 0 - 2) is not part of the install wrapper.
 - **The CP4D notebook** has a third image source, *Local Private Registry (air-gapped)*, and warns when the registry host looks like the other kind.
 - **Overrides on and off**: `PREG_SKIP_REGISTRY_OVERRIDES=1` loads the configs without `registry_overrides.sh`. `x_remove_mirror_config.sh` removes the track's cluster resources (`--include-ibm` also IBM's `cloud-pak-for-data-mirror`, `--overrides` the override files).
@@ -366,5 +366,26 @@ Choices worth knowing:
 - **OpenShift release images** are not mirrored; the cluster is assumed to exist.
 
 `x_clean_or_debug_registry/` lists what is in the registry per path (`x_list_registry_content.sh`) and deletes content that dropped out of the inventory (`x_prune_registry_paths.sh`, `--all` deletes a whole path; asks first unless `--yes`).
+
+**CP4D patch updates** (`4_update_cpd_patch/`): move `<root>/cpd` to another Software Hub patch of the same release (for example patch 7 → 8) and copy only what that patch changed. Images, CASE packages and olm-utils are handled; operators and extra images stay with segments 1 and 2. Set `PATCH_ID` in `cpd_vars.sh` (or pass `--to N`), then:
+
+```bash
+./scripts/private_registry_mirroring/4_update_cpd_patch/4.x_full_cpd_patch_update.sh              # plan, copy, verify, record
+./scripts/private_registry_mirroring/4_update_cpd_patch/4.x_full_cpd_patch_update.sh --plan-only  # just show what would be copied
+# stop-over: --phase=save outside (writes a patch bundle), --phase=load inside
+```
+
+| Step | What it does |
+| --- | --- |
+| `4.0` | `case-download` for the target patch, then `mirror-images` writing only the mapping files. Each mapping line not already recorded for the current patch is probed in the registry by digest (16 at a time), so no `list-images`. Writes `cpd/patches/<release>-p<to>/report.txt`: which components changed, and what is new or a moved tag. `--estimate` adds the delta size. With `--phase=save` the delta is computed against the last save, or once against the mapping generated from the old patch's CASEs |
+| `4.1` | Copies only the delta, running `oc image mirror` on several CASEs in parallel (manifest lists are kept, so digests don't change): to the registry, into a patch bundle (`save`, which also holds the new CASE versions and the patch metadata), or from the bundle (`load`, which also restores the CASEs into cpd-cli's work dir) |
+| `4.2` | Verifies the delta by digest (`--full`: every image of the patch), adds the version tags, records the patch (`patches/current`, `history.log`), and moves `native.jsonl`/`inventory.json` to it. It then runs `3.5 --only cpd`, which recreates cpd-cli's container (`--no-tap` skips this) |
+| `4.3` | Lists the recorded and planned patches and the history |
+
+**Version tags** keep every patch you have mirrored complete in the registry:
+
+- **Moved tags** are tags that a patch points at a new digest. The old digest is kept as `<tag>-p<old>` and the new one as `<tag>-p<new>`.
+- **olm-utils** gets IBM's `<release>.<patch>[.<arch>]` tags. When the registry has the tag for `PATCH_ID`, `3.5` pins `OLM_UTILS_IMAGE` to it, so a `PATCH_ID` the registry was never updated to fails to pull instead of quietly running the previous patch's olm-utils. `2.0` adds that tag too.
+- **Other images** already have versioned tags and digests, so both patches stay installable. Nothing is pruned.
 
 **Adding a product**: copy the `_template` files (`0_initial_setup/installs/_template.{conf,sh.j2,sh}`, and `_template.sh` in segments 1 - 3) to `<id>.*`. The `.conf` holds its metadata (config target, default registry path, content kinds). The hooks are called with a verb: `components`/`prefill` (0), `map` (1, required; emits inventory lines), `download`/`verify-registry` (2, only for product-specific mirroring) and `cluster`/`tap`/`verify-cluster` (3). The numbered scripts loop over `MIRROR_INSTALLS` and need no change.

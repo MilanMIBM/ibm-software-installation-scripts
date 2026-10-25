@@ -50,6 +50,12 @@ export MIRROR_CPD_PATCH_ID=""
 export MIRROR_CPD_ARCH=""
 # CASE packages from the IBM OCI registry (true) or GitHub (false)
 export MIRROR_CPD_CASE_FROM_OCI="true"
+# Patch updates (4_update_cpd_patch; the target patch is MIRROR_CPD_PATCH_ID or
+# PATCH_ID): registry probes at a time, oc image mirror uploads per CASE, and
+# where --phase=save writes patch bundles (empty = registry_mirror_workspace/patch-bundles)
+export MIRROR_CPD_PATCH_PROBE_JOBS="16"
+export MIRROR_CPD_PATCH_MAX_PER_REGISTRY="2"
+export MIRROR_CPD_PATCH_BUNDLE_DIR=""
 # IBM's IDMS step also maps all of registry.redhat.io to <root>/cpd. Kept in our
 # own mirror-cpd objects (a re-run of apply-icsp would wipe it from IBM's).
 export MIRROR_CPD_REDHAT_HOST_MIRROR="true"

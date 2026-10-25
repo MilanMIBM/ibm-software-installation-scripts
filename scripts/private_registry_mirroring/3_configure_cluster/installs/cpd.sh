@@ -32,7 +32,22 @@ cluster)
 tap)
     SRC="${MIRROR_RESOLVED_IMAGE_SOURCE:-private}"
     OLM_SFX="$(preg_olm_arch_suffix)"   # no arch unless one is specified
-    OLM_REF="${PUSH_PREFIX}/cpopen/cpd/olm-utils-v4:\${VERSION}${OLM_SFX}"
+    OLM_BASE="${PUSH_PREFIX}/cpopen/cpd/olm-utils-v4"
+    auth="$(preg_private_tmpdir)/auth.json"
+    preg_write_authfile "${auth}" pull
+    # The CASE tag <release>[.<arch>] (the last mirrored patch build), or - when
+    # the registry has it (2.0 / 4_update_cpd_patch tag it) - the patch tag
+    # <release>.<PATCH_ID>[.<arch>], cpd_vars.sh's own form: cpd-cli then runs the
+    # olm-utils of the patch being installed, and a PATCH_ID the registry was
+    # never updated to fails to pull instead of running another patch's olm-utils.
+    OLM_TAG='${VERSION}' OLM_COMMENT="the CASE tag <release>[.<arch>] (the last mirrored patch build)"
+    olm="${OLM_BASE}:${VERSION:-}${OLM_SFX}"
+    if [[ -n "${VERSION:-}" && -n "${PATCH_ID:-}" ]] \
+        && skopeo inspect --raw --authfile "${auth}" ${(z)$(preg_skopeo_target_opts)} "docker://${OLM_BASE}:${VERSION}.${PATCH_ID}${OLM_SFX}" >/dev/null 2>&1; then
+        OLM_TAG='${VERSION}${PATCH_ID:+.${PATCH_ID}}' OLM_COMMENT="the patch tag <release>.<PATCH_ID>[.<arch>] (4_update_cpd_patch)"
+        olm="${OLM_BASE}:${VERSION}.${PATCH_ID}${OLM_SFX}"
+    fi
+    OLM_REF="${OLM_BASE}:${OLM_TAG}${OLM_SFX}"
     body="$(preg_private_tmpdir)/body"
     {
         print -r -- "export CPD_IMAGE_SOURCE=$(preg_q "${SRC}")"
@@ -41,8 +56,8 @@ tap)
         print -r -- "export PRIVATE_REGISTRY_PULL_PASSWORD=$(preg_q "${MIRROR_REGISTRY_PULL_PASSWORD:-}")"
         print -r -- 'export IMAGE_PULL_PREFIX="${PRIVATE_REGISTRY_LOCATION}"'
         print -r -- 'export IMAGE_PULL_CREDENTIALS="$(printf %s "${PRIVATE_REGISTRY_PULL_USER}:${PRIVATE_REGISTRY_PULL_PASSWORD}" | base64 | tr -d "\n")"'
-        print -r -- "# cpd-cli runs on this workstation: olm-utils comes from the PUSH side, with the CASE"
-        print -r -- "# tag <release>[.<arch>] (the patch build's digest; there is no <release>.<patch> tag)."
+        print -r -- "# cpd-cli runs on this workstation: olm-utils comes from the PUSH side, with"
+        print -r -- "# ${OLM_COMMENT}."
         print -r -- "export OLM_UTILS_IMAGE=\"${OLM_REF}\""
         [[ "${SRC}" == local ]] && print -r -- "export CPD_CASE_SOURCE=offline"
         :
@@ -52,9 +67,6 @@ tap)
 
     # olm-utils from the registry: log podman in to the push host, recreate the
     # container - only when the image is really there (2.0 mirrored it).
-    olm="${PUSH_PREFIX}/cpopen/cpd/olm-utils-v4:${VERSION:-}${OLM_SFX}"
-    auth="$(preg_private_tmpdir)/auth.json"
-    preg_write_authfile "${auth}" pull
     sed_host="$(preg_registry_host "${PUSH_PREFIX}")"
     if [[ -n "${VERSION:-}" ]] && skopeo inspect --raw --authfile "${auth}" ${(z)$(preg_skopeo_target_opts)} "docker://${olm}" >/dev/null 2>&1; then
         # podman login takes the same --cert-dir / --tls-verify options as skopeo

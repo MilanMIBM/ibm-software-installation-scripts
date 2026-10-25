@@ -22,14 +22,16 @@
 # <workspace>/<cpd path>/list-images-{target,source}.log.
 #
 # olm-utils lands as <root>/cpd/cpopen/cpd/olm-utils-v4:<release>[.<arch>] (the
-# CASE tags, pinned to the patch build's digest; there is no <release>.<patch>
-# tag in a private registry). The arch suffix is added only when one is
-# specified (preg_olm_arch_suffix). The tap step (3.5) points OLM_UTILS_IMAGE there.
+# CASE tags, pinned to the patch build's digest), and is tagged
+# <release>.<patch>[.<arch>] here (the CASE has no such tag). The arch suffix is
+# added only when one is specified (preg_olm_arch_suffix). The tap step (3.5)
+# points OLM_UTILS_IMAGE at the patch tag when it is there.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/private_registry_helpers.sh"
 source "${_CP4D_REPO_ROOT}/src/helpers/progress_panel_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_mirror_helpers.sh"
 
 VERB="${1:-}"; shift || true
 NATIVE="${MIRROR_INSTALL_WORKDIR:?run through 2.0 / 2.4}/native.jsonl"
@@ -85,29 +87,6 @@ target_check() {   # every mirrored image must be inspectable in the target
     preg_cpd_list_images "cpd target check" "${LI_LOG}-target.log" \
         --components="${COMPS}" "${common[@]}" --target_registry="${TARGET}" --case_download=false
     fatal_check "cpd target check"
-}
-
-# IBM's optional prunes (EDB Postgres Standard; Watson Studio GPU / NLP) - a
-# portable in-place edit instead of GNU sed -i.
-prune_csv() {   # <case dir glob> <pattern>
-    local f
-    for f in ${~1}(N); do
-        PAT="$2" preg_python -I - "${f}" <<'PY'
-import os, sys
-p, pat = sys.argv[1], os.environ["PAT"]
-lines = open(p).read().splitlines(True)
-kept = [l for l in lines if pat not in l]
-open(p, "w").writelines(kept)
-print(f"[INFO] pruned {len(lines) - len(kept)} line(s) matching '{pat}' from {os.path.basename(p)}")
-PY
-    done
-}
-apply_prunes() {
-    local cases="${WORK}/offline/${REL}/.ibm-pak/data/cases"
-    preg_is_true "${MIRROR_CPD_EDB_STANDARD_ONLY:-false}" && prune_csv "${cases}/ibm-cpd-edb/*/ibm-cpd-edb-*-images.csv" "edb-postgres-advanced"
-    preg_is_true "${MIRROR_CPD_WSL_EXCLUDE_GPU:-false}" && prune_csv "${cases}/ibm-wsl-runtimes/*/ibm-wsl-runtimes-*-images.csv" "/gpu/"
-    preg_is_true "${MIRROR_CPD_WSL_EXCLUDE_NLP:-false}" && prune_csv "${cases}/ibm-wsl-runtimes/*/ibm-wsl-runtimes-*-images.csv" "/nlp/"
-    return 0
 }
 
 private_login() {
@@ -201,15 +180,10 @@ mirror_images() {   # <mapping file name> <mirror-images args...>
         cpd-cli manage mirror-images "$@"
         return
     fi
-    local params="${WORK}/mirror_manifests_only.yml" gen_marker f maps=()
-    print -r -- $'skip_do_mirror: true\ndo_mirror_manifests: true' > "${params}"
-    gen_marker="$(preg_private_tmpdir)/marker"; : > "${gen_marker}"
+    local f maps=()
     preg_info "cpd: mirror-images (mapping files only; MIRROR_CPD_PARALLEL=true)"
-    cpd-cli manage mirror-images "$@" --param-file="/tmp/work/${params:t}"
-    for f in "${WORK}/offline/${REL}/.ibm-pak/data/mirror"/*/*/"${map_name}"(N); do
-        [[ "${f}" -nt "${gen_marker}" ]] && maps+=("${f#${WORK}/}")
-    done
-    (( ${#maps} )) || preg_die "cpd: mirror-images wrote no ${map_name} - re-run with MIRROR_CPD_PARALLEL=false"
+    cpdm_mapping_only "${REL}" "${map_name}" "$@" || preg_die "cpd: re-run with MIRROR_CPD_PARALLEL=false"
+    maps=("${CPDM_MAPS[@]}")
     podman exec "${OLM_C}" sh -c "test -s /opt/ansible/.airgap/secrets/config.json" \
         || preg_die "cpd: no registry auth in ${OLM_C} - re-run with MIRROR_CPD_PARALLEL=false"
     local n
@@ -268,7 +242,7 @@ download)
             else
                 preg_info "cpd: source inspection skipped (MIRROR_CPD_INSPECT_SOURCE_REGISTRY=false)"
             fi
-            apply_prunes
+            cpdm_apply_prunes "${REL}"
             if [[ "${PHASE}" == mirror ]]; then
                 private_login
                 preg_info "cpd: mirror-images -> ${TARGET}"
@@ -299,6 +273,17 @@ download)
                     preg_info "cpd: copying ${src} -> ${TARGET}/${OLM_REPO}:${olm_tag}"
                     skopeo copy --all --src-authfile "${auth}" --dest-authfile "${auth}" ${(z)$(preg_skopeo_dest_opts)} \
                         "docker://${src}" "docker://${TARGET}/${OLM_REPO}:${olm_tag}"
+                fi
+                # The patch tag too (<release>.<patch>[.<arch>], cpd_vars.sh's form): the tap
+                # pins cpd-cli to it (4_update_cpd_patch adds it per patch the same way).
+                if [[ -n "${PATCH}" ]]; then
+                    srcopts=()
+                    if preg_is_true "${MIRROR_REGISTRY_INSECURE:-false}"; then srcopts=(--src-tls-verify=false)
+                    elif [[ -n "$(preg_cert_dir)" ]]; then srcopts=(--src-cert-dir="$(preg_cert_dir)"); fi
+                    preg_info "cpd: tagging ${OLM_REPO}:${olm_tag} as ${REL}.${PATCH}${OLM_SFX}"
+                    skopeo copy --all --preserve-digests --quiet --src-authfile "${auth}" --dest-authfile "${auth}" \
+                        "${srcopts[@]}" ${(z)$(preg_skopeo_dest_opts)} \
+                        "docker://${TARGET}/${OLM_REPO}:${olm_tag}" "docker://${TARGET}/${OLM_REPO}:${REL}.${PATCH}${OLM_SFX}"
                 fi
                 rm -f "${auth}"
             else

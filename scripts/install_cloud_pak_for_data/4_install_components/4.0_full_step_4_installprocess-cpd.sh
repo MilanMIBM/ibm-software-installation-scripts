@@ -18,7 +18,7 @@ CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # around the expired Semeru FIPS profile in the docproc cache-init job, then deletes itself once
 # the WatsonxOrchestrate CR is Completed. Only deployed when PREP_WXO=true and
 # watsonx_orchestrate is in CPD_COMPONENTS; set to false to turn it off.
-export WXO_DOCPROC_WATCHER="${WXO_DOCPROC_WATCHER:-true}"
+export WXO_DOCPROC_WATCHER="${WXO_DOCPROC_WATCHER:-false}"
 
 # Runs before the install: the prerequisite check is a pre-install check, and the watcher has to
 # be up while install-components waits on the CR.

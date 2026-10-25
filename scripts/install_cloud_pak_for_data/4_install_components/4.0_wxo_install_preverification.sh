@@ -44,7 +44,7 @@ fi
 #
 # Deployed when WXO_DOCPROC_WATCHER=true (set in 4.0_full_step_4_installprocess-cpd.sh),
 # PREP_WXO=true and watsonx_orchestrate is in CPD_COMPONENTS.
-WXO_DOCPROC_WATCHER="${WXO_DOCPROC_WATCHER:-true}"
+WXO_DOCPROC_WATCHER="${WXO_DOCPROC_WATCHER:-false}"
 WATCHER_NAME="wxo-docproc-watcher"
 WATCHER_NS="${PROJECT_CPD_INST_OPERANDS}"
 WATCHER_TIMEOUT_SECONDS="${WXO_DOCPROC_WATCHER_TIMEOUT_SECONDS:-43200}"
