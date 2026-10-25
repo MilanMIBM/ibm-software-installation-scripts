@@ -12,6 +12,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # source "${SCRIPT_DIR}/../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_entitlement_helpers.sh"
+
+# Label IBMServiceMeterDefinitions missing icpdsupport/addOnId before each
+# apply-entitlement; one unlabeled CR makes apply_entitlement.py fail with
+# KeyError 'icpdsupport/addOnId'. Set to false to skip (or override from the env).
+ENSURE_SERVICE_METER_ADDON_LABELS="${ENSURE_SERVICE_METER_ADDON_LABELS:-true}"
 
 # ---
 for var in LICENSE_ENTITLEMENTS PROD_LICENSE PROJECT_CPD_INST_OPERANDS; do
@@ -45,6 +51,11 @@ for entitlement in "${entitlements[@]}"; do
     production=${PROD_LICENSE}
     if (( ${PROD_APPLICABLE[(Ie)${entitlement}]} == 0 )); then
         production=false
+    fi
+    # Re-check per entitlement: apply-entitlement may delete a matching CR and the
+    # owning operator recreates it without the label before the next iteration.
+    if h_is_true "${ENSURE_SERVICE_METER_ADDON_LABELS}"; then
+        cpdent_ensure_service_meter_addon_labels "${PROJECT_CPD_INST_OPERANDS}"
     fi
     echo "[INFO] Applying entitlement: ${entitlement} (production=${production})"
     cpd-cli manage apply-entitlement \
