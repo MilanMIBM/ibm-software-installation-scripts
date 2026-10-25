@@ -91,11 +91,11 @@ if has prereq-operators; then
         preg_emit_operator certified-operators gpu-operator-certified "" gpu
     fi
     if needed rhoai; then
-        # 2.2.3's channel map: Software Hub 5.3.x / 5.4.0 pin RHOAI 2.25.
-        case "${REL}" in
-            5.3.0|5.3.1|5.4.0) rhoai_channel="stable-2.25" ;;
-            *) rhoai_channel="" ;;
-        esac
+        # The pin 2.2.3 uses (version_catalog.json); for a release without one,
+        # the old map (legacy_rhoai_channel_offline) - empty: the catalog's default.
+        if ! rhoai_channel="$(vr_catalog "cpd/rhoai_channel_by_release/${REL}" 2>/dev/null)"; then
+            rhoai_channel="$(legacy_rhoai_channel_offline "${REL}")"
+        fi
         preg_emit_operator redhat-operators rhods-operator "${rhoai_channel}" rhoai
         autoload -Uz is-at-least
         if is-at-least 5.4.0 "${REL}"; then

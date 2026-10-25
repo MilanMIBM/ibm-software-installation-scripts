@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - external Kafka access
@@ -84,14 +85,12 @@ CERT_PATH=""
 KEY_PATH=""
 CLIENT_CONFIG_ONLY=false
 
-_need_value() { [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }; }
-
 while (( $# > 0 )); do
     case "$1" in
         --disable)   DISABLE=true; shift ;;
         --rotate)    ROTATE=true; shift ;;
-        --cert-path) _need_value "$1" "${2:-}"; CERT_PATH="$2"; shift 2 ;;
-        --key-path)  _need_value "$1" "${2:-}"; KEY_PATH="$2"; shift 2 ;;
+        --cert-path) h_need_value "$1" "${2:-}"; CERT_PATH="$2"; shift 2 ;;
+        --key-path)  h_need_value "$1" "${2:-}"; KEY_PATH="$2"; shift 2 ;;
         --yes|-y)    ASSUME_YES=true; shift ;;
         --dry-run)   DRY_RUN=true; shift ;;
         --no-status) RUN_STATUS=false; shift ;;
@@ -287,10 +286,7 @@ if ! $ASSUME_YES; then
     else
         echo "This exposes Kafka on the cluster's public ingress, protected by SASL over TLS."
     fi
-    printf "Continue? [y/N] "
-    read -r _reply
-    case "${_reply}" in y|Y|yes|YES) ;; *) echo "[INFO] Aborted."; exit 0 ;; esac
-    echo ""
+    cf_continue_or_abort
 fi
 
 # ------------------------------------------------------------------------------
@@ -316,10 +312,7 @@ if $DISABLE; then
     echo "[INFO] External access removed. The TLS secret '${CONFLUENT_EXTERNAL_TLS_SECRET}' is kept"
     echo "[INFO] so re-enabling reuses the same CA. Delete it to discard the certificates."
 
-    if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
-        echo ""
-        "${STATUS}" || echo "[WARN] Status reported one or more components not ready (see above)."
-    fi
+    cf_closing_status "${RUN_STATUS}" "${STATUS}"
     exit 0
 fi
 
@@ -505,7 +498,4 @@ echo "--------------------------------------------------------------------------
 
 write_client_config
 
-if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
-    echo ""
-    "${STATUS}" || echo "[WARN] Status reported one or more components not ready (see above)."
-fi
+cf_closing_status "${RUN_STATUS}" "${STATUS}"

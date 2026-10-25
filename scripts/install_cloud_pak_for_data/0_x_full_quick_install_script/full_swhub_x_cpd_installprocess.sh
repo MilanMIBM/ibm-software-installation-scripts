@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # source "${SCRIPT_DIR}/../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # This script lives in scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/,
@@ -52,55 +53,38 @@ if [[ "${DO_REGISTRY_CLUSTER_CONFIG}" == auto ]]; then
     fi
 fi
 
-run_step() {
-    local enabled="$1"
-    local label="$2"
-    local script="$3"
-    shift 3
-
-    if [[ "${enabled}" != "true" ]]; then
-        echo ""
-        echo "==> Skipping: ${label}"
-        return 0
-    fi
-
-    echo ""
-    echo "==> Running:  ${label}"
-    "${script}" "$@"
-}
-
 # --- Private registry: cluster configuration (CPD_IMAGE_SOURCE private | local) ---
-run_step "${DO_REGISTRY_CLUSTER_CONFIG}" \
+h_run_step "${DO_REGISTRY_CLUSTER_CONFIG}" \
     "private registry: configure the cluster (scripts/private_registry_mirroring 3.x)" \
     "${SCRIPTS_ROOT}/../private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh" \
     --cluster-only
 
 # --- Step 0.0 - Install & set up openshift cert manager -------------------------------
-run_step "${DO_PREP_CERT_MANAGER}" \
+h_run_step "${DO_PREP_CERT_MANAGER}" \
     "0.3 set up openshift certmanager.sh" \
     "${SCRIPTS_ROOT}/1_global_pull_secret_and_certmanager/1.0_set_up_openshift_certmanager.sh"
 
 # --- Step 1.0 - Set up global pull credential -------------------------------
-run_step "${DO_GLOBAL_PULL_SECRET}" \
+h_run_step "${DO_GLOBAL_PULL_SECRET}" \
     "1.0 set up global pull credential" \
     "${SCRIPTS_ROOT}/1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh"
 
 # --- Step 2.0 - Preliminary cluster setup -----------------------------------
-run_step "${DO_PRELIMINARY_SETUP}" \
+h_run_step "${DO_PRELIMINARY_SETUP}" \
     "2.0 preliminary setup" \
     "${SCRIPTS_ROOT}/2_prepare_cluster/2.0-2.1_preliminary_setup/2.0_preliminary_setup.sh"
 
 # --- Step 2.2 - Install prerequisite operators ------------------------------
-run_step "${DO_PREREQUISITE_OPERATORS}" \
+h_run_step "${DO_PREREQUISITE_OPERATORS}" \
     "2.2 install prerequisite operators" \
     "${SCRIPTS_ROOT}/2_prepare_cluster/2.2_install_prerequisite_operators/2.2_install_prerequisite_operators.sh"
 
 # --- Step 3.1 - Install IBM Software Hub -------------------------------------
-run_step "${DO_INSTALL_SOFTWAREHUB}" \
+h_run_step "${DO_INSTALL_SOFTWAREHUB}" \
     "3.1 install software hub" \
     "${SCRIPTS_ROOT}/3_install_softwarehub/3.1_full_step_3_installprocess-softwarehub.sh"
 
 # --- Step 4.0 - Install CPD components ---------------------------------------
-run_step "${DO_INSTALL_CPD}" \
+h_run_step "${DO_INSTALL_CPD}" \
     "4.0 install cpd components" \
     "${SCRIPTS_ROOT}/4_install_components/4.0_full_step_4_installprocess-cpd.sh"

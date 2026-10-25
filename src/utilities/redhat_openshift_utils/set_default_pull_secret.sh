@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/ocp_utils_helpers.sh"
 
 # ---
 
@@ -153,36 +154,7 @@ fi
 TARGET_MODE="${TARGET_MODE:-all}"
 
 # --- Connect -----------------------------------------------------------------
-# Credentials on the command line win. Otherwise OC_LOGIN from cpd_vars.sh, and
-# without either, the current oc session is used as is.
-if [[ -n "${LOGIN_TOKEN}" && -n "${LOGIN_USERNAME}" ]]; then
-    echo "[ERROR] Pass either --token or --username, not both." >&2
-    exit 1
-elif [[ -z "${LOGIN_TOKEN}${LOGIN_USERNAME}" && -n "${LOGIN_SERVER}${LOGIN_PASSWORD}" ]]; then
-    echo "[ERROR] --server and --password need --token or --username." >&2
-    exit 1
-fi
-if [[ -n "${LOGIN_TOKEN}${LOGIN_USERNAME}" ]]; then
-    _login=(oc login)
-    _server="${LOGIN_SERVER:-${OCP_URL:-}}"
-    [[ -n "${_server}" ]] && _login+=(--server="${_server}")
-    if [[ -n "${LOGIN_TOKEN}" ]]; then
-        _login+=(--token="${LOGIN_TOKEN}")
-    else
-        _login+=(--username="${LOGIN_USERNAME}")
-        # Without --password, oc asks for it.
-        [[ -n "${LOGIN_PASSWORD}" ]] && _login+=(--password="${LOGIN_PASSWORD}")
-    fi
-    "${_login[@]}"
-    unset _login _server
-elif [[ -n "${OC_LOGIN:-}" ]]; then
-    eval "${OC_LOGIN}"
-elif ! oc whoami &>/dev/null; then
-    echo "[ERROR] Not logged in. Set OC_LOGIN in ./cpd_vars.sh, or pass --token or --username." >&2
-    exit 1
-fi
-
-echo "[INFO] Target cluster: $(oc whoami --show-server 2>/dev/null || echo unknown)"
+ocu_login
 
 # --- Source secret -----------------------------------------------------------
 if ! oc get secret "${SECRET_NAME}" -n "${SOURCE_NAMESPACE}" &>/dev/null; then
@@ -197,15 +169,7 @@ if ! oc get secret "${SECRET_NAME}" -n "${SOURCE_NAMESPACE}" &>/dev/null; then
     exit 1
 fi
 
-_secret_type="$(oc get secret "${SECRET_NAME}" -n "${SOURCE_NAMESPACE}" \
-                    -o jsonpath='{.type}' 2>/dev/null || echo '')"
-if [[ "${_secret_type}" != "kubernetes.io/dockerconfigjson" && "${_secret_type}" != "kubernetes.io/dockercfg" ]]; then
-    # Linking a non-pull secret with --for=pull is accepted by oc but the
-    # kubelet will never use it, so the failure would only show up as
-    # ImagePullBackOff much later. Say so now.
-    echo "[WARN] Secret '${SECRET_NAME}' has type '${_secret_type:-<none>}', not a docker"
-    echo "[WARN] config secret. Linking it for pull will not make image pulls work."
-fi
+ocu_warn_non_pull_secret "${SECRET_NAME}" "${SOURCE_NAMESPACE}"
 
 # --- Work out the target projects --------------------------------------------
 SYSTEM_NS_PATTERN='^(openshift($|-)|kube($|-)|default$)'
@@ -265,8 +229,7 @@ fi
 # --- Apply -------------------------------------------------------------------
 # Read the source once: the copy is identical for every target, and re-reading
 # it per namespace would be one API call per project for no gain.
-SECRET_BODY="$(oc get secret "${SECRET_NAME}" -n "${SOURCE_NAMESPACE}" -o json \
-    | jq 'del(.metadata.namespace, .metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.annotations, .metadata.ownerReferences)')"
+SECRET_BODY="$(ocu_secret_copy_json "${SECRET_NAME}" "${SOURCE_NAMESPACE}")"
 
 APPLIED=0
 SKIPPED=0

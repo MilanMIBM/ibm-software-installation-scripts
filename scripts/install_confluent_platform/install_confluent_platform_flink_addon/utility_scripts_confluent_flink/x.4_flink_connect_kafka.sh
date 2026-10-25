@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - attach a Kafka cluster
@@ -88,23 +89,19 @@ RUN_TEST=false
 CATALOG_EXISTS=false
 DRY_RUN=false
 
-_need_value() {
-    [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }
-}
-
 while (( $# > 0 )); do
     case "$1" in
-        --bootstrap)           _need_value "$1" "${2:-}"; BOOTSTRAP="$2"; shift 2 ;;
-        --schema-registry)     _need_value "$1" "${2:-}"; SR_URL="$2"; shift 2 ;;
-        --sasl-user)           _need_value "$1" "${2:-}"; SASL_USER="$2"; shift 2 ;;
-        --sasl-password)       _need_value "$1" "${2:-}"; SASL_PASSWORD="$2"; shift 2 ;;
-        --sasl-mechanism)      _need_value "$1" "${2:-}"; SASL_MECHANISM="$2"; shift 2 ;;
-        --security-protocol)   _need_value "$1" "${2:-}"; SECURITY_PROTOCOL="$2"; shift 2 ;;
-        --ca-file)             _need_value "$1" "${2:-}"; CA_FILE="$2"; shift 2 ;;
+        --bootstrap)           h_need_value "$1" "${2:-}"; BOOTSTRAP="$2"; shift 2 ;;
+        --schema-registry)     h_need_value "$1" "${2:-}"; SR_URL="$2"; shift 2 ;;
+        --sasl-user)           h_need_value "$1" "${2:-}"; SASL_USER="$2"; shift 2 ;;
+        --sasl-password)       h_need_value "$1" "${2:-}"; SASL_PASSWORD="$2"; shift 2 ;;
+        --sasl-mechanism)      h_need_value "$1" "${2:-}"; SASL_MECHANISM="$2"; shift 2 ;;
+        --security-protocol)   h_need_value "$1" "${2:-}"; SECURITY_PROTOCOL="$2"; shift 2 ;;
+        --ca-file)             h_need_value "$1" "${2:-}"; CA_FILE="$2"; shift 2 ;;
         --no-sasl)             USE_SASL=false; shift ;;
         --no-schema-registry)  USE_SR=false; shift ;;
-        --catalog)             _need_value "$1" "${2:-}"; CATALOG="$2"; shift 2 ;;
-        --database)            _need_value "$1" "${2:-}"; DATABASE="$2"; shift 2 ;;
+        --catalog)             h_need_value "$1" "${2:-}"; CATALOG="$2"; shift 2 ;;
+        --database)            h_need_value "$1" "${2:-}"; DATABASE="$2"; shift 2 ;;
         --allow-network)       ALLOW_NETWORK=true; shift ;;
         --replace)             REPLACE=true; shift ;;
         --test)                RUN_TEST=true; shift ;;

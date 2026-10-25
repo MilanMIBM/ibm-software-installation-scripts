@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 
 # =============================================================================
 # 5_create_cpd_project.sh
@@ -83,28 +84,14 @@ CPD_BASE="${API_URL%/}"
 
 # --- Authenticate against CPD ---
 echo "[INFO] Authenticating to ${CPD_BASE} as ${API_USER}..."
-TOKEN="$(curl -sk -X POST "${CPD_BASE}/icp4d-api/v1/authorize" \
-  -H 'Content-Type: application/json' \
-  -d "$(python3 -c 'import sys,json; print(json.dumps({"username": sys.argv[1], "api_key": sys.argv[2]}))' "${API_USER}" "${API_KEY}")" \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)"
-if [[ -z "${TOKEN}" ]]; then
+if ! cpdapi_login "${CPD_BASE}" "${API_USER}" api_key "${API_KEY}"; then
   echo "[ERROR] Failed to get a bearer token from ${CPD_BASE}/icp4d-api/v1/authorize." >&2
   exit 1
 fi
 
-# api <method> <path> [json body] -> API_CODE, API_BODY
-api() {
-  local -a _args=(-sk -X "$1" -H "Authorization: Bearer ${TOKEN}" -H 'Accept: application/json' -w $'\n%{http_code}')
-  (( $# >= 3 )) && _args+=(-H 'Content-Type: application/json' --data "$3")
-  local _resp
-  _resp="$(curl "${_args[@]}" "${CPD_BASE}$2" || true)"
-  API_CODE="${_resp##*$'\n'}"
-  API_BODY="${_resp%$'\n'*}"
-}
-urlencode() { python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
 
 # --- Find or create the project ---
-api GET "/v2/projects?name=$(urlencode "${PROJECT_NAME}")&limit=100"
+cpdapi GET "/v2/projects?name=$(cpdapi_urlencode "${PROJECT_NAME}")&limit=100"
 if [[ "${API_CODE}" != 200 ]]; then
   echo "[ERROR] Listing projects failed (HTTP ${API_CODE}): ${API_BODY}" >&2
   exit 1
@@ -130,7 +117,7 @@ elif [[ "${CREATE}" != true ]]; then
 else
   echo "[INFO] Creating project '${PROJECT_NAME}'..."
   # storage.guid names the new project's file storage; any fresh UUID will do.
-  api POST "/transactional/v2/projects" "$(python3 -c '
+  cpdapi POST "/transactional/v2/projects" "$(python3 -c '
 import sys, json, uuid
 print(json.dumps({
     "name": sys.argv[1],
@@ -146,7 +133,7 @@ print(json.dumps({
   PROJECT_ID="$(python3 -c 'import sys,json; print(json.loads(sys.argv[1])["location"].rstrip("/").split("/")[-1])' "${API_BODY}")"
   # The project can take a moment to become readable after the create returns.
   for _i in {1..12}; do
-    api GET "/v2/projects/${PROJECT_ID}"
+    cpdapi GET "/v2/projects/${PROJECT_ID}"
     [[ "${API_CODE}" == 200 ]] && break
     sleep 5
   done
@@ -160,7 +147,7 @@ echo "[INFO] Project id : ${PROJECT_ID}"
 
 # --- Members ---
 if (( ${#MEMBERS} > 0 )); then
-  api GET "/v2/projects/${PROJECT_ID}/members"
+  cpdapi GET "/v2/projects/${PROJECT_ID}/members"
   if [[ "${API_CODE}" != 200 ]]; then
     echo "[ERROR] Reading the project's members failed (HTTP ${API_CODE}): ${API_BODY}" >&2
     exit 1
@@ -182,14 +169,14 @@ for m in json.loads(sys.argv[1]).get("members", []):
     fi
 
     # The members API takes any id without checking it, so look up the real one.
-    api GET "/usermgmt/v1/user/$(urlencode "${_user}")"
+    cpdapi GET "/usermgmt/v1/user/$(cpdapi_urlencode "${_user}")"
     if [[ "${API_CODE}" != 200 ]]; then
       echo "[ERROR] '${_user}' is not a Software Hub user (HTTP ${API_CODE}); add them to Software Hub first." >&2
       exit 1
     fi
     _uid="$(python3 -c 'import sys,json; print(json.loads(sys.argv[1]).get("uid",""))' "${API_BODY}")"
 
-    api POST "/v2/projects/${PROJECT_ID}/members" "$(python3 -c '
+    cpdapi POST "/v2/projects/${PROJECT_ID}/members" "$(python3 -c '
 import sys, json
 print(json.dumps({"members": [{"user_name": sys.argv[1], "id": sys.argv[2], "role": sys.argv[3],
                                "type": "user", "state": "ACTIVE"}]}))' "${_user}" "${_uid}" "${_role}")"

@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - add or refresh web UI authentication
@@ -61,16 +62,12 @@ RUN_STATUS=true
 PW_OVERRIDE=""
 USER_OVERRIDE=""
 
-_need_value() {
-    [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }
-}
-
 while (( $# > 0 )); do
     case "$1" in
         --rotate)      ROTATE=true; shift ;;
         --disable)     DISABLE=true; shift ;;
-        --password)    _need_value "$1" "${2:-}"; PW_OVERRIDE="$2"; shift 2 ;;
-        --username)    _need_value "$1" "${2:-}"; USER_OVERRIDE="$2"; shift 2 ;;
+        --password)    h_need_value "$1" "${2:-}"; PW_OVERRIDE="$2"; shift 2 ;;
+        --username)    h_need_value "$1" "${2:-}"; USER_OVERRIDE="$2"; shift 2 ;;
         --yes|-y)      ASSUME_YES=true; shift ;;
         --dry-run)     DRY_RUN=true; shift ;;
         --no-status)   RUN_STATUS=false; shift ;;
@@ -169,13 +166,7 @@ fi
 # that are reachable from outside the cluster.
 if $DISABLE && ! $ASSUME_YES; then
     echo "This REMOVES authentication: the web UIs will be publicly reachable."
-    printf "Continue? [y/N] "
-    read -r _reply
-    case "${_reply}" in
-        y|Y|yes|YES) ;;
-        *) echo "[INFO] Aborted."; exit 0 ;;
-    esac
-    echo ""
+    cf_continue_or_abort
 else
     echo "[INFO] Redeploying the listed components (brief web UI downtime; Kafka is unaffected)."
     echo ""
@@ -273,7 +264,4 @@ else
 fi
 echo "=============================================================================="
 
-if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
-    echo ""
-    "${STATUS}" || echo "[WARN] Status reported one or more components not ready (see above)."
-fi
+cf_closing_status "${RUN_STATUS}" "${STATUS}"

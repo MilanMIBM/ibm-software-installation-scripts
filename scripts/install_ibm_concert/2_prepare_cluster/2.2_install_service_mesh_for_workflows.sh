@@ -59,7 +59,7 @@ fi
 cp4d_wait_for_csv openshift-operators 'servicemeshoperator3\.' 900
 
 CHANNEL="$(oc get subscriptions.operators.coreos.com servicemeshoperator3 -n openshift-operators -o jsonpath='{.spec.channel}' 2>/dev/null || true)"
-CHANNEL="${CHANNEL:-${CONCERT_ISTIO_CHANNEL:-stable}}"
+CHANNEL="${CHANNEL:-$(vr_operator_channel servicemeshoperator3 "${CONCERT_ISTIO_CHANNEL:-}")}"
 concert_info "Service Mesh 3 Subscription channel: ${CHANNEL}"
 
 # --- 2. Istio version ---------------------------------------------------------------

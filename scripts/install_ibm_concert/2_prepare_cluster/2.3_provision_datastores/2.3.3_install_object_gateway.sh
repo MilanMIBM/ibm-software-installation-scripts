@@ -48,7 +48,8 @@ fi
 
 if [[ "${MCG_ALREADY_INSTALLED}" == "false" ]]; then
     MINOR="$(oc get clusterversion version -o jsonpath='{.status.desired.version}' | cut -d. -f1,2)"
-    CHANNEL="${CONCERT_DS_S3_MCG_CHANNEL:-stable-${MINOR}}"
+    # stable-<OCP minor> (or CONCERT_DS_S3_MCG_CHANNEL) if the catalog offers it, else its default.
+    CHANNEL="$(vr_operator_channel odf-operator "${CONCERT_DS_S3_MCG_CHANNEL:-stable-${MINOR}}")"
     echo "[INFO] Installing standalone Multicloud Object Gateway (odf-operator, channel ${CHANNEL})..."
     cp4d_ensure_namespace openshift-storage "openshift.io/cluster-monitoring=true"
     concert_install_operator openshift-storage odf-operator "${CHANNEL}" redhat-operators 'odf-operator\.' own

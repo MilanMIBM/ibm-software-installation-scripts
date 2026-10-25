@@ -28,7 +28,9 @@
 [[ -n "${_CONCERT_HELPERS_LOADED:-}" ]] && return 0
 _CONCERT_HELPERS_LOADED=1
 
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
 export CONCERT_WORKSPACE="${CONCERT_WORKSPACE:-${_CP4D_REPO_ROOT}/concert_workspace}"
 export CONCERT_CONFIG_DIR="${CONCERT_CONFIG_DIR:-${_CP4D_REPO_ROOT}/configs/concert_config}"
@@ -49,20 +51,14 @@ fi
 # =============================================================================
 # Logging / small utilities
 # =============================================================================
-concert_info()  { print -r -- "[INFO] $*"; }
-concert_warn()  { print -r -- "[WARN] $*" >&2; }
-concert_error() { print -r -- "[ERROR] $*" >&2; }
-concert_die()   { concert_error "$@"; exit 1; }
-
-# true / TRUE / yes / y / 1 -> success
-concert_is_true() { [[ "${1:-}" == ([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Yy]|1) ]]; }
+concert_info()  { h_info "$@"; }
+concert_warn()  { h_warn "$@"; }
+concert_error() { h_error "$@"; }
+concert_die()   { h_die "$@"; }
+concert_is_true() { h_is_true "$@"; }
 
 concert_require_vars() {
-    local v missing=()
-    for v in "$@"; do
-        [[ -n "${(P)v:-}" ]] || missing+=("${v}")
-    done
-    (( ${#missing} == 0 )) || concert_die "Missing config values: ${missing[*]} (configs/concert_config/concert_vars.sh)"
+    h_missing_vars "$@" || concert_die "Missing config values: ${REPLY} (configs/concert_config/concert_vars.sh)"
 }
 
 # Every Concert script calls this right after loading the env.
@@ -74,29 +70,11 @@ concert_require_config() {
         PROJECT_CONCERT_INSTALLER PROJECT_CONCERT_DATASTORES
 }
 
-# Alphanumeric (safe in URLs, conf files, JSON). Not `tr </dev/urandom | head`:
-# under pipefail the SIGPIPE'd tr fails the pipeline and errexit kills the caller.
-concert_random_password() {
-    python3 -c 'import secrets, string, sys
-a = string.ascii_letters + string.digits
-print("".join(secrets.choice(a) for _ in range(int(sys.argv[1]))), end="")' "${1:-24}"
-}
-
-# Private scratch dir under the workspace. Not $TMPDIR: on macOS podman can
-# only bind-mount paths below $HOME, and the workspace is gitignored.
-concert_private_tmpdir() {
-    local base="${CONCERT_WORKSPACE}/.run"
-    mkdir -p "${base}"
-    chmod 700 "${base}"
-    (umask 077; mktemp -d "${base}/run.XXXXXX")
-}
-
+concert_random_password() { h_random_password "$@"; }
+# Private scratch dir under the (gitignored) workspace.
+concert_private_tmpdir() { h_private_tmpdir "${CONCERT_WORKSPACE}"; }
 concert_b64d() { base64 --decode 2>/dev/null; }
-
-concert_sha256() {
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
-    else shasum -a 256 "$1" | awk '{print $1}'; fi
-}
+concert_sha256() { h_sha256 "$@"; }
 
 # concert_write_dockerconfig <file> <registry>=<USER_VAR>:<PASSWORD_VAR>...
 # Writes a docker config JSON (auths) for the given registries. Credentials are
@@ -705,19 +683,7 @@ print((a > b) - (a < b))
 # Waits
 # =============================================================================
 # concert_wait_for <timeout-s> <description> <command...>
-concert_wait_for() {
-    local timeout="$1" desc="$2"
-    shift 2
-    local start=${SECONDS}
-    until "$@" >/dev/null 2>&1; do
-        if (( SECONDS - start >= timeout )); then
-            concert_error "Timed out after ${timeout}s waiting for: ${desc}"
-            return 1
-        fi
-        concert_info "Waiting for ${desc} ($(( SECONDS - start ))s)"
-        sleep 10
-    done
-}
+concert_wait_for() { h_wait_for "$@"; }
 
 # Prints "kind/name ready/desired" for every Deployment/StatefulSet that is
 # not fully ready; prints nothing when the namespace is healthy.
@@ -728,28 +694,7 @@ concert_ns_unready_workloads() {
 }
 
 # Wait for every MachineConfigPool to be Updated and not Updating.
-concert_wait_mcp_updated() {
-    local timeout="${1:-3600}" start=${SECONDS} pending
-    sleep 20   # let the MCO notice the change first
-    local raw
-    while true; do
-        # Control-plane nodes reboot during a rollout, so API errors are expected:
-        # treat them as "still rolling", never as a failure of the caller.
-        raw="$(oc get machineconfigpools -o jsonpath='{range .items[*]}{.metadata.name} {.status.conditions[?(@.type=="Updated")].status} {.status.conditions[?(@.type=="Updating")].status}{"\n"}{end}' 2>/dev/null || true)"
-        if [[ -z "${raw}" ]]; then
-            pending="(API not reachable)"
-        else
-            pending="$(print -r -- "${raw}" | awk '$2 != "True" || $3 == "True" { print $1 }' | xargs)"
-        fi
-        [[ -z "${pending}" ]] && { concert_info "All MachineConfigPools are updated."; return 0; }
-        if (( SECONDS - start >= timeout )); then
-            concert_error "MachineConfigPools still updating after ${timeout}s: ${pending}"
-            return 1
-        fi
-        concert_info "MachineConfigPools rolling out: ${pending} ($(( SECONDS - start ))s)"
-        sleep 30
-    done
-}
+concert_wait_mcp_updated() { h_wait_mcp_updated "$@"; }
 
 # =============================================================================
 # Capacity
@@ -851,7 +796,7 @@ CONCERT_OPTIMIZE_HASH_ANNOTATION="concert.ibm.com/optimize-spec-hash"
 CONCERT_OPTIMIZE_LICENSE_ANNOTATION="concert.ibm.com/optimize-license-sha256"
 
 concert_optimize_namespace()    { concert_product_namespace optimize; }
-concert_optimize_manifest_dir() { print -r -- "${CONCERT_WORKSPACE}/optimize/${CONCERT_OPTIMIZE_VERSION:-8.21.2}"; }
+concert_optimize_manifest_dir() { print -r -- "${CONCERT_WORKSPACE}/optimize/${CONCERT_OPTIMIZE_VERSION:-$(vr_catalog concert/optimize_version)}"; }
 
 # Hub URL for concert-gateway: the local Hub's in-cluster gateway (the HUB_URL
 # IBM's installer gives Concert's and Data Apps' gateways), or the remote Hub.
@@ -916,7 +861,7 @@ concert_optimize_render_cr() {
     CO_MODE="$1" CO_OUT="$2" CO_FSGROUP="${3:-}" CO_NS="${ns}" \
     CO_HUB_URL="$(concert_optimize_hub_url)" \
     CO_REPOSITORY="${CONCERT_OPTIMIZE_IMAGE_REPOSITORY:-icr.io/cpopen/turbonomic}" \
-    CO_VERSION="${CONCERT_OPTIMIZE_VERSION:-8.21.2}" \
+    CO_VERSION="${CONCERT_OPTIMIZE_VERSION:-$(vr_catalog concert/optimize_version)}" \
     CO_STORAGE_CLASS="${CONCERT_STG_CLASS_OPTIMIZE:-${CONCERT_STG_CLASS_BLOCK:-}}" \
     CO_DB_SIZE="${CONCERT_OPTIMIZE_DB_STORAGE_SIZE:-100Gi}" \
     CO_AUDIENCE="${CONCERT_OPTIMIZE_OAUTH2_AUDIENCE:-CONCERT}" \

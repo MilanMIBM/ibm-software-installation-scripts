@@ -33,22 +33,10 @@ DO_MYSQL="${DO_MYSQL:-true}"                       # 2.3.5 MySQL (Workflows)
 DO_REDIS="${DO_REDIS:-true}"                       # 2.3.6 Redis (Data Apps)
 DO_NEO4J="${DO_NEO4J:-true}"                       # 2.3.7 Neo4j (VEIAS graph)
 
-run_step() {
-    local enabled="$1" label="$2" script="$3"
-    if [[ "${enabled}" != "true" ]]; then
-        echo ""
-        echo "==> Skipping: ${label}"
-        return 0
-    fi
-    echo ""
-    echo "==> Running:  ${label}"
-    "${SCRIPT_DIR}/${script}"
-}
-
-run_step "${DO_PG_OPERATOR}"    "2.3.1 CloudNativePG operator"        2.3.1_install_cloudnative_pg_operator.sh
-run_step "${DO_POSTGRES}"       "2.3.2 PostgreSQL cluster + databases" 2.3.2_provision_postgres.sh
-run_step "${DO_OBJECT_GATEWAY}" "2.3.3 Multicloud Object Gateway"     2.3.3_install_object_gateway.sh
-run_step "${DO_BUCKETS}"        "2.3.4 S3 bucket claims"              2.3.4_provision_buckets.sh
-run_step "${DO_MYSQL}"          "2.3.5 MySQL for Workflows"           2.3.5_provision_mysql.sh
-run_step "${DO_REDIS}"          "2.3.6 Redis for Data Apps"           2.3.6_provision_redis.sh
-run_step "${DO_NEO4J}"          "2.3.7 Neo4j for the Concert graph"   2.3.7_provision_neo4j.sh
+h_run_step "${DO_PG_OPERATOR}"    "2.3.1 CloudNativePG operator"        "${SCRIPT_DIR}/2.3.1_install_cloudnative_pg_operator.sh"
+h_run_step "${DO_POSTGRES}"       "2.3.2 PostgreSQL cluster + databases" "${SCRIPT_DIR}/2.3.2_provision_postgres.sh"
+h_run_step "${DO_OBJECT_GATEWAY}" "2.3.3 Multicloud Object Gateway"     "${SCRIPT_DIR}/2.3.3_install_object_gateway.sh"
+h_run_step "${DO_BUCKETS}"        "2.3.4 S3 bucket claims"              "${SCRIPT_DIR}/2.3.4_provision_buckets.sh"
+h_run_step "${DO_MYSQL}"          "2.3.5 MySQL for Workflows"           "${SCRIPT_DIR}/2.3.5_provision_mysql.sh"
+h_run_step "${DO_REDIS}"          "2.3.6 Redis for Data Apps"           "${SCRIPT_DIR}/2.3.6_provision_redis.sh"
+h_run_step "${DO_NEO4J}"          "2.3.7 Neo4j for the Concert graph"   "${SCRIPT_DIR}/2.3.7_provision_neo4j.sh"

@@ -12,16 +12,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # source "${SCRIPT_DIR}/../../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Run each step; a non-zero exit warns but does not abort the chain, so a
 # benign "already installed" failure in one step still lets the rest proceed.
-run_step() {
-    local rc=0
-    "$@" || rc=$?
-    (( rc != 0 )) && echo "[WARN] $(basename "$1") exited ${rc}; continuing chain."
-    return 0
-}
+run_step() { h_run_step --warn true "$(basename "$1")" "$@"; }
 
 run_step "${CURRENT_DIR}/3.2_set_up_cpd_admin.sh"
 run_step "${CURRENT_DIR}/3.3_install_ibm_softwarehub.sh"

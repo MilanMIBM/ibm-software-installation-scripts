@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export ENV_TARGET="${ENV_TARGET:-concert}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 
 # ==============================================================================
 # Step 3 - install IBM Concert (3.0 -> 3.4)
@@ -25,21 +26,8 @@ DO_SETUP="${DO_SETUP:-true}"                   # 3.2 IBM installer
 DO_STATUS="${DO_STATUS:-true}"                 # 3.3 wait until ready
 DO_DETAILS="${DO_DETAILS:-true}"               # 3.4 instance details
 
-run_step() {
-    local enabled="$1" label="$2"
-    shift 2
-    if [[ "${enabled}" != "true" ]]; then
-        echo ""
-        echo "==> Skipping: ${label}"
-        return 0
-    fi
-    echo ""
-    echo "==> Running:  ${label}"
-    "$@"
-}
-
-run_step "${DO_RENDER_PARAMS}" "3.0 render params.ini"    "${SCRIPT_DIR}/3.0_render_params_ini.sh"
-run_step "${DO_PREVIEW}"       "3.1 preview (experimental)" "${SCRIPT_DIR}/3.1_preview_install.sh"
-run_step "${DO_SETUP}"         "3.2 run IBM Concert setup" "${SCRIPT_DIR}/3.2_run_concert_setup.sh"
-run_step "${DO_STATUS}"        "3.3 wait for Concert"      "${SCRIPT_DIR}/3.3_concert_status.sh" --wait=1800
-run_step "${DO_DETAILS}"       "3.4 instance details"      "${SCRIPT_DIR}/3.4_get_instance_details.sh"
+h_run_step "${DO_RENDER_PARAMS}" "3.0 render params.ini"    "${SCRIPT_DIR}/3.0_render_params_ini.sh"
+h_run_step "${DO_PREVIEW}"       "3.1 preview (experimental)" "${SCRIPT_DIR}/3.1_preview_install.sh"
+h_run_step "${DO_SETUP}"         "3.2 run IBM Concert setup" "${SCRIPT_DIR}/3.2_run_concert_setup.sh"
+h_run_step "${DO_STATUS}"        "3.3 wait for Concert"      "${SCRIPT_DIR}/3.3_concert_status.sh" --wait=1800
+h_run_step "${DO_DETAILS}"       "3.4 instance details"      "${SCRIPT_DIR}/3.4_get_instance_details.sh"

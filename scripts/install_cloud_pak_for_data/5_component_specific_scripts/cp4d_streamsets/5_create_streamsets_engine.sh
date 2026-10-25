@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 
 # =============================================================================
 # 5_create_streamsets_engine.sh
@@ -120,16 +121,13 @@ CPD_BASE="${API_URL%/}"
 
 # --- Authenticate against CPD ---
 echo "[INFO] Authenticating to ${CPD_BASE} as ${API_USER}..."
-TOKEN="$(curl -sk -X POST "${CPD_BASE}/icp4d-api/v1/authorize" \
-  -H 'Content-Type: application/json' \
-  -d "{\"username\":\"${API_USER}\",\"api_key\":\"${API_KEY}\"}" \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("token",""))')"
-if [[ -z "${TOKEN}" ]]; then
+if ! cpdapi_login "${CPD_BASE}" "${API_USER}" api_key "${API_KEY}"; then
   echo "[ERROR] Failed to get a bearer token from ${CPD_BASE}/icp4d-api/v1/authorize." >&2
   exit 1
 fi
 
-api_get() { curl -sk -H "Authorization: Bearer ${TOKEN}" -H 'Accept: application/json' "${CPD_BASE}$1"; }
+# Prints the response body; fails only when Software Hub is unreachable (like plain curl).
+api_get() { cpdapi GET "$1"; [[ "${API_CODE}" != 000 ]] && print -r -- "${API_BODY}"; }
 
 # --- Resolve the environment (project id, environment id, engine config) ---
 ENV_JSON="{}"

@@ -50,6 +50,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/ocp_utils_helpers.sh"
 
 # --- Edit these ---------------------------------------------------------------
 # Text on the login button. Changing it after users have logged in orphans their
@@ -97,51 +98,10 @@ done
 unset _tool
 
 # --- Log in ---------------------------------------------------------------------
-# Credentials on the command line win. Otherwise OC_LOGIN from cpd_vars.sh, which
-# skips the login when oc is already logged in to OCP_URL. Without either, the
-# current oc session is used as is.
-if [[ -n "${LOGIN_TOKEN}" && -n "${LOGIN_USERNAME}" ]]; then
-    echo "[ERROR] Pass either --token or --username, not both." >&2
-    exit 1
-elif [[ -z "${LOGIN_TOKEN}${LOGIN_USERNAME}" && -n "${LOGIN_SERVER}${LOGIN_PASSWORD}" ]]; then
-    echo "[ERROR] --server and --password need --token or --username." >&2
-    exit 1
-fi
-if [[ -n "${LOGIN_TOKEN}${LOGIN_USERNAME}" ]]; then
-    _login=(oc login)
-    _server="${LOGIN_SERVER:-${OCP_URL:-}}"
-    [[ -n "${_server}" ]] && _login+=(--server="${_server}")
-    if [[ -n "${LOGIN_TOKEN}" ]]; then
-        _login+=(--token="${LOGIN_TOKEN}")
-    else
-        _login+=(--username="${LOGIN_USERNAME}")
-        # Without --password, oc asks for it.
-        [[ -n "${LOGIN_PASSWORD}" ]] && _login+=(--password="${LOGIN_PASSWORD}")
-    fi
-    "${_login[@]}"
-    unset _login _server
-elif [[ -n "${OC_LOGIN:-}" ]]; then
-    eval "${OC_LOGIN}"
-elif ! oc whoami &>/dev/null; then
-    echo "[ERROR] Not logged in. Set OC_LOGIN in cpd_vars.sh, or pass --token or --username." >&2
-    exit 1
-fi
-
-echo "[INFO] Target cluster: $(oc whoami --show-server)"
+ocu_login
 echo "[INFO] Logged in as:   $(oc whoami)"
-
-if [[ "$(oc auth can-i '*' '*' --all-namespaces 2>/dev/null)" != "yes" ]]; then
-    echo "[ERROR] The current user is not a cluster-admin." >&2
-    exit 1
-fi
-
-# ROKS (Red Hat OpenShift on IBM Cloud) manages its own OAuth config and may
-# undo or reject extra identity providers. TechZone's VMware clusters are fine.
-_platform="$(oc get infrastructure cluster -o jsonpath='{.status.platformStatus.type}' 2>/dev/null || true)"
-if [[ "${_platform}" == "IBMCloud" ]]; then
-    echo "[WARN] Platform is IBMCloud (ROKS). Extra identity providers may not stick here."
-fi
-unset _platform
+ocu_require_cluster_admin
+ocu_warn_roks_oauth
 
 for _u in "${HTPASSWD_USERS[@]}" "${RESET_USERS[@]}"; do
     if [[ "${_u}" == *:* || "${_u}" == *[[:space:]]* ]]; then
@@ -158,38 +118,13 @@ done
 unset _u
 
 # --- Current state ------------------------------------------------------------
-# An existing provider of this name is used as it is, with the secret it points
-# at, so one managed elsewhere keeps its settings.
-OAUTH_JSON="$(oc get oauth cluster -o json)"
-IDP_EXISTS=false
-IDP_MAPPING="add"
-_idp="$(jq -c --arg n "${IDP_NAME}" \
-    '.spec.identityProviders // [] | map(select(.name == $n)) | first // empty' <<< "${OAUTH_JSON}")"
-if [[ -n "${_idp}" ]]; then
-    IDP_EXISTS=true
-    if [[ "$(jq -r '.type' <<< "${_idp}")" != HTPasswd ]]; then
-        echo "[ERROR] Identity provider '${IDP_NAME}' exists but is not of type HTPasswd." >&2
-        exit 1
-    fi
-    IDP_MAPPING="$(jq -r '.mappingMethod // "claim"' <<< "${_idp}")"
-    _secret="$(jq -r '.htpasswd.fileData.name' <<< "${_idp}")"
-    if [[ "${_secret}" != "${SECRET_NAME}" ]]; then
-        echo "[INFO] '${IDP_NAME}' uses secret '${_secret}', updating that one."
-        SECRET_NAME="${_secret}"
-    fi
-fi
-unset _idp _secret
-
-# user -> htpasswd line, as stored in the cluster today.
-typeset -A CURRENT_LINES
-if oc get secret "${SECRET_NAME}" -n openshift-config &>/dev/null; then
-    for _line in ${(f)"$(oc get secret "${SECRET_NAME}" -n openshift-config \
-                            -o jsonpath='{.data.htpasswd}' | base64 -d)"}; do
-        [[ -z "${_line}" ]] && continue
-        CURRENT_LINES[${_line%%:*}]="${_line}"
-    done
-    unset _line
-fi
+# mappingMethod 'add' for a new provider: if an OpenShift user with this name
+# already exists (e.g. from an IBMid login), the password login attaches to that
+# same user instead of failing. The reverse only works if the IBM ID provider
+# also uses 'add'; with its usual 'claim', someone who logs in here first cannot
+# later use IBM ID.
+htpw_read_idp add
+htpw_read_lines
 
 # user -> plain-text password, from earlier runs.
 typeset -A SAVED_PASSWORDS
@@ -202,10 +137,6 @@ if [[ -f "${CREDENTIALS_FILE}" ]]; then
 fi
 
 # --- Build the new htpasswd file -----------------------------------------------
-new_password() {
-    openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-16
-}
-
 typeset -A NEW_LINES
 ISSUED=()
 for _u in "${HTPASSWD_USERS[@]}"; do
@@ -214,32 +145,12 @@ for _u in "${HTPASSWD_USERS[@]}"; do
         NEW_LINES[${_u}]="${CURRENT_LINES[${_u}]}"
         continue
     fi
-    _pw="$(new_password)"
-    NEW_LINES[${_u}]="$(htpasswd -nbB -C 10 "${_u}" "${_pw}" | head -n 1)"
-    SAVED_PASSWORDS[${_u}]="${_pw}"
-    ISSUED+=("${_u}")
+    htpw_issue "${_u}"
 done
-unset _u _pw
+unset _u
 
 REMOVED=()
-_others=0
-for _u in "${(@k)CURRENT_LINES}"; do
-    (( ${HTPASSWD_USERS[(Ie)${_u}]} )) && continue
-    # Accounts without a saved password weren't made by this script and may
-    # belong to another one sharing the secret, so they are always kept.
-    if [[ -z "${SAVED_PASSWORDS[${_u}]+x}" ]]; then
-        NEW_LINES[${_u}]="${CURRENT_LINES[${_u}]}"
-        (( ++_others ))
-    elif [[ "${PRUNE}" == true ]]; then
-        REMOVED+=("${_u}")
-        unset "SAVED_PASSWORDS[${_u}]"
-    else
-        echo "[WARN] '${_u}' is in the cluster but not in HTPASSWD_USERS; kept. Use --prune to remove."
-        NEW_LINES[${_u}]="${CURRENT_LINES[${_u}]}"
-    fi
-done
-(( _others > 0 )) && echo "[INFO] ${_others} other account(s) in the secret, not made by this script, left as is."
-unset _u _others
+htpw_keep_others HTPASSWD_USERS "in HTPASSWD_USERS"
 
 _tmp="$(mktemp)"
 trap 'rm -f "${_tmp}"' EXIT
@@ -253,9 +164,7 @@ if [[ ! -s "${_tmp}" ]]; then
     exit 1
 fi
 
-oc create secret generic "${SECRET_NAME}" -n openshift-config \
-    --from-file=htpasswd="${_tmp}" --dry-run=client -o yaml | oc apply -f - >/dev/null
-echo "[INFO] Secret openshift-config/${SECRET_NAME} holds ${#NEW_LINES} user(s)."
+htpw_apply_secret "${_tmp}"
 
 # Save before touching OAuth, so a failure below never loses issued passwords.
 mkdir -p "$(dirname "${CREDENTIALS_FILE}")"
@@ -269,38 +178,10 @@ chmod 600 "${CREDENTIALS_FILE}"
 unset _u
 
 # --- Identity provider ----------------------------------------------------------
-# mappingMethod 'add': if an OpenShift user with this name already exists (e.g.
-# from an IBMid login), the password login attaches to that same user instead of
-# failing. The reverse only works if the IBM ID provider also uses 'add'; with
-# its usual 'claim', someone who logs in here first cannot later use IBM ID.
-if [[ "${IDP_EXISTS}" == true ]]; then
-    echo "[INFO] Identity provider '${IDP_NAME}' already exists, left as is."
-else
-    if [[ -n "$(jq -r '.metadata.annotations["argocd.argoproj.io/tracking-id"] // empty' <<< "${OAUTH_JSON}")" ]]; then
-        echo "[WARN] ArgoCD manages the OAuth config and may remove '${IDP_NAME}' again. If it does, enable an"
-        echo "       HTPasswd provider where ArgoCD's config comes from and set HTPASSWD_IDP_NAME to its name."
-    fi
-    _idps="$(oc get oauth cluster -o json | jq -c '.spec.identityProviders // []')"
-    _new_idps="$(jq -c --arg n "${IDP_NAME}" --arg s "${SECRET_NAME}" \
-        '. + [{name: $n, mappingMethod: "add", type: "HTPasswd", htpasswd: {fileData: {name: $s}}}]' \
-        <<< "${_idps}")"
-    # Merge patch on the whole list; the existing providers are carried over as is.
-    oc patch oauth cluster --type=merge -p "{\"spec\":{\"identityProviders\":${_new_idps}}}"
-    echo "[INFO] Added identity provider '${IDP_NAME}'. Existing providers kept:"
-    jq -r '.[].name | "         - " + .' <<< "${_idps}"
-fi
-unset _idps _new_idps
+htpw_add_idp
 
 # --- Remove pruned accounts -----------------------------------------------------
-for _u in "${REMOVED[@]}"; do
-    oc delete identity "${IDP_NAME}:${_u}" --ignore-not-found
-    # Only delete the user if this was their only login; an IBMid user stays.
-    if [[ -z "$(oc get user "${_u}" -o jsonpath='{.identities[*]}' 2>/dev/null)" ]]; then
-        oc delete user "${_u}" --ignore-not-found
-    fi
-    echo "[INFO] Removed '${_u}'."
-done
-unset _u
+htpw_remove_users
 
 # --- Link existing users --------------------------------------------------------
 # With mappingMethod 'claim' a first login is refused when an OpenShift user of
@@ -324,14 +205,7 @@ if [[ "${IDP_MAPPING}" == claim ]]; then
 fi
 
 # --- Wait for the login pods to pick it up -------------------------------------
-echo "[INFO] Waiting for the authentication operator to roll out (up to ~5 min)..."
-for _i in {1..15}; do
-    [[ "$(oc get co authentication -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}')" == True ]] && break
-    sleep 2
-done
-oc wait co/authentication --for=condition=Progressing=False --timeout=300s >/dev/null \
-    || echo "[WARN] Still rolling out. Check with: oc get co authentication"
-unset _i
+htpw_wait_auth_rollout
 
 # --- Summary --------------------------------------------------------------------
 echo "[INFO] ---"

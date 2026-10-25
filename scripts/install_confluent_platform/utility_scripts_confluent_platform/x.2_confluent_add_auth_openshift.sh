@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - OpenShift-backed authentication for the web UIs
@@ -111,10 +112,7 @@ fi
 
 if $DISABLE && ! $ASSUME_YES; then
     echo "This REMOVES authentication: the Control Center UI becomes publicly reachable."
-    printf "Continue? [y/N] "
-    read -r _reply
-    case "${_reply}" in y|Y|yes|YES) ;; *) echo "[INFO] Aborted."; exit 0 ;; esac
-    echo ""
+    cf_continue_or_abort
 fi
 
 # ------------------------------------------------------------------------------
@@ -207,7 +205,4 @@ else
 fi
 echo "=============================================================================="
 
-if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
-    echo ""
-    "${STATUS}" || echo "[WARN] Status reported one or more components not ready (see above)."
-fi
+cf_closing_status "${RUN_STATUS}" "${STATUS}"

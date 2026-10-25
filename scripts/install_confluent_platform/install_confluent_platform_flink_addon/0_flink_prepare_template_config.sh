@@ -8,6 +8,8 @@ SECONDS=0
 trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/../../../src/helpers/common_helpers.sh"
+source "${SCRIPT_DIR}/../../../src/helpers/version_resolver.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - template the sizing block
@@ -112,25 +114,21 @@ STORAGE_CLASS_OVERRIDE=""
 NAMESPACE_OVERRIDE=""
 typeset -A OVERRIDE
 
-_need_value() {
-    [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }
-}
-
 while (( $# > 0 )); do
     case "$1" in
-        --size)               _need_value "$1" "${2:-}"; SIZE="$2"; shift 2 ;;
-        --cmf-cpu-request)    _need_value "$1" "${2:-}"; OVERRIDE[CMF_CPU_REQ]="$2"; shift 2 ;;
-        --cmf-cpu-limit)      _need_value "$1" "${2:-}"; OVERRIDE[CMF_CPU_LIM]="$2"; shift 2 ;;
-        --cmf-mem-request)    _need_value "$1" "${2:-}"; OVERRIDE[CMF_MEM_REQ]="$2"; shift 2 ;;
-        --cmf-mem-limit)      _need_value "$1" "${2:-}"; OVERRIDE[CMF_MEM_LIM]="$2"; shift 2 ;;
-        --jobmanager-cpu)     _need_value "$1" "${2:-}"; OVERRIDE[JM_CPU]="$2"; shift 2 ;;
-        --jobmanager-memory)  _need_value "$1" "${2:-}"; OVERRIDE[JM_MEM]="$2"; shift 2 ;;
-        --taskmanager-cpu)    _need_value "$1" "${2:-}"; OVERRIDE[TM_CPU]="$2"; shift 2 ;;
-        --taskmanager-memory) _need_value "$1" "${2:-}"; OVERRIDE[TM_MEM]="$2"; shift 2 ;;
-        --task-slots)         _need_value "$1" "${2:-}"; OVERRIDE[SLOTS]="$2"; shift 2 ;;
-        --storage)            _need_value "$1" "${2:-}"; OVERRIDE[CMF_STORAGE]="$2"; shift 2 ;;
-        --storage-class)      _need_value "$1" "${2:-}"; STORAGE_CLASS_OVERRIDE="$2"; shift 2 ;;
-        --namespace)          _need_value "$1" "${2:-}"; NAMESPACE_OVERRIDE="$2"; shift 2 ;;
+        --size)               h_need_value "$1" "${2:-}"; SIZE="$2"; shift 2 ;;
+        --cmf-cpu-request)    h_need_value "$1" "${2:-}"; OVERRIDE[CMF_CPU_REQ]="$2"; shift 2 ;;
+        --cmf-cpu-limit)      h_need_value "$1" "${2:-}"; OVERRIDE[CMF_CPU_LIM]="$2"; shift 2 ;;
+        --cmf-mem-request)    h_need_value "$1" "${2:-}"; OVERRIDE[CMF_MEM_REQ]="$2"; shift 2 ;;
+        --cmf-mem-limit)      h_need_value "$1" "${2:-}"; OVERRIDE[CMF_MEM_LIM]="$2"; shift 2 ;;
+        --jobmanager-cpu)     h_need_value "$1" "${2:-}"; OVERRIDE[JM_CPU]="$2"; shift 2 ;;
+        --jobmanager-memory)  h_need_value "$1" "${2:-}"; OVERRIDE[JM_MEM]="$2"; shift 2 ;;
+        --taskmanager-cpu)    h_need_value "$1" "${2:-}"; OVERRIDE[TM_CPU]="$2"; shift 2 ;;
+        --taskmanager-memory) h_need_value "$1" "${2:-}"; OVERRIDE[TM_MEM]="$2"; shift 2 ;;
+        --task-slots)         h_need_value "$1" "${2:-}"; OVERRIDE[SLOTS]="$2"; shift 2 ;;
+        --storage)            h_need_value "$1" "${2:-}"; OVERRIDE[CMF_STORAGE]="$2"; shift 2 ;;
+        --storage-class)      h_need_value "$1" "${2:-}"; STORAGE_CLASS_OVERRIDE="$2"; shift 2 ;;
+        --namespace)          h_need_value "$1" "${2:-}"; NAMESPACE_OVERRIDE="$2"; shift 2 ;;
         --dry-run)            DRY_RUN=true; shift ;;
         -h|--help)            usage; exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Use --help." >&2; exit 1 ;;
@@ -252,7 +250,8 @@ rm -f "${BLOCK_FILE}"
 # toggles get - the block above owns only what --size controls.
 # ------------------------------------------------------------------------------
 if ! grep -q '^export FLINK_CMF_CHART_VERSION=' "${VARS_FILE}"; then
-    cat >> "${VARS_FILE}" <<'STATIC'
+    # @@<path>@@ marks a value from src/helpers/version_catalog.json, filled in below.
+    _static="$(cat <<'STATIC'
 
 # ------------------------------------------------------------------------------
 # Confluent Platform for Apache Flink - added by install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh
@@ -279,8 +278,8 @@ export FLINK_HELM_REPO_URL="https://packages.confluent.io/helm"
 # Pinned exactly rather than with a "~x.y.z" range: a range silently upgrades
 # the control plane on the next run, which is not what an install script should
 # do. Bump these by hand after reading the CMF upgrade notes.
-export FLINK_CMF_CHART_VERSION="2.4.2"
-export FLINK_OPERATOR_CHART_VERSION="1.150.3"
+export FLINK_CMF_CHART_VERSION="@@flink/cmf_chart_version@@"
+export FLINK_OPERATOR_CHART_VERSION="@@flink/operator_chart_version@@"
 export FLINK_CMF_RELEASE_NAME="cmf"
 export FLINK_OPERATOR_RELEASE_NAME="cp-flink-kubernetes-operator"
 
@@ -288,10 +287,10 @@ export FLINK_OPERATOR_RELEASE_NAME="cp-flink-kubernetes-operator"
 # Override for an air-gapped mirror. Empty = whatever the chart ships with.
 export FLINK_IMAGE_REGISTRY=""
 # Runtime image for JAR applications (confluent flink application create).
-export FLINK_APPLICATION_IMAGE="confluentinc/cp-flink:2.0.2-cp3"
+export FLINK_APPLICATION_IMAGE="@@flink/application_image@@"
 # Runtime image for SQL statements. MUST be a cp-flink-sql image - CMF rejects
 # a compute pool that names anything else. Shared pools need cp7 or newer.
-export FLINK_SQL_IMAGE="confluentinc/cp-flink-sql:1.19-cp11"
+export FLINK_SQL_IMAGE="@@flink/sql_image@@"
 # Flink API version the images implement. cp-flink 2.x = v2_0, cp-flink-sql
 # 1.19 = v1_19. These are not interchangeable: the operator validates them.
 export FLINK_APPLICATION_VERSION="v2_0"
@@ -301,7 +300,7 @@ export FLINK_SQL_VERSION="v1_19"
 # The Flink operator's admission webhook needs cert-manager. 1.0_flink_prep.sh
 # installs it only if it is absent, and never removes it - other operators on
 # the cluster are likely to depend on it too.
-export FLINK_CERT_MANAGER_VERSION="v1.18.2"
+export FLINK_CERT_MANAGER_VERSION="@@flink/cert_manager_version@@"
 export FLINK_CERT_MANAGER_NAMESPACE="cert-manager"
 
 # ---- CMF endpoint -------------------------------------------------------------
@@ -364,6 +363,13 @@ export FLINK_LICENSE_SECRET="flink-license"
 # ---- Waits --------------------------------------------------------------------
 export FLINK_ROLLOUT_TIMEOUT="600s"
 STATIC
+)"
+    for _key in flink/cmf_chart_version flink/operator_chart_version flink/application_image \
+                flink/sql_image flink/cert_manager_version; do
+        _static="${_static//@@${_key}@@/$(vr_catalog "${_key}")}"
+    done
+    print -r -- "${_static}" >> "${VARS_FILE}"
+    unset _static _key
     echo "[INFO] Wrote the static Flink settings (versions, names, storage backend)."
 fi
 

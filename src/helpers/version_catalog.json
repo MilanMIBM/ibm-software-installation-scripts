@@ -1,0 +1,43 @@
+{
+  "_about": "Versions, channels and images that no installed artifact carries (IBM docs, vendor matrices, chosen defaults). Read through src/helpers/version_catalog.py (shell: vr_catalog in version_resolver.sh). Paths are '/'-separated. Edit values here; legacy_version_resolution.py keeps the values these replaced, used only when this file or a key is unreadable.",
+  "cpd": {
+    "rhoai_channel_by_release": {
+      "_source": "IBM docs, prep-cluster-openshift-ai: Software Hub 5.3.x / 5.4.0 pin Red Hat OpenShift AI 2.25. Releases not listed use the catalog's default channel.",
+      "5.3.0": "stable-2.25",
+      "5.3.1": "stable-2.25",
+      "5.4.0": "stable-2.25"
+    },
+    "wxo_prereq": {
+      "min_ocp_version": "4.12",
+      "min_worker_nodes": "4",
+      "min_cpu_per_node": "16",
+      "min_memory_per_node_gb": "64",
+      "min_storage_gb": "500"
+    }
+  },
+  "helm": {
+    "_source": "The Helm this repo pins (Concert runner, Mission Control, mirroring). DataStax supports Mission Control with Helm 3.14.0 - 3.18.x only.",
+    "pinned_version": "v3.18.4",
+    "mission_control_min": "3.14.0",
+    "mission_control_max_exclusive": "3.19.0"
+  },
+  "concert": {
+    "_source": "IBM's version matrix pairs Hub 3.0.3 (Concert 3.1.0) with Turbonomic 8.21.2.",
+    "optimize_version": "8.21.2"
+  },
+  "confluent": {
+    "version": "8.2.0",
+    "c3_version": "2.5.0",
+    "connect_image": "docker.io/cnfldemos/cp-server-connect-datagen:0.6.4-7.6.0",
+    "ldap_image": "docker.io/bitnamilegacy/openldap:2.6.10",
+    "keycloak_image": "quay.io/keycloak/keycloak:26.0",
+    "c3_gateway_image": "registry.access.redhat.com/ubi9/nginx-124:latest"
+  },
+  "flink": {
+    "cmf_chart_version": "2.4.2",
+    "operator_chart_version": "1.150.3",
+    "cert_manager_version": "v1.18.2",
+    "application_image": "confluentinc/cp-flink:2.0.2-cp3",
+    "sql_image": "confluentinc/cp-flink-sql:1.19-cp11"
+  }
+}

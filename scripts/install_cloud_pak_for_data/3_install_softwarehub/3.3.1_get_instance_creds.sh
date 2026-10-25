@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # source "${SCRIPT_DIR}/../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 
 # ---
 eval "${CPDM_OC_LOGIN}"
@@ -38,16 +39,11 @@ export CPD_PASSWORD="${CPD_PASSWORD}"
 EOF
 
 echo "[INFO] Generating CPD bearer token..."
-CPD_BEARER_TOKEN="$(curl -k -s -X POST \
-  "${CPD_URL}/icp4d-api/v1/authorize" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"${CPD_USERNAME}\",\"password\":\"${CPD_PASSWORD}\"}" \
-  | tr ',' '\n' | grep '"token"' | grep -oE '"token":"[^"]+"' | cut -d'"' -f4 || true)"
-
-if [[ -z "${CPD_BEARER_TOKEN}" ]]; then
+if ! cpdapi_login "${CPD_URL}" "${CPD_USERNAME}" password "${CPD_PASSWORD}"; then
   echo "[ERROR] Failed to retrieve CPD bearer token" >&2
   exit 1
 fi
+CPD_BEARER_TOKEN="${CPDAPI_TOKEN}"
 
 echo "[INFO] Generating CPD API key..."
 CPD_APIKEY="$(curl -k -s -X GET \

@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - collect instance details
@@ -45,13 +46,7 @@ fi
 # details script: without it a missing route makes the [[ ]] the function's exit
 # status, and under `set -e` the caller dies mid-heredoc, silently truncating
 # the generated file.
-route_url() {
-    local name="$1" host
-    host="$(oc get route "${name}" -n "${NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-    [[ -n "${host}" ]] && echo "https://${host}"
-    return 0
-}
-FLINK_CMF_EXTERNAL_URL="$(route_url cmf)"
+FLINK_CMF_EXTERNAL_URL="$(cf_route_url "${NS}" cmf)"
 
 # ------------------------------------------------------------------------------
 # Deployed versions, read from the running images rather than the config, so the

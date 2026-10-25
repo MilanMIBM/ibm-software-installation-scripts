@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 
 # Gives every OpenShift user who is an admin on the cluster the same access as
 # REFERENCE_USER (cpadmin), in two places:
@@ -114,33 +115,14 @@ echo "[INFO] OpenShift admins to grant ${REFERENCE_USER}'s access to:"
 printf '         %s\n' "${ADMIN_USERS[@]}"
 
 # --- 1. Software Hub roles ----------------------------------------------------
-TOKEN="$(curl -k -s -X POST "${CPD_URL}/icp4d-api/v1/authorize" \
-    -H "Content-Type: application/json" \
-    -d "{\"username\":\"${CPD_USERNAME}\",\"password\":\"${CPD_PASSWORD}\"}" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)"
-
-if [[ -z "${TOKEN}" ]]; then
+if ! cpdapi_login "${CPD_URL}" "${CPD_USERNAME}" password "${CPD_PASSWORD}"; then
     echo "[ERROR] Could not get a Software Hub token for ${CPD_USERNAME} at ${CPD_URL}." >&2
     exit 1
 fi
 
-# Usage: cpd_api METHOD PATH [JSON_BODY]. Sets API_CODE and API_BODY.
-cpd_api() {
-    local _resp _data=()
-    [[ -n "${3:-}" ]] && _data=(-d "$3")
-    _resp="$(curl -k -s -X "$1" "${CPD_URL}$2" \
-        -H "Authorization: Bearer ${TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${_data[@]}" \
-        -w '\n%{http_code}')"
-    API_CODE="${_resp##*$'\n'}"
-    API_BODY="${_resp%$'\n'*}"
-}
-
-urlencode() { python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
 json_roles() { print -r -- "$1" | python3 -c 'import sys,json; print(" ".join(json.load(sys.stdin).get("user_roles") or []))'; }
 
-cpd_api GET "/usermgmt/v1/user/$(urlencode "${REFERENCE_USER}")"
+cpdapi GET "/usermgmt/v1/user/$(cpdapi_urlencode "${REFERENCE_USER}")"
 if [[ "${API_CODE}" != 200 ]]; then
     echo "[ERROR] Could not read Software Hub user '${REFERENCE_USER}' (HTTP ${API_CODE}): ${API_BODY}" >&2
     exit 1
@@ -150,7 +132,7 @@ echo "[INFO] ${REFERENCE_USER} Software Hub roles: ${REF_ROLES[*]}"
 
 FAILED=()
 for _user in "${ADMIN_USERS[@]}"; do
-    cpd_api GET "/usermgmt/v1/user/$(urlencode "${_user}")"
+    cpdapi GET "/usermgmt/v1/user/$(cpdapi_urlencode "${_user}")"
 
     if [[ "${API_CODE}" == 200 ]]; then
         _current=(${=$(json_roles "${API_BODY}")})
@@ -162,14 +144,14 @@ for _user in "${ADMIN_USERS[@]}"; do
         _body="$(python3 -c 'import json,sys; print(json.dumps({"user_roles": sys.argv[1:]}))' "${_current[@]}" "${_missing[@]}")"
         echo "[INFO] ${_user}: adding Software Hub roles ${_missing[*]}"
         [[ "${DRY_RUN}" == true ]] && continue
-        cpd_api PUT "/usermgmt/v1/user/$(urlencode "${_user}")" "${_body}"
+        cpdapi PUT "/usermgmt/v1/user/$(cpdapi_urlencode "${_user}")" "${_body}"
 
     elif [[ "${API_CODE}" == 404 ]]; then
         # Same shape as the records Software Hub creates for cpadmin/kubeadmin.
         _body="$(python3 -c 'import json,sys; u=sys.argv[1]; print(json.dumps({"username": u, "displayName": u, "email": u, "authenticator": "external", "user_roles": sys.argv[2:]}))' "${_user}" "${REF_ROLES[@]}")"
         echo "[INFO] ${_user}: not in Software Hub yet, adding with roles ${REF_ROLES[*]}"
         [[ "${DRY_RUN}" == true ]] && continue
-        cpd_api POST "/usermgmt/v1/user" "${_body}"
+        cpdapi POST "/usermgmt/v1/user" "${_body}"
 
     else
         echo "[ERROR] ${_user}: could not look up Software Hub user (HTTP ${API_CODE}): ${API_BODY}" >&2

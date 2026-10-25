@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 # configs/cp4d_config/cpd_vars.sh sets its own SCRIPT_DIR, so keep this script's folder separately.
 HERE="${0:A:h}"
 
@@ -104,12 +105,9 @@ saved_key() {
 
 # 0: the key signs in. 1: Software Hub rejected it. 2: couldn't tell (Software Hub unreachable or erroring).
 key_works() {
-  local _code
-  _code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "${CPD_BASE}/icp4d-api/v1/authorize" \
-    -H 'Content-Type: application/json' \
-    -d "$(python3 -c 'import sys,json; print(json.dumps({"username": sys.argv[1], "api_key": sys.argv[2]}))' "$1" "$2")" || true)"
-  [[ "${_code}" == 200 ]] && return 0
-  [[ "${_code}" == 4* ]] && return 1
+  cpdapi_authorize "${CPD_BASE}" "$1" api_key "$2"
+  [[ "${API_CODE}" == 200 ]] && return 0
+  [[ "${API_CODE}" == 4* ]] && return 1
   return 2
 }
 

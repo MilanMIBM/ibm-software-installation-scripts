@@ -2,6 +2,8 @@
 # mirroring 0_confluent_prepare_template_config.sh and
 # install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh.
 
+from src.helpers.version_catalog import catalog_value
+
 # ------------------------------------------------------------------------------
 # T-shirt sizes (shared by the Confluent and Flink templating scripts)
 # ------------------------------------------------------------------------------
@@ -232,16 +234,16 @@ default_confluent_cluster_setup = [
 ]
 
 default_confluent_images = [
-    {"key": "CONFLUENT_VERSION", "value": "8.2.0"},
+    {"key": "CONFLUENT_VERSION", "value": catalog_value("confluent/version")},
     {"key": "CONFLUENT_REGISTRY", "value": "docker.io/confluentinc"},
     {
         "key": "CONFLUENT_CONNECT_IMAGE",
-        "value": "docker.io/cnfldemos/cp-server-connect-datagen:0.6.4-7.6.0",
+        "value": catalog_value("confluent/connect_image"),
     },
     {"key": "CONFLUENT_REGISTRY_USER", "value": ""},
     {"key": "CONFLUENT_REGISTRY_PASSWORD", "value": ""},
     {"key": "CONFLUENT_PULL_SECRET", "value": "confluent-registry"},
-    {"key": "CONFLUENT_C3_VERSION", "value": "2.5.0"},
+    {"key": "CONFLUENT_C3_VERSION", "value": catalog_value("confluent/c3_version")},
 ]
 
 default_confluent_component_toggles = [
@@ -315,7 +317,7 @@ default_confluent_mds = [
 ]
 
 default_confluent_ldap = [
-    {"key": "CONFLUENT_LDAP_IMAGE", "value": "docker.io/bitnamilegacy/openldap:2.6.10"},
+    {"key": "CONFLUENT_LDAP_IMAGE", "value": catalog_value("confluent/ldap_image")},
     {"key": "CONFLUENT_LDAP_PORT", "value": "1389"},
     {"key": "CONFLUENT_LDAP_DOMAIN", "value": "confluent.io"},
     {"key": "CONFLUENT_LDAP_ADMIN_USER", "value": "admin"},
@@ -323,7 +325,7 @@ default_confluent_ldap = [
 ]
 
 default_confluent_oauth = [
-    {"key": "CONFLUENT_KEYCLOAK_IMAGE", "value": "quay.io/keycloak/keycloak:26.0"},
+    {"key": "CONFLUENT_KEYCLOAK_IMAGE", "value": catalog_value("confluent/keycloak_image")},
     {"key": "CONFLUENT_KEYCLOAK_PORT", "value": "8080"},
     {"key": "CONFLUENT_KEYCLOAK_REALM", "value": "confluent"},
     {"key": "CONFLUENT_KEYCLOAK_CLIENT_ID", "value": "confluent-cli"},
@@ -359,22 +361,22 @@ default_flink_project_and_storage = [
 default_flink_helm = [
     {"key": "FLINK_HELM_REPO_NAME", "value": "confluentinc"},
     {"key": "FLINK_HELM_REPO_URL", "value": "https://packages.confluent.io/helm"},
-    {"key": "FLINK_CMF_CHART_VERSION", "value": "2.4.2"},
-    {"key": "FLINK_OPERATOR_CHART_VERSION", "value": "1.150.3"},
+    {"key": "FLINK_CMF_CHART_VERSION", "value": catalog_value("flink/cmf_chart_version")},
+    {"key": "FLINK_OPERATOR_CHART_VERSION", "value": catalog_value("flink/operator_chart_version")},
     {"key": "FLINK_CMF_RELEASE_NAME", "value": "cmf"},
     {"key": "FLINK_OPERATOR_RELEASE_NAME", "value": "cp-flink-kubernetes-operator"},
 ]
 
 default_flink_images = [
     {"key": "FLINK_IMAGE_REGISTRY", "value": ""},  # empty = chart default
-    {"key": "FLINK_APPLICATION_IMAGE", "value": "confluentinc/cp-flink:2.0.2-cp3"},
-    {"key": "FLINK_SQL_IMAGE", "value": "confluentinc/cp-flink-sql:1.19-cp11"},
+    {"key": "FLINK_APPLICATION_IMAGE", "value": catalog_value("flink/application_image")},
+    {"key": "FLINK_SQL_IMAGE", "value": catalog_value("flink/sql_image")},
     {"key": "FLINK_APPLICATION_VERSION", "value": "v2_0"},
     {"key": "FLINK_SQL_VERSION", "value": "v1_19"},
 ]
 
 default_flink_cert_manager = [
-    {"key": "FLINK_CERT_MANAGER_VERSION", "value": "v1.18.2"},
+    {"key": "FLINK_CERT_MANAGER_VERSION", "value": catalog_value("flink/cert_manager_version")},
     {"key": "FLINK_CERT_MANAGER_NAMESPACE", "value": "cert-manager"},
 ]
 

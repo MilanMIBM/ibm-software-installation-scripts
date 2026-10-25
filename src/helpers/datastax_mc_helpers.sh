@@ -15,13 +15,15 @@
 _MC_HELPERS_LOADED=1
 
 autoload -Uz is-at-least
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/cli_install_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
-mc_info()  { print -r -- "[INFO] $*"; }
-mc_warn()  { print -r -- "[WARN] $*" >&2; }
-mc_error() { print -r -- "[ERROR] $*" >&2; }
-mc_die()   { mc_error "$@"; exit 1; }
-
-mc_is_true() { [[ "${1:-}" == ([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Yy]|1) ]]; }
+mc_info()  { h_info "$@"; }
+mc_warn()  { h_warn "$@"; }
+mc_error() { h_error "$@"; }
+mc_die()   { h_die "$@"; }
+mc_is_true() { h_is_true "$@"; }
 
 # Downloaded tools (pinned helm) and rendered scratch files. Gitignored.
 export MC_WORKSPACE="${MC_WORKSPACE:-${_CP4D_REPO_ROOT}/datastax_mc_workspace}"
@@ -36,11 +38,7 @@ fi
 export MC_VALUES_SRC_DIR="${_CP4D_REPO_ROOT}/src/helpers/datastax_mc_helm_values_templates"
 
 mc_require_vars() {
-    local v missing=()
-    for v in "$@"; do
-        [[ -n "${(P)v:-}" ]] || missing+=("${v}")
-    done
-    (( ${#missing} == 0 )) || mc_die "Not set in datastax_mc_vars.sh: ${missing[*]}"
+    h_missing_vars "$@" || mc_die "Not set in datastax_mc_vars.sh: ${REPLY}"
 }
 
 # The config must be the DataStax MC one - never fall back to cpd_vars.sh,
@@ -63,9 +61,11 @@ mc_require_config() {
 }
 
 # -----------------------------------------------------------------------------
-# Helm: DataStax supports Helm 3.14.0 - 3.18.x only. A helm on PATH in that
+# Helm: DataStax supports Helm 3.14.0 - 3.18.x only (version_catalog.json
+# helm/mission_control_*, read once into MC_HELM_MIN / MC_HELM_MAX). A helm on PATH in that
 # range is used as is; otherwise MC_HELM_VERSION is downloaded (checksum
-# verified) into ${MC_WORKSPACE}/tools/. Sets and exports MC_HELM.
+# verified, by src/utilities/cli_tool_utils/install_helm.sh) into
+# ${MC_WORKSPACE}/tools/, which stays off PATH. Sets and exports MC_HELM.
 # -----------------------------------------------------------------------------
 mc_helm_version_of() {
     "$1" version --template '{{.Version}}' 2>/dev/null | sed 's/^v//'
@@ -73,7 +73,8 @@ mc_helm_version_of() {
 
 mc_helm_version_ok() {
     local v="$1"
-    [[ -n "${v}" ]] && is-at-least 3.14.0 "${v}" && ! is-at-least 3.19.0 "${v}"
+    : "${MC_HELM_MIN:=$(vr_catalog helm/mission_control_min)}" "${MC_HELM_MAX:=$(vr_catalog helm/mission_control_max_exclusive)}"
+    [[ -n "${v}" ]] && is-at-least "${MC_HELM_MIN}" "${v}" && ! is-at-least "${MC_HELM_MAX}" "${v}"
 }
 
 mc_ensure_helm() {
@@ -89,44 +90,19 @@ mc_ensure_helm() {
             export MC_HELM="${path_helm}"
             return 0
         fi
-        mc_info "helm on PATH is ${path_ver:-unknown}; Mission Control needs 3.14.0 - 3.18.x. Using a pinned ${MC_HELM_VERSION:-v3.18.4}."
+        mc_info "helm on PATH is ${path_ver:-unknown}; Mission Control needs ${MC_HELM_MIN} up to (not incl.) ${MC_HELM_MAX}. Using a pinned ${MC_HELM_VERSION:-$(vr_catalog helm/pinned_version)}."
     fi
 
-    local ver="${MC_HELM_VERSION:-v3.18.4}"
-    local os arch
-    case "$(uname -s)" in
-        Darwin) os=darwin ;;
-        Linux)  os=linux ;;
-        *) mc_die "Unsupported OS for the helm download: $(uname -s)" ;;
-    esac
-    case "$(uname -m)" in
-        x86_64|amd64)  arch=amd64 ;;
-        arm64|aarch64) arch=arm64 ;;
-        ppc64le)       arch=ppc64le ;;
-        s390x)         arch=s390x ;;
-        *) mc_die "Unsupported CPU for the helm download: $(uname -m)" ;;
-    esac
+    local ver="v${${MC_HELM_VERSION:-$(vr_catalog helm/pinned_version)}#v}" os arch
+    os="$(cli_os)" && arch="$(cli_arch)" || mc_die "No helm download for this platform."
 
     local dir="${MC_WORKSPACE}/tools/helm-${ver}-${os}-${arch}"
-    local bin="${dir}/helm"
+    local bin="${dir}/helm$(cli_exe_suffix)"
     if [[ ! -x "${bin}" ]]; then
-        local tgz="helm-${ver}-${os}-${arch}.tar.gz"
-        local tmp; tmp="$(mktemp -d)"
         mc_info "Downloading helm ${ver} (${os}-${arch})..."
-        curl -fsSL -o "${tmp}/${tgz}" "https://get.helm.sh/${tgz}" || { rm -rf "${tmp}"; mc_die "helm download failed."; }
-        local expected actual
-        expected="$(curl -fsSL "https://get.helm.sh/${tgz}.sha256sum" | awk '{print $1}')"
-        actual="$(shasum -a 256 "${tmp}/${tgz}" 2>/dev/null | awk '{print $1}')"
-        [[ -z "${actual}" ]] && actual="$(sha256sum "${tmp}/${tgz}" | awk '{print $1}')"
-        if [[ -z "${expected}" || "${expected}" != "${actual}" ]]; then
-            rm -rf "${tmp}"
-            mc_die "helm ${ver} checksum mismatch (expected '${expected}', got '${actual}')."
-        fi
-        mkdir -p "${dir}"
-        tar -xzf "${tmp}/${tgz}" -C "${tmp}"
-        mv "${tmp}/${os}-${arch}/helm" "${bin}"
-        chmod +x "${bin}"
-        rm -rf "${tmp}"
+        zsh "${_CP4D_REPO_ROOT}/src/utilities/cli_tool_utils/install_helm.sh" \
+            --version "${ver}" --dir "${dir}" --force --yes --no-path-check \
+            || mc_die "helm ${ver} download failed."
     fi
     export MC_HELM="${bin}"
 }
@@ -180,9 +156,7 @@ mc_yaml_str() {
     MC_V="$1" python3 -c 'import json, os; print(json.dumps(os.environ["MC_V"]))'
 }
 
-mc_random_password() {
-    python3 -c 'import secrets, string, sys; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(int(sys.argv[1]))))' "${1:-24}"
-}
+mc_random_password() { h_random_password "$@"; }
 
 # -----------------------------------------------------------------------------
 # mc_resolve_datacenter [project] [datacenter-cr]

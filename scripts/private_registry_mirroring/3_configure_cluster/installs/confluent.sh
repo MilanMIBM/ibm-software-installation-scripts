@@ -18,7 +18,7 @@ PULL_PREFIX="${MIRROR_INSTALL_PULL_PREFIX:?no registry configured}"
 PUSH_PREFIX="${MIRROR_INSTALL_PUSH_PREFIX:?no registry configured}"
 REG="${CONFLUENT_REGISTRY:-docker.io/confluentinc}"
 CPV="${CONFLUENT_VERSION:-}"
-C3V="${CONFLUENT_C3_VERSION:-2.5.0}"
+C3V="${CONFLUENT_C3_VERSION:-$(vr_catalog confluent/c3_version)}"
 
 case "${1:-}" in
 tap)
@@ -46,9 +46,9 @@ tap)
         img CONFLUENT_CONTROL_CENTER_IMAGE "${CONFLUENT_CONTROL_CENTER_IMAGE:-${REG}/cp-enterprise-control-center-next-gen:${C3V}}"
         img CONFLUENT_PROMETHEUS_IMAGE "${CONFLUENT_PROMETHEUS_IMAGE:-${REG}/cp-enterprise-prometheus:${C3V}}"
         img CONFLUENT_ALERTMANAGER_IMAGE "${CONFLUENT_ALERTMANAGER_IMAGE:-${REG}/cp-enterprise-alertmanager:${C3V}}"
-        img CONFLUENT_C3_GATEWAY_IMAGE "${CONFLUENT_C3_GATEWAY_IMAGE:-registry.access.redhat.com/ubi9/nginx-124:latest}"
-        img CONFLUENT_LDAP_IMAGE "${CONFLUENT_LDAP_IMAGE:-docker.io/bitnamilegacy/openldap:2.6.10}"
-        img CONFLUENT_KEYCLOAK_IMAGE "${CONFLUENT_KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.0}"
+        img CONFLUENT_C3_GATEWAY_IMAGE "${CONFLUENT_C3_GATEWAY_IMAGE:-$(vr_catalog confluent/c3_gateway_image)}"
+        img CONFLUENT_LDAP_IMAGE "${CONFLUENT_LDAP_IMAGE:-$(vr_catalog confluent/ldap_image)}"
+        img CONFLUENT_KEYCLOAK_IMAGE "${CONFLUENT_KEYCLOAK_IMAGE:-$(vr_catalog confluent/keycloak_image)}"
         img FLINK_APPLICATION_IMAGE "${FLINK_APPLICATION_IMAGE:-}"
         img FLINK_SQL_IMAGE "${FLINK_SQL_IMAGE:-}"
         # The Flink charts take a repository prefix for their own images.

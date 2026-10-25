@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - collect instance details
@@ -38,15 +39,6 @@ fi
 # ------------------------------------------------------------------------------
 # route_url <name> - external https URL for a route, empty if absent.
 # ------------------------------------------------------------------------------
-route_url() {
-    local name="$1" host
-    host="$(oc get route "${name}" -n "${NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-    # The trailing 'return 0' matters: without it a missing route makes the
-    # [[ ]] test the function's exit status, and under `set -e` the caller dies
-    # mid-heredoc, silently truncating the generated file.
-    [[ -n "${host}" ]] && echo "https://${host}"
-    return 0
-}
 
 # ------------------------------------------------------------------------------
 # svc_url <name> <port> - in-cluster URL, only if the service exists.
@@ -70,12 +62,12 @@ CONFLUENT_KSQLDB_INTERNAL_URL="$(svc_url ksqldb-server "${CONFLUENT_KSQLDB_PORT}
 CONFLUENT_REST_PROXY_INTERNAL_URL="$(svc_url rest-proxy "${CONFLUENT_REST_PROXY_PORT}")"
 CONFLUENT_CONTROL_CENTER_INTERNAL_URL="$(svc_url control-center "${CONFLUENT_CONTROL_CENTER_PORT}")"
 
-CONFLUENT_SCHEMA_REGISTRY_URL="$(route_url schema-registry)"
-CONFLUENT_CONNECT_URL="$(route_url connect)"
-CONFLUENT_KSQLDB_URL="$(route_url ksqldb-server)"
-CONFLUENT_REST_PROXY_URL="$(route_url rest-proxy)"
-CONFLUENT_CONTROL_CENTER_URL="$(route_url control-center)"
-CONFLUENT_MDS_URL="$(route_url mds)"
+CONFLUENT_SCHEMA_REGISTRY_URL="$(cf_route_url "${NS}" schema-registry)"
+CONFLUENT_CONNECT_URL="$(cf_route_url "${NS}" connect)"
+CONFLUENT_KSQLDB_URL="$(cf_route_url "${NS}" ksqldb-server)"
+CONFLUENT_REST_PROXY_URL="$(cf_route_url "${NS}" rest-proxy)"
+CONFLUENT_CONTROL_CENTER_URL="$(cf_route_url "${NS}" control-center)"
+CONFLUENT_MDS_URL="$(cf_route_url "${NS}" mds)"
 
 # External Kafka bootstrap: the per-broker passthrough routes created by
 # x.4_confluent_add_external_access.sh, joined into one bootstrap string.

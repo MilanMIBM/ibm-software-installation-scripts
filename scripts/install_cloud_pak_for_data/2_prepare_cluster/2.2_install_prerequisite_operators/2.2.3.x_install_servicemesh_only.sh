@@ -13,6 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
 eval "${OC_LOGIN}"
 
@@ -21,7 +22,6 @@ NAMESPACE="openshift-operators"
 # Service Mesh version to install: 2 or 3. Defaults to 3 for CP4D 5.4.0+ and 2 for
 # earlier releases; export SERVICE_MESH_VERSION to override.
 SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-$(cp4d_default_service_mesh_version)}"
-CHANNEL="stable"
 TIMEOUT=300
 
 case "${SERVICE_MESH_VERSION}" in
@@ -32,6 +32,8 @@ case "${SERVICE_MESH_VERSION}" in
     exit 1
     ;;
 esac
+# The catalog's default channel (PackageManifest); "stable" when it cannot be read.
+CHANNEL="$(vr_operator_channel "${SM_OPERATOR}")"
 
 echo "[INFO] Installing Red Hat OpenShift Service Mesh ${SERVICE_MESH_VERSION} (${SM_OPERATOR})..."
 

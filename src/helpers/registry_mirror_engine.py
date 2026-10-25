@@ -814,29 +814,22 @@ PATCH_KEYS = ("case_version", "csv_version", "cr_version", "sub_channel")
 
 def _patch_meta(path):
     """patch_components_meta of cpd-cli's patch-<release>-<n>.yaml as {component: {key: value}};
-    scalar keys only (list items such as block_upgrade_patch are skipped)."""
-    meta, comp, inside = {}, None, False
-    with open(path) as fh:
-        for raw in fh:
-            line = raw.rstrip()
-            text = line.strip()
-            if not text or text.startswith("#"):
-                continue
-            ind = len(line) - len(line.lstrip())
-            if ind == 0:
-                inside, comp = text == "patch_components_meta:", None
-                continue
-            if not inside or text.startswith("-"):
-                continue
-            key, _, val = text.partition(":")
-            val = val.strip().strip("'\"")
-            if ind == 2:
-                comp = key
-                meta.setdefault(comp, {})
-            elif ind == 4 and comp and val:
-                meta[comp][key] = val
-    meta.pop("patch_info", None)
-    return meta
+    scalar keys only (list items such as block_upgrade_patch are skipped). Read by
+    cpd_release_meta.py; the parser this used before is the fallback."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import cpd_release_meta
+        meta = cpd_release_meta.section_from_file(path, "patch_components_meta")
+        meta.pop("patch_info", None)
+        if meta:
+            return meta
+        reason = "no patch_components_meta found"
+    except Exception as exc:  # any failure of the new reader -> legacy parser
+        reason = str(exc)
+    import legacy_version_resolution
+    print(f"[WARN] {os.path.basename(path)}: cpd_release_meta could not read it ({reason}); using the legacy parser",
+          file=sys.stderr)
+    return legacy_version_resolution.legacy_patch_meta(path)
 
 
 def cmd_patch_diff(a):

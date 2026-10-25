@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - uninstall
@@ -115,13 +116,7 @@ fi
 # ------------------------------------------------------------------------------
 # run <cmd...> - executes, or just prints under --dry-run.
 # ------------------------------------------------------------------------------
-run() {
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        echo "  [DRY-RUN] $*"
-    else
-        "$@" 2>/dev/null || true
-    fi
-}
+run() { cf_dry_run --ignore-errors "$@"; }
 
 # ------------------------------------------------------------------------------
 # Report what is about to go, then confirm

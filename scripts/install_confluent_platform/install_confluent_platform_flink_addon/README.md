@@ -22,7 +22,7 @@ so it can be added and removed without touching the Kafka cluster.
 
 ## Prerequisites
 
-- `helm` 3+ and the `confluent` CLI v4+ on PATH (`brew install helm confluentinc/tap/cli`)
+- `helm` 3+ and the `confluent` CLI v4+ on PATH (`brew install helm confluentinc/tap/cli`; `1.0_flink_prep.sh` offers `src/utilities/cli_tool_utils/install_helm.sh` when helm is missing)
 - Cluster-admin for the first install (CRDs, cert-manager, SCC binding). `1.0` checks this and says so up front.
 - A ReadWriteMany storage class for checkpoints (`STG_CLASS_FILE`), or an S3 bucket
 

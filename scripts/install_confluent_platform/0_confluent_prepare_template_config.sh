@@ -8,6 +8,8 @@ SECONDS=0
 trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${SCRIPT_DIR}/../../src/helpers/common_helpers.sh"
+source "${SCRIPT_DIR}/../../src/helpers/version_resolver.sh"
 
 # ==============================================================================
 # Confluent Platform - template the sizing block in confluent_vars.sh
@@ -117,12 +119,6 @@ STORAGE_CLASS_OVERRIDE=""
 CLUSTER_ID_OVERRIDE=""
 typeset -A OVERRIDE
 
-# A flag's value must exist and must not itself look like a flag, otherwise
-# "--brokers --dry-run" would silently consume the next option as a value.
-_need_value() {
-    [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }
-}
-
 # Accepts true/false/yes/no/1/0 for boolean-style flags.
 _parse_bool() {
     case "${2:l}" in
@@ -134,22 +130,22 @@ _parse_bool() {
 
 while (( $# > 0 )); do
     case "$1" in
-        --size)                   _need_value "$1" "${2:-}"; SIZE="$2"; shift 2 ;;
-        --brokers)                _need_value "$1" "${2:-}"; OVERRIDE[BROKERS]="$2"; shift 2 ;;
-        --replication-factor)     _need_value "$1" "${2:-}"; OVERRIDE[RF]="$2"; shift 2 ;;
-        --partitions)             _need_value "$1" "${2:-}"; OVERRIDE[PARTITIONS]="$2"; shift 2 ;;
-        --storage)                _need_value "$1" "${2:-}"; OVERRIDE[STORAGE]="$2"; shift 2 ;;
-        --storage-class)          _need_value "$1" "${2:-}"; STORAGE_CLASS_OVERRIDE="$2"; shift 2 ;;
-        --broker-cpu-request)     _need_value "$1" "${2:-}"; OVERRIDE[B_CPU_REQ]="$2"; shift 2 ;;
-        --broker-cpu-limit)       _need_value "$1" "${2:-}"; OVERRIDE[B_CPU_LIM]="$2"; shift 2 ;;
-        --broker-mem-request)     _need_value "$1" "${2:-}"; OVERRIDE[B_MEM_REQ]="$2"; shift 2 ;;
-        --broker-mem-limit)       _need_value "$1" "${2:-}"; OVERRIDE[B_MEM_LIM]="$2"; shift 2 ;;
-        --component-cpu-request)  _need_value "$1" "${2:-}"; OVERRIDE[C_CPU_REQ]="$2"; shift 2 ;;
-        --component-cpu-limit)    _need_value "$1" "${2:-}"; OVERRIDE[C_CPU_LIM]="$2"; shift 2 ;;
-        --component-mem-request)  _need_value "$1" "${2:-}"; OVERRIDE[C_MEM_REQ]="$2"; shift 2 ;;
-        --component-mem-limit)    _need_value "$1" "${2:-}"; OVERRIDE[C_MEM_LIM]="$2"; shift 2 ;;
-        --cluster-id)             _need_value "$1" "${2:-}"; CLUSTER_ID_OVERRIDE="$2"; shift 2 ;;
-        --overwrite-cluster-id)   _need_value "$1" "${2:-}"; REGEN_ID="$(_parse_bool "$1" "$2")"; shift 2 ;;
+        --size)                   h_need_value "$1" "${2:-}"; SIZE="$2"; shift 2 ;;
+        --brokers)                h_need_value "$1" "${2:-}"; OVERRIDE[BROKERS]="$2"; shift 2 ;;
+        --replication-factor)     h_need_value "$1" "${2:-}"; OVERRIDE[RF]="$2"; shift 2 ;;
+        --partitions)             h_need_value "$1" "${2:-}"; OVERRIDE[PARTITIONS]="$2"; shift 2 ;;
+        --storage)                h_need_value "$1" "${2:-}"; OVERRIDE[STORAGE]="$2"; shift 2 ;;
+        --storage-class)          h_need_value "$1" "${2:-}"; STORAGE_CLASS_OVERRIDE="$2"; shift 2 ;;
+        --broker-cpu-request)     h_need_value "$1" "${2:-}"; OVERRIDE[B_CPU_REQ]="$2"; shift 2 ;;
+        --broker-cpu-limit)       h_need_value "$1" "${2:-}"; OVERRIDE[B_CPU_LIM]="$2"; shift 2 ;;
+        --broker-mem-request)     h_need_value "$1" "${2:-}"; OVERRIDE[B_MEM_REQ]="$2"; shift 2 ;;
+        --broker-mem-limit)       h_need_value "$1" "${2:-}"; OVERRIDE[B_MEM_LIM]="$2"; shift 2 ;;
+        --component-cpu-request)  h_need_value "$1" "${2:-}"; OVERRIDE[C_CPU_REQ]="$2"; shift 2 ;;
+        --component-cpu-limit)    h_need_value "$1" "${2:-}"; OVERRIDE[C_CPU_LIM]="$2"; shift 2 ;;
+        --component-mem-request)  h_need_value "$1" "${2:-}"; OVERRIDE[C_MEM_REQ]="$2"; shift 2 ;;
+        --component-mem-limit)    h_need_value "$1" "${2:-}"; OVERRIDE[C_MEM_LIM]="$2"; shift 2 ;;
+        --cluster-id)             h_need_value "$1" "${2:-}"; CLUSTER_ID_OVERRIDE="$2"; shift 2 ;;
+        --overwrite-cluster-id)   h_need_value "$1" "${2:-}"; REGEN_ID="$(_parse_bool "$1" "$2")"; shift 2 ;;
         --regenerate-cluster-id)  REGEN_ID=true; shift ;;
         --dry-run)                DRY_RUN=true; shift ;;
         -h|--help)                usage; exit 0 ;;
@@ -294,12 +290,19 @@ fi
 # absent is appended once, with its default; values already present are left
 # exactly as they are, so hand edits survive.
 # ------------------------------------------------------------------------------
+# Version and image defaults come from src/helpers/version_catalog.json (the
+# literals these entries carried before, when it cannot be read).
+_cat_version="$(vr_catalog confluent/version)"
+_cat_connect="$(vr_catalog confluent/connect_image)"
+_cat_ldap="$(vr_catalog confluent/ldap_image)"
+_cat_keycloak="$(vr_catalog confluent/keycloak_image)"
+_cat_c3="$(vr_catalog confluent/c3_version)"
 _platform_defaults=(
-    'CONFLUENT_VERSION|8.2.0|# ---- Images ------------------------------------------------------------------
+    "CONFLUENT_VERSION|${_cat_version}|"'# ---- Images ------------------------------------------------------------------
 # Tag applied to every confluentinc/cp-* image. "latest" tracks the newest but rely on a named versiion like 8.2.0
 # published build; pin a version (7.5.0, 8.0.0, ...) for a reproducible install.'
     'CONFLUENT_REGISTRY|docker.io/confluentinc|# Registry the cp-* images are pulled from. Override for an air-gapped mirror.'
-    'CONFLUENT_CONNECT_IMAGE|docker.io/cnfldemos/cp-server-connect-datagen:0.6.4-7.6.0|# The Connect image ships from a separate org with the datagen connector baked
+    "CONFLUENT_CONNECT_IMAGE|${_cat_connect}|"'# The Connect image ships from a separate org with the datagen connector baked
 # in. It publishes NO "latest" tag - every tag is <datagen-version>-<cp-version>
 # - so it is pinned independently of CONFLUENT_VERSION and bumped by hand.
 #
@@ -396,12 +399,12 @@ _platform_defaults=(
 # account you use for the first \"confluent login\".'
     'CONFLUENT_MDS_USERS|kafka-admin,kafka-user|# Comma-separated. Created in the user store with a generated password each.'
     'CONFLUENT_LICENSE_KEY||# Confluent commercial license. Empty = 30-day trial for MDS/RBAC and C3.'
-    'CONFLUENT_LDAP_IMAGE|docker.io/bitnamilegacy/openldap:2.6.10|# ---- Bundled OpenLDAP (CONFLUENT_MDS_USER_STORE=LDAP) ------------------------'
+    "CONFLUENT_LDAP_IMAGE|${_cat_ldap}|"'# ---- Bundled OpenLDAP (CONFLUENT_MDS_USER_STORE=LDAP) ------------------------'
     'CONFLUENT_LDAP_PORT|1389|'
     'CONFLUENT_LDAP_DOMAIN|confluent.io|# Base DN is derived from this: confluent.io -> dc=confluent,dc=io'
     'CONFLUENT_LDAP_ADMIN_USER|admin|'
     'CONFLUENT_LDAP_SECRET|confluent-ldap|'
-    'CONFLUENT_KEYCLOAK_IMAGE|quay.io/keycloak/keycloak:26.0|# ---- Bundled Keycloak (CONFLUENT_MDS_USER_STORE=OAUTH) -----------------------
+    "CONFLUENT_KEYCLOAK_IMAGE|${_cat_keycloak}|"'# ---- Bundled Keycloak (CONFLUENT_MDS_USER_STORE=OAUTH) -----------------------
 # Ignored when CONFLUENT_MDS_OAUTH_JWKS_URL points at an external provider.'
     'CONFLUENT_KEYCLOAK_PORT|8080|'
     'CONFLUENT_KEYCLOAK_REALM|confluent|'
@@ -427,7 +430,7 @@ _platform_defaults=(
     'CONFLUENT_EXTERNAL_KAFKA_PORT|9094|# Container port for the EXTERNAL listener; advertised on 443 via the routes.'
     'CONFLUENT_EXTERNAL_TLS_SECRET|confluent-kafka-tls|# Holds the generated CA plus the per-broker keystore/truststore.'
     'CONFLUENT_EXTERNAL_CERT_VALIDITY_DAYS|825|'
-    'CONFLUENT_C3_VERSION|2.5.0|# ---- Control Center / monitoring ---------------------------------------------
+    "CONFLUENT_C3_VERSION|${_cat_c3}|"'# ---- Control Center / monitoring ---------------------------------------------
 # C3 next-gen and its Prometheus/Alertmanager ship on their own version line,
 # separate from CONFLUENT_VERSION. All three must match.'
     'CONFLUENT_PROMETHEUS_PORT|9090|'

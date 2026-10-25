@@ -32,23 +32,10 @@ DO_ATTACH="${DO_ATTACH:-true}"           # 5.5 attach to the Hub (restarts the H
 DO_STATUS="${DO_STATUS:-true}"           # 5.6 wait until ready
 DO_DETAILS="${DO_DETAILS:-true}"         # 3.4 refresh concert_instance_details.sh (adds the Optimize URL)
 
-run_step() {
-    local enabled="$1" label="$2"
-    shift 2
-    if [[ "${enabled}" != "true" ]]; then
-        echo ""
-        echo "==> Skipping: ${label}"
-        return 0
-    fi
-    echo ""
-    echo "==> Running:  ${label}"
-    "$@"
-}
-
-run_step "${DO_OPERATOR}"   "5.1 Turbonomic operator"         "${SCRIPT_DIR}/5.1_install_turbonomic_operator.sh"
-run_step "${DO_DEPLOY}"     "5.2 deploy Turbonomic"           "${SCRIPT_DIR}/5.2_deploy_turbonomic.sh"
-run_step "${DO_INITIALIZE}" "5.3 administrator and license"   "${SCRIPT_DIR}/5.3_initialize_turbonomic.sh"
-run_step "${DO_GATEWAY}"    "5.4 Concert mode + route"        "${SCRIPT_DIR}/5.4_enable_concert_gateway.sh"
-run_step "${DO_ATTACH}"     "5.5 attach Optimize to the Hub"  "${SCRIPT_DIR}/5.5_attach_optimize_to_hub.sh"
-run_step "${DO_STATUS}"     "5.6 wait for Optimize"           "${SCRIPT_DIR}/5.6_optimize_status.sh" --wait=1800
-run_step "${DO_DETAILS}"    "3.4 instance details"            "${SCRIPT_DIR}/../3_install_concert/3.4_get_instance_details.sh"
+h_run_step "${DO_OPERATOR}"   "5.1 Turbonomic operator"         "${SCRIPT_DIR}/5.1_install_turbonomic_operator.sh"
+h_run_step "${DO_DEPLOY}"     "5.2 deploy Turbonomic"           "${SCRIPT_DIR}/5.2_deploy_turbonomic.sh"
+h_run_step "${DO_INITIALIZE}" "5.3 administrator and license"   "${SCRIPT_DIR}/5.3_initialize_turbonomic.sh"
+h_run_step "${DO_GATEWAY}"    "5.4 Concert mode + route"        "${SCRIPT_DIR}/5.4_enable_concert_gateway.sh"
+h_run_step "${DO_ATTACH}"     "5.5 attach Optimize to the Hub"  "${SCRIPT_DIR}/5.5_attach_optimize_to_hub.sh"
+h_run_step "${DO_STATUS}"     "5.6 wait for Optimize"           "${SCRIPT_DIR}/5.6_optimize_status.sh" --wait=1800
+h_run_step "${DO_DETAILS}"    "3.4 instance details"            "${SCRIPT_DIR}/../3_install_concert/3.4_get_instance_details.sh"

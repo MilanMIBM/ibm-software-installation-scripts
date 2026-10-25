@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - sample jobs
@@ -47,16 +48,12 @@ DELETE=false
 FOLLOW_LOGS=false
 DRY_RUN=false
 
-_need_value() {
-    [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }
-}
-
 while (( $# > 0 )); do
     case "$1" in
         --application) MODE="application"; shift ;;
         --sql)         MODE="sql"; shift ;;
-        --name)        _need_value "$1" "${2:-}"; JOB_NAME="$2"; shift 2 ;;
-        --topic)       _need_value "$1" "${2:-}"; TOPIC="$2"; shift 2 ;;
+        --name)        h_need_value "$1" "${2:-}"; JOB_NAME="$2"; shift 2 ;;
+        --topic)       h_need_value "$1" "${2:-}"; TOPIC="$2"; shift 2 ;;
         --delete)      DELETE=true; shift ;;
         --logs)        FOLLOW_LOGS=true; shift ;;
         --dry-run)     DRY_RUN=true; shift ;;

@@ -91,6 +91,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/ocp_utils_helpers.sh"
 
 # --- Edit these ---------------------------------------------------------------
 # Changing IDP_NAME after users have logged in orphans their identities, so pick
@@ -172,51 +174,10 @@ done
 unset _tool
 
 # --- Log in ---------------------------------------------------------------------
-# Credentials on the command line win. Otherwise OC_LOGIN from cpd_vars.sh, which
-# skips the login when oc is already logged in to OCP_URL. Without either, the
-# current oc session is used as is.
-if [[ -n "${LOGIN_TOKEN}" && -n "${LOGIN_USERNAME}" ]]; then
-    echo "[ERROR] Pass either --token or --username, not both." >&2
-    exit 1
-elif [[ -z "${LOGIN_TOKEN}${LOGIN_USERNAME}" && -n "${LOGIN_SERVER}${LOGIN_PASSWORD}" ]]; then
-    echo "[ERROR] --server and --password need --token or --username." >&2
-    exit 1
-fi
-if [[ -n "${LOGIN_TOKEN}${LOGIN_USERNAME}" ]]; then
-    _login=(oc login)
-    _server="${LOGIN_SERVER:-${OCP_URL:-}}"
-    [[ -n "${_server}" ]] && _login+=(--server="${_server}")
-    if [[ -n "${LOGIN_TOKEN}" ]]; then
-        _login+=(--token="${LOGIN_TOKEN}")
-    else
-        _login+=(--username="${LOGIN_USERNAME}")
-        # Without --password, oc asks for it.
-        [[ -n "${LOGIN_PASSWORD}" ]] && _login+=(--password="${LOGIN_PASSWORD}")
-    fi
-    "${_login[@]}"
-    unset _login _server
-elif [[ -n "${OC_LOGIN:-}" ]]; then
-    eval "${OC_LOGIN}"
-elif ! oc whoami &>/dev/null; then
-    echo "[ERROR] Not logged in. Set OC_LOGIN in cpd_vars.sh, or pass --token or --username." >&2
-    exit 1
-fi
-
-echo "[INFO] Target cluster: $(oc whoami --show-server)"
+ocu_login
 echo "[INFO] Logged in as:   $(oc whoami)"
-
-if [[ "$(oc auth can-i '*' '*' --all-namespaces 2>/dev/null)" != "yes" ]]; then
-    echo "[ERROR] The current user is not a cluster-admin." >&2
-    exit 1
-fi
-
-# ROKS (Red Hat OpenShift on IBM Cloud) manages its own OAuth config and may
-# undo or reject extra identity providers. TechZone's VMware clusters are fine.
-_platform="$(oc get infrastructure cluster -o jsonpath='{.status.platformStatus.type}' 2>/dev/null || true)"
-if [[ "${_platform}" == "IBMCloud" ]]; then
-    echo "[WARN] Platform is IBMCloud (ROKS). Extra identity providers may not stick here."
-fi
-unset _platform
+ocu_require_cluster_admin
+ocu_warn_roks_oauth
 
 _name_re='^[A-Za-z0-9._-]+$'
 if [[ ! "${IDP_NAME}" =~ ${_name_re} ]]; then
@@ -246,39 +207,8 @@ fi
 uri() { jq -rn --arg s "$1" '$s | @uri'; }
 
 # --- Current state ------------------------------------------------------------
-OAUTH_JSON="$(oc get oauth cluster -o json)"
-
-IDP_EXISTS=false
-IDP_MAPPING="claim"
-_idp="$(jq -c --arg n "${IDP_NAME}" \
-    '.spec.identityProviders // [] | map(select(.name == $n)) | first // empty' <<< "${OAUTH_JSON}")"
-if [[ -n "${_idp}" ]]; then
-    IDP_EXISTS=true
-    if [[ "$(jq -r '.type' <<< "${_idp}")" != HTPasswd ]]; then
-        echo "[ERROR] Identity provider '${IDP_NAME}' exists but is not of type HTPasswd." >&2
-        exit 1
-    fi
-    # Its settings are kept. Use the secret it already points at, so the users in
-    # it are merged with this run's users rather than replaced.
-    IDP_MAPPING="$(jq -r '.mappingMethod // "claim"' <<< "${_idp}")"
-    _secret="$(jq -r '.htpasswd.fileData.name' <<< "${_idp}")"
-    if [[ "${_secret}" != "${SECRET_NAME}" ]]; then
-        echo "[INFO] '${IDP_NAME}' already uses secret '${_secret}', updating that one."
-        SECRET_NAME="${_secret}"
-    fi
-fi
-unset _idp _secret
-
-# user -> htpasswd line, as stored in the cluster today.
-typeset -A CURRENT_LINES
-if oc get secret "${SECRET_NAME}" -n openshift-config &>/dev/null; then
-    for _line in ${(f)"$(oc get secret "${SECRET_NAME}" -n openshift-config \
-                            -o jsonpath='{.data.htpasswd}' | base64 -d)"}; do
-        [[ -z "${_line}" ]] && continue
-        CURRENT_LINES[${_line%%:*}]="${_line}"
-    done
-    unset _line
-fi
+htpw_read_idp claim
+htpw_read_lines
 
 # user -> plain-text password, from earlier runs. Lines under a user (the API
 # key written by generate_service_id_cpd_apikeys.sh and its comment) are kept
@@ -359,9 +289,6 @@ fi
 
 # --- Build the new htpasswd file -----------------------------------------------
 # Nothing on the cluster changes until both the users and the login page are ready.
-new_password() {
-    openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-16
-}
 
 typeset -A NEW_LINES
 ISSUED=()
@@ -380,33 +307,12 @@ for _u in "${SERVICE_ID_USERS[@]}"; do
             continue
         fi
     fi
-    _pw="$(new_password)"
-    NEW_LINES[${_u}]="$(htpasswd -nbB -C 10 "${_u}" "${_pw}" | head -n 1)"
-    SAVED_PASSWORDS[${_u}]="${_pw}"
-    ISSUED+=("${_u}")
+    htpw_issue "${_u}"
 done
-unset _u _pw
+unset _u
 
 REMOVED=()
-_others=0
-for _u in "${(@k)CURRENT_LINES}"; do
-    (( ${SERVICE_ID_USERS[(Ie)${_u}]} )) && continue
-    # Accounts without a saved password weren't made by this script and may
-    # belong to another one sharing the secret (people's logins), so they are
-    # always kept.
-    if [[ -z "${SAVED_PASSWORDS[${_u}]+x}" ]]; then
-        NEW_LINES[${_u}]="${CURRENT_LINES[${_u}]}"
-        (( ++_others ))
-    elif [[ "${PRUNE}" == true ]]; then
-        REMOVED+=("${_u}")
-        unset "SAVED_PASSWORDS[${_u}]" "SAVED_EXTRAS[${_u}]"
-    else
-        echo "[WARN] '${_u}' is in the cluster but not among this run's users; kept. Use --prune to remove."
-        NEW_LINES[${_u}]="${CURRENT_LINES[${_u}]}"
-    fi
-done
-(( _others > 0 )) && echo "[INFO] ${_others} other account(s) in the secret, not made by this script, left as is."
-unset _u _others
+htpw_keep_others SERVICE_ID_USERS "among this run's users"
 
 _tmpdir="$(mktemp -d)"
 trap 'rm -rf "${_tmpdir}"' EXIT
@@ -474,9 +380,7 @@ fi
 unset _result _loops _added
 
 # --- Apply the users --------------------------------------------------------------
-oc create secret generic "${SECRET_NAME}" -n openshift-config \
-    --from-file=htpasswd="${_tmpdir}/htpasswd" --dry-run=client -o yaml | oc apply -f - >/dev/null
-echo "[INFO] Secret openshift-config/${SECRET_NAME} holds ${#NEW_LINES} user(s)."
+htpw_apply_secret "${_tmpdir}/htpasswd"
 
 # Save before touching OAuth, so a failure below never loses issued passwords.
 mkdir -p "$(dirname "${CREDENTIALS_FILE}")"
@@ -523,34 +427,10 @@ if [[ -z "${_page_ref}" && "${HIDE_FROM_LOGIN_PAGE}" == true ]]; then
 fi
 
 # --- Identity provider ----------------------------------------------------------
-# Appended with a JSON patch, so the existing providers are never re-sent or touched.
-if [[ "${IDP_EXISTS}" == true ]]; then
-    echo "[INFO] Identity provider '${IDP_NAME}' already exists, left as is."
-else
-    _new_idp="$(jq -cn --arg n "${IDP_NAME}" --arg m "${IDP_MAPPING}" --arg s "${SECRET_NAME}" \
-        '{name: $n, mappingMethod: $m, type: "HTPasswd", htpasswd: {fileData: {name: $s}}}')"
-    if [[ "$(jq -r '.spec.identityProviders | type' <<< "${OAUTH_JSON}")" == array ]]; then
-        oc patch oauth cluster --type=json \
-            -p "[{\"op\":\"add\",\"path\":\"/spec/identityProviders/-\",\"value\":${_new_idp}}]" >/dev/null
-        echo "[INFO] Added identity provider '${IDP_NAME}'. Existing providers kept:"
-        jq -r '.spec.identityProviders[].name | "         - " + .' <<< "${OAUTH_JSON}"
-    else
-        oc patch oauth cluster --type=merge -p "{\"spec\":{\"identityProviders\":[${_new_idp}]}}" >/dev/null
-        echo "[INFO] No identity providers yet, created the list with '${IDP_NAME}'."
-    fi
-    unset _new_idp
-fi
+htpw_add_idp
 
 # --- Remove pruned accounts -----------------------------------------------------
-for _u in "${REMOVED[@]}"; do
-    oc delete identity "${IDP_NAME}:${_u}" --ignore-not-found
-    # Only delete the user if this was their only login.
-    if [[ -z "$(oc get user "${_u}" -o jsonpath='{.identities[*]}' 2>/dev/null)" ]]; then
-        oc delete user "${_u}" --ignore-not-found
-    fi
-    echo "[INFO] Removed '${_u}'."
-done
-unset _u
+htpw_remove_users
 
 # --- OpenShift User objects -----------------------------------------------------
 # Software Hub's IAM only checks a password against OpenShift when an OpenShift
@@ -575,14 +455,7 @@ echo "[INFO] OpenShift User objects: ${_created} created, $(( ${#SERVICE_ID_USER
 unset _u _id _created
 
 # --- Wait for the login pods to pick it up -------------------------------------
-echo "[INFO] Waiting for the authentication operator to roll out (up to ~5 min)..."
-for _i in {1..15}; do
-    [[ "$(oc get co authentication -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}')" == True ]] && break
-    sleep 2
-done
-oc wait co/authentication --for=condition=Progressing=False --timeout=300s >/dev/null \
-    || echo "[WARN] Still rolling out. Check with: oc get co authentication"
-unset _i
+htpw_wait_auth_rollout
 
 # --- Check the login page ---------------------------------------------------------
 # If the page errors or still lists the provider, undo the page change (and the
@@ -638,21 +511,7 @@ unset _code _direct
 # grant_softwarehub_admin_to_ocp_admins.sh does. Everything is read from this
 # cluster: configs/cp4d_config/cpd_instance_details.sh may be for another one.
 SH_URL=""
-SH_TOKEN=""
 SH_FAILED=()
-
-# Usage: sh_api METHOD PATH [JSON_BODY]. Sets API_CODE and API_BODY.
-sh_api() {
-    local _resp _data=()
-    [[ -n "${3:-}" ]] && _data=(-d "$3")
-    _resp="$(curl -k -s -X "$1" "${SH_URL}$2" \
-        -H "Authorization: Bearer ${SH_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${_data[@]}" \
-        -w '\n%{http_code}' || true)"
-    API_CODE="${_resp##*$'\n'}"
-    API_BODY="${_resp%$'\n'*}"
-}
 
 # IAM reads the prefix from ROKS_USER_PREFIX in the platform-auth-idp configmap,
 # which its operator writes from the Authentication CR. The CR is patched, then
@@ -739,12 +598,8 @@ register_in_softwarehub() {
 
     SH_URL="https://$(oc get route cpd -n "${ns}" -o jsonpath='{.spec.host}')"
     admin="$(oc get secret platform-auth-idp-credentials -n "${ns}" -o jsonpath='{.data.admin_username}' | base64 -d)"
-    # The password goes in on stdin, so it never shows up in the process list.
-    SH_TOKEN="$(oc get secret platform-auth-idp-credentials -n "${ns}" -o jsonpath='{.data.admin_password}' \
-        | base64 -d | jq -Rc --arg u "${admin}" '{username: $u, password: .}' \
-        | curl -k -s -X POST "${SH_URL}/icp4d-api/v1/authorize" -H "Content-Type: application/json" --data @- \
-        | jq -r '.token // empty' 2>/dev/null || true)"
-    if [[ -z "${SH_TOKEN}" ]]; then
+    if ! cpdapi_login "${SH_URL}" "${admin}" password \
+            "$(oc get secret platform-auth-idp-credentials -n "${ns}" -o jsonpath='{.data.admin_password}' | base64 -d)"; then
         echo "[ERROR] Could not sign in to Software Hub at ${SH_URL} as ${admin}." >&2
         SH_FAILED+=("(sign-in)")
         return 0
@@ -752,7 +607,7 @@ register_in_softwarehub() {
     echo "[INFO] Software Hub: ${SH_URL} (namespace ${ns})"
 
     for _u in "${SERVICE_ID_USERS[@]}"; do
-        sh_api GET "/usermgmt/v1/user/$(uri "${_u}")"
+        cpdapi GET "/usermgmt/v1/user/$(uri "${_u}")"
         if [[ "${API_CODE}" == 200 ]]; then
             echo "[INFO] Software Hub: '${_u}' already added, roles left as is."
             continue
@@ -766,7 +621,7 @@ register_in_softwarehub() {
             '{username: $u, displayName: $u, authenticator: "external", user_roles: $ARGS.positional}
              + (if $u | contains("@") then {email: $u} else {} end)' \
             --args "${SOFTWAREHUB_ROLES[@]}")"
-        sh_api POST "/usermgmt/v1/user" "${_body}"
+        cpdapi POST "/usermgmt/v1/user" "${_body}"
         if [[ "${API_CODE}" == 2* ]]; then
             echo "[INFO] Software Hub: added '${_u}' with ${SOFTWAREHUB_ROLES[*]}."
         else
@@ -777,7 +632,7 @@ register_in_softwarehub() {
 
     # A pruned service ID loses its Software Hub account too, so its API key stops working.
     for _u in "${REMOVED[@]}"; do
-        sh_api DELETE "/icp4d-api/v1/users/$(uri "${_u}")"
+        cpdapi DELETE "/icp4d-api/v1/users/$(uri "${_u}")"
         if [[ "${API_CODE}" == 2* || "${API_CODE}" == 404 ]]; then
             echo "[INFO] Software Hub: removed '${_u}'."
         else

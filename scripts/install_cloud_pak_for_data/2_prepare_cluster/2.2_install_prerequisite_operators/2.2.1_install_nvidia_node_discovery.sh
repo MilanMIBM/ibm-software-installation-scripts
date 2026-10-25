@@ -13,6 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
 # SKIP_GPU_OPERATORS_INSTALL (shared by 2.2.1 NFD and 2.2.2 NVIDIA GPU Operator):
 #   auto (default from 2.2_install_prerequisite_operators.sh) - install only when
@@ -24,7 +25,8 @@ cp4d_prereq_gate gpu SKIP_GPU_OPERATORS_INSTALL "the GPU operators (NFD + NVIDIA
 eval "${OC_LOGIN}"
 
 NAMESPACE="openshift-nfd"
-CHANNEL="stable"
+# The catalog's default channel (PackageManifest); "stable" when it cannot be read.
+CHANNEL="$(vr_operator_channel nfd)"
 TIMEOUT=300
 
 # --- Existing-install handling -------------------------------------------------

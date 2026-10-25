@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - OpenShift-backed authentication for CMF
@@ -124,10 +125,7 @@ fi
 
 if $DISABLE && ! $ASSUME_YES; then
     echo "This REMOVES authentication: anyone who can reach the route can create and delete Flink jobs."
-    printf "Continue? [y/N] "
-    read -r _reply
-    case "${_reply}" in y|Y|yes|YES) ;; *) echo "[INFO] Aborted."; exit 0 ;; esac
-    echo ""
+    cf_continue_or_abort
 fi
 
 # ------------------------------------------------------------------------------
@@ -336,7 +334,4 @@ else
 fi
 echo "=============================================================================="
 
-if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
-    echo ""
-    "${STATUS}" || echo "[WARN] Status reported one or more components not ready (see above)."
-fi
+cf_closing_status "${RUN_STATUS}" "${STATUS}"

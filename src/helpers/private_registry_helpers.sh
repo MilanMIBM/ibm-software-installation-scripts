@@ -38,23 +38,20 @@ PREG_ENGINE="${_CP4D_REPO_ROOT}/src/helpers/registry_mirror_engine.py"
 PREG_CLASSIFIER="${_CP4D_REPO_ROOT}/src/helpers/registry_classifier.py"
 PREG_MANAGED_BY="private-registry-mirroring"
 
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
+
 # =============================================================================
 # Logging / small utilities
 # =============================================================================
-preg_info()  { print -r -- "[INFO] $*"; }
-preg_warn()  { print -r -- "[WARN] $*" >&2; }
-preg_error() { print -r -- "[ERROR] $*" >&2; }
-preg_die()   { preg_error "$@"; exit 1; }
-
-# true / TRUE / yes / y / 1 -> success
-preg_is_true() { [[ "${1:-}" == ([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Yy]|1) ]]; }
+preg_info()  { h_info "$@"; }
+preg_warn()  { h_warn "$@"; }
+preg_error() { h_error "$@"; }
+preg_die()   { h_die "$@"; }
+preg_is_true() { h_is_true "$@"; }
 
 preg_require_vars() {
-    local v missing=()
-    for v in "$@"; do
-        [[ -n "${(P)v:-}" ]] || missing+=("${v}")
-    done
-    (( ${#missing} == 0 )) || preg_die "Missing values: ${missing[*]} (configs/registry_mirror_config/registry_mirror_vars.sh)"
+    h_missing_vars "$@" || preg_die "Missing values: ${REPLY} (configs/registry_mirror_config/registry_mirror_vars.sh)"
 }
 
 # Comma- or space-separated list -> one item per line (empty items dropped).
@@ -82,19 +79,9 @@ preg_python() {
 preg_engine()     { preg_python -I "${PREG_ENGINE}" "$@"; }
 preg_classifier() { preg_python -I "${PREG_CLASSIFIER}" "$@"; }
 
-# Private scratch dir under the workspace. Not $TMPDIR: on macOS podman can only
-# bind-mount paths below $HOME, and the workspace is gitignored.
-preg_private_tmpdir() {
-    local base="${MIRROR_WORKSPACE}/.run"
-    mkdir -p "${base}"
-    chmod 700 "${base}"
-    (umask 077; mktemp -d "${base}/run.XXXXXX")
-}
-
-preg_sha256() {
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
-    else shasum -a 256 "$1" | awk '{print $1}'; fi
-}
+# Private scratch dir under the (gitignored) workspace.
+preg_private_tmpdir() { h_private_tmpdir "${MIRROR_WORKSPACE}"; }
+preg_sha256() { h_sha256 "$@"; }
 
 # Every track step calls this right after loading the env.
 preg_require_config() {
@@ -535,20 +522,15 @@ _preg_rsync_probe() {
 # version parts), oldest first, comma-separated: the newest <n>, or all with n=0.
 # Lists with the source credentials; fails loudly so nothing is skipped silently.
 preg_version_tags() {   # <repo> <n> <pattern>
-    local repo="$1" n="$2" pat="$3" tmp tags err
-    tmp="$(preg_private_tmpdir)"
-    preg_write_authfile "${tmp}/auth.json" none --sources
-    if ! tags="$(skopeo list-tags --authfile "${tmp}/auth.json" "docker://${repo}" 2>"${tmp}/err")"; then
-        err="$(tail -1 "${tmp}/err")"; rm -rf "${tmp}"
-        preg_die "Could not list the tags of ${repo} (${err}) - check MIRROR_IBM_ENTITLEMENT_KEY, or list the versions explicitly"
-    fi
-    rm -rf "${tmp}"
-    print -r -- "${tags}" | PAT="${pat}" N="${n}" preg_python -c '
-import json, os, re, sys
-pat = re.compile(os.environ["PAT"])
-found = sorted((tuple(map(int, m.groups())), t) for t in json.load(sys.stdin).get("Tags") or [] for m in [pat.match(t)] if m)
-n = int(os.environ["N"])
-print(",".join(t for _, t in (found[-n:] if n else found)))'
+    _preg_newest_tags() {
+        local tmp rc=0
+        tmp="$(preg_private_tmpdir)"
+        preg_write_authfile "${tmp}/auth.json" none --sources
+        vr_newest_tags "$1" "$2" "$3" "${tmp}/auth.json" || rc=$?
+        rm -rf "${tmp}"
+        return "${rc}"
+    }
+    vr_try "tags of $1" _preg_newest_tags "$1" "$2" "$3" -- legacy_preg_version_tags "$1" "$2" "$3"
 }
 
 # Architecture of the machine that runs Linux tools: this host on Linux, the
@@ -626,41 +608,9 @@ preg_ocp_minor() {
     oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null | cut -d. -f1,2
 }
 
-preg_wait_for() {
-    local timeout="$1" desc="$2"
-    shift 2
-    local start=${SECONDS}
-    until "$@" >/dev/null 2>&1; do
-        if (( SECONDS - start >= timeout )); then
-            preg_error "Timed out after ${timeout}s waiting for: ${desc}"
-            return 1
-        fi
-        preg_info "Waiting for ${desc} ($(( SECONDS - start ))s)"
-        sleep 10
-    done
-}
+preg_wait_for() { h_wait_for "$@"; }
 
-preg_wait_mcp_updated() {
-    local timeout="${1:-3600}" start=${SECONDS} pending raw
-    sleep 20   # let the MCO notice the change first
-    while true; do
-        # Control-plane nodes may restart during a rollout, so API errors mean
-        # "still rolling", never a failure of the caller.
-        raw="$(oc get machineconfigpools -o jsonpath='{range .items[*]}{.metadata.name} {.status.conditions[?(@.type=="Updated")].status} {.status.conditions[?(@.type=="Updating")].status}{"\n"}{end}' 2>/dev/null || true)"
-        if [[ -z "${raw}" ]]; then
-            pending="(API not reachable)"
-        else
-            pending="$(print -r -- "${raw}" | awk '$2 != "True" || $3 == "True" { print $1 }' | xargs)"
-        fi
-        [[ -z "${pending}" ]] && { preg_info "All MachineConfigPools are updated."; return 0; }
-        if (( SECONDS - start >= timeout )); then
-            preg_error "MachineConfigPools still updating after ${timeout}s: ${pending}"
-            return 1
-        fi
-        preg_info "MachineConfigPools rolling out: ${pending} ($(( SECONDS - start ))s)"
-        sleep 30
-    done
-}
+preg_wait_mcp_updated() { h_wait_mcp_updated "$@"; }
 
 # =============================================================================
 # Tap: an install's registry_overrides.sh

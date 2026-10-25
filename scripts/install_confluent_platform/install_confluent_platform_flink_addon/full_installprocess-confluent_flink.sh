@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - full install
@@ -46,57 +47,29 @@ if [[ -z "${PROJECT_CONFLUENT_FLINK:-}" ]]; then
     exit 1
 fi
 
-# run_step <enabled> <label> <on_failure: stop|warn> <script> [args...]
-run_step() {
-    local enabled="$1"
-    local label="$2"
-    local on_failure="$3"
-    local script="$4"
-    shift 4
-
-    if [[ "${enabled}" != "true" ]]; then
-        echo ""
-        echo "==> Skipping: ${label}"
-        return 0
-    fi
-
-    echo ""
-    echo "==> Running:  ${label}"
-    local rc=0
-    "${script}" "$@" || rc=$?
-    if (( rc != 0 )); then
-        if [[ "${on_failure}" == "stop" ]]; then
-            echo "[ERROR] ${label} exited ${rc}; stopping the install chain." >&2
-            exit "${rc}"
-        fi
-        echo "[WARN] ${label} exited ${rc}; continuing chain."
-    fi
-    return 0
-}
-
 echo "=============================================================================="
 echo " Confluent Platform for Apache Flink full install - project '${PROJECT_CONFLUENT_FLINK}'"
 echo "=============================================================================="
 echo "[INFO] CMF chart: ${FLINK_CMF_CHART_VERSION:-?}  Operator chart: ${FLINK_OPERATOR_CHART_VERSION:-?}"
 
 # --- Step 1.0 - Prepare the cluster -------------------------------------------
-run_step "${DO_FLINK_PREP}" \
-    "1.0 flink prep" stop \
+h_run_step --stop "${DO_FLINK_PREP}" \
+    "1.0 flink prep" \
     "${SCRIPT_DIR}/1.0_flink_prep.sh"
 
 # --- Step 1.1 - Install the Flink operator, CMF and default resources ---------
-run_step "${DO_FLINK_INSTALL}" \
-    "1.1 flink install" stop \
+h_run_step --stop "${DO_FLINK_INSTALL}" \
+    "1.1 flink install" \
     "${SCRIPT_DIR}/1.1_flink_install.sh" --no-status
 
 # --- Step 1.2 - Status report -------------------------------------------------
-run_step "${DO_FLINK_STATUS}" \
-    "1.2 flink status" warn \
+h_run_step --warn "${DO_FLINK_STATUS}" \
+    "1.2 flink status" \
     "${SCRIPT_DIR}/1.2_flink_status.sh"
 
 # --- Step 1.3 - Write confluent_flink_instance_details.sh ---------------------
-run_step "${DO_FLINK_INSTANCE_DETAILS}" \
-    "1.3 flink get instance details" stop \
+h_run_step --stop "${DO_FLINK_INSTANCE_DETAILS}" \
+    "1.3 flink get instance details" \
     "${SCRIPT_DIR}/1.3_flink_get_instance_details.sh"
 
 echo ""

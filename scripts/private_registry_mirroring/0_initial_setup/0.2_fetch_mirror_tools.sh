@@ -30,7 +30,7 @@ preg_require_config
 #   ./0.2_fetch_mirror_tools.sh [--for-inside] [--force]
 #
 # Settings: MIRROR_OCP_MINOR (client channel, default the latest stable),
-# MIRROR_INSIDE_ARCH (amd64), MIRROR_HELM_VERSION (v3.18.4: Mission Control
+# MIRROR_INSIDE_ARCH (amd64), MIRROR_HELM_VERSION (version_catalog.json helm/pinned_version, v3.18.4: Mission Control
 # supports Helm 3.14-3.18), MIRROR_INSIDE_PYTHON (3.9 = RHEL 9's python3).
 # ==============================================================================
 
@@ -43,7 +43,7 @@ for _a in "$@"; do
     esac
 done
 
-HELM_VERSION="${MIRROR_HELM_VERSION:-v3.18.4}"
+HELM_VERSION="${MIRROR_HELM_VERSION:-$(vr_catalog helm/pinned_version)}"
 CHANNEL="stable${MIRROR_OCP_MINOR:+-${MIRROR_OCP_MINOR}}"
 archdir() { [[ "$1" == arm64 ]] && print -r -- aarch64 || print -r -- x86_64; }
 
@@ -75,6 +75,13 @@ fi
 if command -v helm >/dev/null 2>&1; then
     hv="$(helm version --template '{{.Version}}' 2>/dev/null || true)"
     printf '  %-10s %s\n' "" "helm ${hv} (Mission Control needs 3.14-3.18; 0.1_fetch_helm.sh of the MC track can provide one)"
+fi
+# helm has a cross-platform installer here (get.helm.sh, sha256 verified; asks first).
+if (( ${missing[(Ie)helm]} )); then
+    preg_info "helm: offering src/utilities/cli_tool_utils/install_helm.sh"
+    zsh "${_CP4D_REPO_ROOT}/src/utilities/cli_tool_utils/install_helm.sh" --version "${HELM_VERSION}" || true
+    rehash
+    command -v helm >/dev/null 2>&1 && missing=("${(@)missing:#helm}")
 fi
 (( ${#missing} )) && preg_warn "Missing: ${missing[*]} - install them (Homebrew on macOS, dnf on RHEL)."
 

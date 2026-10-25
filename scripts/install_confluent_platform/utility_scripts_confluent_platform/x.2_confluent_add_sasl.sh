@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - SASL authentication for Kafka clients
@@ -83,19 +84,17 @@ ROTATE_TLS=false
 # Security settings given as flags; persisted to confluent_vars.sh below.
 typeset -A _SET
 
-_need_value() { [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }; }
-
 while (( $# > 0 )); do
     case "$1" in
-        --clients)   _need_value "$1" "${2:-}"; CLIENTS_OVERRIDE="$2"; shift 2 ;;
+        --clients)   h_need_value "$1" "${2:-}"; CLIENTS_OVERRIDE="$2"; shift 2 ;;
         --rotate)    ROTATE=true; shift ;;
         --disable)   DISABLE=true; shift ;;
-        --protocol)  _need_value "$1" "${2:-}"; _SET[CONFLUENT_SASL_PROTOCOL]="$2"; shift 2 ;;
-        --mechanism) _need_value "$1" "${2:-}"; _SET[CONFLUENT_SASL_MECHANISM]="$2"; shift 2 ;;
+        --protocol)  h_need_value "$1" "${2:-}"; _SET[CONFLUENT_SASL_PROTOCOL]="$2"; shift 2 ;;
+        --mechanism) h_need_value "$1" "${2:-}"; _SET[CONFLUENT_SASL_MECHANISM]="$2"; shift 2 ;;
         --internal-mechanisms)
-                     _need_value "$1" "${2:-}"; _SET[CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS]="$2"; shift 2 ;;
+                     h_need_value "$1" "${2:-}"; _SET[CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS]="$2"; shift 2 ;;
         --external-mechanisms)
-                     _need_value "$1" "${2:-}"; _SET[CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS]="$2"; shift 2 ;;
+                     h_need_value "$1" "${2:-}"; _SET[CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS]="$2"; shift 2 ;;
         --rotate-tls) ROTATE_TLS=true; shift ;;
         --yes|-y)    ASSUME_YES=true; shift ;;
         --dry-run)   DRY_RUN=true; shift ;;
@@ -185,10 +184,7 @@ if ! $ASSUME_YES; then
     else
         echo "This restarts every broker and component. Clients using the old settings will fail until reconfigured."
     fi
-    printf "Continue? [y/N] "
-    read -r _reply
-    case "${_reply}" in y|Y|yes|YES) ;; *) echo "[INFO] Aborted."; exit 0 ;; esac
-    echo ""
+    cf_continue_or_abort
 fi
 
 # ------------------------------------------------------------------------------
@@ -321,7 +317,4 @@ else
     echo "  Add a client later:  $(basename $0) --clients existing,new"
 fi
 
-if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
-    echo ""
-    "${STATUS}" || echo "[WARN] Status reported one or more components not ready (see above)."
-fi
+cf_closing_status "${RUN_STATUS}" "${STATUS}"

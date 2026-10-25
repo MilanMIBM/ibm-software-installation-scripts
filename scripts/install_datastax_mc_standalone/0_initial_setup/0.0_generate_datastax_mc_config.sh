@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # No env_bootstrap here: the config this script writes is what the other
 # scripts load, so it may not exist yet. Find the repo root the same way.
 REPO_ROOT="${SCRIPT_DIR}"; while [[ "${REPO_ROOT}" != "/" && ! -f "${REPO_ROOT}/env_bootstrap.sh" ]]; do REPO_ROOT="$(dirname "${REPO_ROOT}")"; done
+source "${REPO_ROOT}/src/helpers/version_resolver.sh"
 
 usage() {
     cat <<'EOF'
@@ -179,7 +180,7 @@ export MC_NAMESPACE="${NAMESPACE}"
 export MC_PLANE="${PLANE}"
 # Helm 3.14.0 - 3.18.x is supported. A helm on PATH in that range is used;
 # otherwise this version is downloaded into datastax_mc_workspace/tools/.
-export MC_HELM_VERSION="v3.18.4"
+export MC_HELM_VERSION="$(vr_catalog helm/pinned_version)"
 export MC_HELM_TIMEOUT="15m"
 # Your own values files (space-separated paths), applied after the generated ones
 export MC_EXTRA_VALUES_FILES=""

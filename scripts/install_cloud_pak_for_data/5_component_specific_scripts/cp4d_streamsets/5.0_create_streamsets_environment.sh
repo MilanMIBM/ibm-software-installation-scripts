@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 
 # =============================================================================
 # 5.0_create_streamsets_environment.sh
@@ -81,39 +82,25 @@ EM="/sset/engine_manager"
 
 # --- Authenticate against CPD ---
 echo "[INFO] Authenticating to ${CPD_BASE} as ${API_USER}..."
-TOKEN="$(curl -sk -X POST "${CPD_BASE}/icp4d-api/v1/authorize" \
-  -H 'Content-Type: application/json' \
-  -d "$(python3 -c 'import sys,json; print(json.dumps({"username": sys.argv[1], "api_key": sys.argv[2]}))' "${API_USER}" "${API_KEY}")" \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)"
-if [[ -z "${TOKEN}" ]]; then
+if ! cpdapi_login "${CPD_BASE}" "${API_USER}" api_key "${API_KEY}"; then
   echo "[ERROR] Failed to get a bearer token from ${CPD_BASE}/icp4d-api/v1/authorize." >&2
   exit 1
 fi
 
-# api <method> <path> [json body] -> API_CODE, API_BODY
-api() {
-  local -a _args=(-sk -X "$1" -H "Authorization: Bearer ${TOKEN}" -H 'Accept: application/json' -w $'\n%{http_code}')
-  (( $# >= 3 )) && _args+=(-H 'Content-Type: application/json' --data "$3")
-  local _resp
-  _resp="$(curl "${_args[@]}" "${CPD_BASE}$2" || true)"
-  API_CODE="${_resp##*$'\n'}"
-  API_BODY="${_resp%$'\n'*}"
-}
 api_ok() {
   if [[ "${API_CODE}" != 2* ]]; then
     echo "[ERROR] $1 failed (HTTP ${API_CODE}): ${API_BODY}" >&2
     exit 1
   fi
 }
-urlencode() { python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
 
 # --- Resolve the project ---
 if [[ "${PROJECT}" =~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' ]]; then
   PROJECT_ID="${PROJECT}"
-  api GET "/v2/projects/${PROJECT_ID}"
+  cpdapi GET "/v2/projects/${PROJECT_ID}"
   api_ok "Reading project ${PROJECT_ID}"
 else
-  api GET "/v2/projects?name=$(urlencode "${PROJECT}")&limit=100"
+  cpdapi GET "/v2/projects?name=$(cpdapi_urlencode "${PROJECT}")&limit=100"
   api_ok "Listing projects"
   PROJECT_ID="$(python3 -c '
 import sys, json
@@ -129,7 +116,7 @@ fi
 echo "[INFO] Project id     : ${PROJECT_ID}"
 
 # --- Reuse an environment with this name ---
-api GET "${EM}/v1/streamsets_environments?project_id=${PROJECT_ID}&limit=200"
+cpdapi GET "${EM}/v1/streamsets_environments?project_id=${PROJECT_ID}&limit=200"
 api_ok "Listing StreamSets environments"
 EXISTING="$(python3 -c '
 import sys, json
@@ -150,7 +137,7 @@ if [[ -n "${EXISTING}" ]]; then
 fi
 
 # --- Pick the engine version ---
-api GET "${EM}/v2/streamsets_engine_versions/data_collector"
+cpdapi GET "${EM}/v2/streamsets_engine_versions/data_collector"
 api_ok "Listing engine versions"
 ENGINE_VERSION="$(python3 -c '
 import sys, json, re
@@ -172,11 +159,11 @@ print(" ".join(v["engine_version_id"] for v in json.loads(sys.argv[1]).get("stre
 fi
 echo "[INFO] Engine version : ${ENGINE_VERSION}"
 
-api GET "${EM}/v2/streamsets_engine_versions/data_collector/${ENGINE_VERSION}"
+cpdapi GET "${EM}/v2/streamsets_engine_versions/data_collector/${ENGINE_VERSION}"
 api_ok "Reading engine version ${ENGINE_VERSION}"
 VERSION_JSON="${API_BODY}"
 
-api GET "${EM}/v1/streamsets_environments/defaults"
+cpdapi GET "${EM}/v1/streamsets_environments/defaults"
 api_ok "Reading environment defaults"
 DEFAULTS_JSON="${API_BODY}"
 
@@ -191,7 +178,7 @@ print(json.dumps({"name": sys.argv[5], "description": sys.argv[6], "streamsets_e
 ' "${DEFAULTS_JSON}" "${VERSION_JSON}" "${ENGINE_VERSION}" "${CPUS}" "${ENV_NAME}" "${DESCRIPTION}")"
 
 echo "[INFO] Creating environment '${ENV_NAME}' ($(python3 -c 'import sys,json; print(len(json.loads(sys.argv[1])["streamsets_environment"]["stage_libs"]))' "${BODY}") stage libraries, ${CPUS} CPUs)..."
-api POST "${EM}/v1/streamsets_environments?project_id=${PROJECT_ID}" "${BODY}"
+cpdapi POST "${EM}/v1/streamsets_environments?project_id=${PROJECT_ID}" "${BODY}"
 api_ok "Creating the environment"
 ENVIRONMENT_ID="$(python3 -c 'import sys,json; print(json.loads(sys.argv[1])["metadata"]["asset_id"])' "${API_BODY}")"
 echo "[INFO] Environment id : ${ENVIRONMENT_ID}"

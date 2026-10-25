@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - uninstall
@@ -72,13 +73,7 @@ if ! oc get namespace "${NS}" &>/dev/null; then
     exit 0
 fi
 
-run() {
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        echo "  [DRY-RUN] $*"
-    else
-        "$@" 2>/dev/null || true
-    fi
-}
+run() { cf_dry_run --ignore-errors "$@"; }
 
 # ------------------------------------------------------------------------------
 # Report what is about to go

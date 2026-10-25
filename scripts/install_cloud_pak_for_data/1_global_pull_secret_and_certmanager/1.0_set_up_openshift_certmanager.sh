@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # source "${SCRIPT_DIR}/../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
 # ---
 eval "${OC_LOGIN}"
@@ -94,6 +95,8 @@ spec:
 EOF
     fi
 
+    # The catalog's default channel (PackageManifest); stable-v1 when it cannot be read.
+    CM_CHANNEL="$(vr_operator_channel openshift-cert-manager-operator)"
     oc apply -f - <<EOF
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
@@ -101,7 +104,7 @@ metadata:
   name: ${SUB_NAME}
   namespace: ${OP_NS}
 spec:
-  channel: stable-v1
+  channel: ${CM_CHANNEL}
   name: openshift-cert-manager-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace

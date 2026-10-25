@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
 # ==============================================================================
 # Confluent Platform - identity provider for MDS
@@ -51,8 +52,6 @@ DELETE=false
 ASSUME_YES=true
 DRY_RUN=false
 
-_need_value() { [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }; }
-
 while (( $# > 0 )); do
     case "$1" in
         --rotate)  ROTATE=true; shift ;;
@@ -72,12 +71,12 @@ SA="confluent"
 : "${CONFLUENT_MDS_SUPER_USER:=mds-admin}"
 : "${CONFLUENT_MDS_USERS:=kafka-admin,kafka-user}"
 : "${CONFLUENT_MDS_SECRET:=confluent-mds}"
-: "${CONFLUENT_LDAP_IMAGE:=docker.io/bitnamilegacy/openldap:2.6.10}"
+: "${CONFLUENT_LDAP_IMAGE:=$(vr_catalog confluent/ldap_image)}"
 : "${CONFLUENT_LDAP_PORT:=1389}"
 : "${CONFLUENT_LDAP_DOMAIN:=confluent.io}"
 : "${CONFLUENT_LDAP_ADMIN_USER:=admin}"
 : "${CONFLUENT_LDAP_SECRET:=confluent-ldap}"
-: "${CONFLUENT_KEYCLOAK_IMAGE:=quay.io/keycloak/keycloak:26.0}"
+: "${CONFLUENT_KEYCLOAK_IMAGE:=$(vr_catalog confluent/keycloak_image)}"
 : "${CONFLUENT_KEYCLOAK_PORT:=8080}"
 : "${CONFLUENT_KEYCLOAK_REALM:=confluent}"
 : "${CONFLUENT_KEYCLOAK_CLIENT_ID:=confluent-cli}"

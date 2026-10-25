@@ -2,6 +2,8 @@
 # rendered by ibm_concert_vars_generation.py. Facts behind the defaults are in
 # .claude/plans/ibm-concert-installation-plan.md (IBM Concert 3.1.x installer).
 
+from src.helpers.version_catalog import catalog_value
+
 # ------------------------------------------------------------------------------
 # Releases (the notebook also lists live releases from GitHub when reachable)
 # ------------------------------------------------------------------------------
@@ -445,7 +447,7 @@ default_concert_release = [
     {"key": "CONCERT_RELEASE_TAG", "value": "v3.1.0"},
     {"key": "CONCERT_ARCHIVE", "value": "ibm-concert-x86.tar.gz"},
     {"key": "CONCERT_ARCHIVE_SHA256", "value": ""},
-    {"key": "CONCERT_HELM_VERSION", "value": "v3.18.4"},
+    {"key": "CONCERT_HELM_VERSION", "value": catalog_value("helm/pinned_version")},
     {"key": "CONCERT_PROFILE", "value": "production"},
     {"key": "CONCERT_ACCEPT_LICENSE", "value": "false"},
 ]
@@ -610,7 +612,7 @@ default_concert_admin = [
 #   OAUTH2_AUDIENCE IBM's t8c-operator samples use CONCERT; IBM's Optimize docs
 #                   page shows the Hub URL there instead (unverified)
 default_concert_optimize = [
-    {"key": "CONCERT_OPTIMIZE_VERSION", "value": "8.21.2"},
+    {"key": "CONCERT_OPTIMIZE_VERSION", "value": catalog_value("concert/optimize_version")},
     {"key": "CONCERT_OPTIMIZE_IMAGE_REPOSITORY", "value": "icr.io/cpopen/turbonomic"},
     {"key": "CONCERT_OPTIMIZE_ADMIN_USERNAME", "value": "administrator"},
     {"key": "CONCERT_OPTIMIZE_ADMIN_PASSWORD", "value": ""},

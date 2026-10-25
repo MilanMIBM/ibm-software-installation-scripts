@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - Metadata Service (MDS) / RBAC
@@ -63,11 +64,9 @@ RUN_STATUS=true
 SKIP_USER_STORE=false
 STORE_OVERRIDE=""
 
-_need_value() { [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }; }
-
 while (( $# > 0 )); do
     case "$1" in
-        --store)            _need_value "$1" "${2:-}"; STORE_OVERRIDE="${2:u}"; shift 2 ;;
+        --store)            h_need_value "$1" "${2:-}"; STORE_OVERRIDE="${2:u}"; shift 2 ;;
         --rotate)           ROTATE=true; shift ;;
         --skip-user-store)  SKIP_USER_STORE=true; shift ;;
         --yes|-y)           ASSUME_YES=true; shift ;;
@@ -189,10 +188,7 @@ fi
 if ! $ASSUME_YES; then
     echo "This restarts every broker and turns on the RBAC authorizer."
     echo "Existing SASL clients keep working; the super user retains full access."
-    printf "Continue? [y/N] "
-    read -r _reply
-    case "${_reply}" in y|Y|yes|YES) ;; *) echo "[INFO] Aborted."; exit 0 ;; esac
-    echo ""
+    cf_continue_or_abort
 fi
 
 # ------------------------------------------------------------------------------
@@ -479,7 +475,4 @@ echo "      --role ResourceOwner --resource Topic:my-topic --kafka-cluster ${_ka
 echo ""
 echo "  Remove MDS again:  x.4_confluent_remove_mds.sh"
 
-if [[ "${RUN_STATUS}" == "true" && -f "${STATUS}" ]]; then
-    echo ""
-    "${STATUS}" || echo "[WARN] Status reported one or more components not ready (see above)."
-fi
+cf_closing_status "${RUN_STATUS}" "${STATUS}"

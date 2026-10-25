@@ -19,7 +19,7 @@ comp() { preg_in_list "$1" "${COMPS}"; }
 
 REG="${CONFLUENT_REGISTRY:-docker.io/confluentinc}"
 CPV="${CONFLUENT_VERSION:-}"
-C3V="${CONFLUENT_C3_VERSION:-2.5.0}"
+C3V="${CONFLUENT_C3_VERSION:-$(vr_catalog confluent/c3_version)}"
 
 if has images; then
     [[ -n "${CPV}" ]] || preg_die "CONFLUENT_VERSION is empty - generate configs/confluent_platform_config/confluent_vars.sh first"
@@ -33,11 +33,11 @@ if has images; then
         preg_emit_image "${CONFLUENT_PROMETHEUS_IMAGE:-${REG}/cp-enterprise-prometheus:${C3V}}" control-center
         preg_emit_image "${CONFLUENT_ALERTMANAGER_IMAGE:-${REG}/cp-enterprise-alertmanager:${C3V}}" control-center
     fi
-    comp c3-gateway && preg_emit_image "${CONFLUENT_C3_GATEWAY_IMAGE:-registry.access.redhat.com/ubi9/nginx-124:latest}" c3-gateway
-    comp ldap       && preg_emit_image "${CONFLUENT_LDAP_IMAGE:-docker.io/bitnamilegacy/openldap:2.6.10}" ldap
-    comp keycloak   && preg_emit_image "${CONFLUENT_KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.0}" keycloak
-    comp flink-runtime && preg_emit_image "${FLINK_APPLICATION_IMAGE:-confluentinc/cp-flink:2.0.2-cp3}" flink-runtime
-    comp flink-sql     && preg_emit_image "${FLINK_SQL_IMAGE:-confluentinc/cp-flink-sql:1.19-cp11}" flink-sql
+    comp c3-gateway && preg_emit_image "${CONFLUENT_C3_GATEWAY_IMAGE:-$(vr_catalog confluent/c3_gateway_image)}" c3-gateway
+    comp ldap       && preg_emit_image "${CONFLUENT_LDAP_IMAGE:-$(vr_catalog confluent/ldap_image)}" ldap
+    comp keycloak   && preg_emit_image "${CONFLUENT_KEYCLOAK_IMAGE:-$(vr_catalog confluent/keycloak_image)}" keycloak
+    comp flink-runtime && preg_emit_image "${FLINK_APPLICATION_IMAGE:-$(vr_catalog flink/application_image)}" flink-runtime
+    comp flink-sql     && preg_emit_image "${FLINK_SQL_IMAGE:-$(vr_catalog flink/sql_image)}" flink-sql
 fi
 
 # Flink charts: the chart itself (charts) and every image it renders (images).
@@ -58,7 +58,7 @@ comp flink-operator && flink_chart flink-operator flink-kubernetes-operator "${F
 comp flink-cmf      && flink_chart flink-cmf confluent-manager-for-apache-flink "${FLINK_CMF_CHART_VERSION:-}"
 
 if comp flink-cert-manager; then
-    cmv="${FLINK_CERT_MANAGER_VERSION:-v1.18.2}"
+    cmv="${FLINK_CERT_MANAGER_VERSION:-$(vr_catalog flink/cert_manager_version)}"
     has files && preg_emit_file "https://github.com/cert-manager/cert-manager/releases/download/${cmv}/cert-manager.yaml" "flink/cert-manager-${cmv}.yaml" flink-cert-manager
     if has images; then
         for n in controller webhook cainjector; do

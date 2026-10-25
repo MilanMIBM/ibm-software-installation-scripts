@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # =============================================================================
@@ -265,16 +266,11 @@ esac
 : "${CPD_PASSWORD:?CPD_PASSWORD not set - run 3.3.1_get_instance_creds.sh first}"
 
 echo "[AUTH] requesting CPD bearer token from ${CPD_URL}"
-TOKEN="$(curl -k -sS -X POST \
-  "${CPD_URL}/icp4d-api/v1/authorize" \
-  -H "Content-Type: application/json" \
-  -d "$(jq -n --arg u "${CPD_USERNAME}" --arg p "${CPD_PASSWORD}" '{username:$u, password:$p}')" \
-  | jq -r '.token // empty')"
-
-if [[ -z "${TOKEN}" ]]; then
-  echo "[ERROR] Failed to retrieve CPD bearer token" >&2
+if ! cpdapi_login "${CPD_URL}" "${CPD_USERNAME}" password "${CPD_PASSWORD}"; then
+  echo "[ERROR] Failed to retrieve CPD bearer token (HTTP ${API_CODE})" >&2
   exit 1
 fi
+TOKEN="${CPDAPI_TOKEN}"
 
 GW="${CPD_URL}/ml/gateway/v1"
 

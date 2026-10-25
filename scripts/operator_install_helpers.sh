@@ -47,6 +47,44 @@ cp4d_default_service_mesh_version() {
 }
 
 # -----------------------------------------------------------------------------
+# cp4d_pkg_channel [--strict] <package> [preferred]
+# -----------------------------------------------------------------------------
+# Echo the Subscription channel for an OLM package, read from its PackageManifest
+# in openshift-marketplace: <preferred> when the catalog offers it, else the
+# catalog's default channel (with a warning when <preferred> was given). With
+# --strict, a <preferred> the catalog does not offer fails instead, for pins
+# where the default would be a major jump (RHOAI). Fails, printing nothing on
+# stdout, when the PackageManifest cannot be read; callers then fall back to
+# their literal (vr_operator_channel in src/helpers/version_resolver.sh).
+cp4d_pkg_channel() {
+    local strict=false
+    [[ "${1:-}" == --strict ]] && { strict=true; shift; }
+    local pkg="$1" preferred="${2:-}" raw default
+    local -a channels
+    raw="$(oc get packagemanifest "${pkg}" -n openshift-marketplace \
+        -o jsonpath='{.status.defaultChannel}{" "}{.status.channels[*].name}' 2>/dev/null || true)"
+    channels=(${=raw})
+    default="${channels[1]:-}"
+    channels=("${(@)channels[2,-1]}")
+    [[ -n "${default}" ]] && (( ${#channels} )) || return 1
+    if [[ -n "${preferred}" ]]; then
+        if (( ${channels[(Ie)${preferred}]} )); then
+            echo "[INFO] ${pkg}: channel ${preferred} (offered by the catalog)" >&2
+            print -r -- "${preferred}"
+            return 0
+        fi
+        if ${strict}; then
+            echo "[WARN] ${pkg}: the catalog does not offer channel ${preferred} (it has: ${channels[*]})" >&2
+            return 1
+        fi
+        echo "[WARN] ${pkg}: the catalog does not offer channel ${preferred}; using its default ${default}" >&2
+    else
+        echo "[INFO] ${pkg}: channel ${default} (the catalog's default)" >&2
+    fi
+    print -r -- "${default}"
+}
+
+# -----------------------------------------------------------------------------
 # cp4d_csv_phase <namespace> <csv-name-prefix>
 # -----------------------------------------------------------------------------
 # Echo the phase (Succeeded / Installing / Failed / ...) of the CSV whose name

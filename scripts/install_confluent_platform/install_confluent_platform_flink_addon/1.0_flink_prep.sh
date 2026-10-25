@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - preparation
@@ -53,13 +54,7 @@ done
 # ------------------------------------------------------------------------------
 # run <cmd...> - executes, or just prints under --dry-run.
 # ------------------------------------------------------------------------------
-run() {
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        echo "  [DRY-RUN] $*"
-    else
-        "$@"
-    fi
-}
+run() { cf_dry_run "$@"; }
 
 # ------------------------------------------------------------------------------
 # Validate configuration
@@ -97,8 +92,15 @@ fi
 # Local tooling. Both are hard requirements: the charts are installed with helm
 # and every later script drives CMF through the confluent CLI.
 # ------------------------------------------------------------------------------
+# A missing helm is offered from get.helm.sh (Helm 3, sha256 verified; asks first).
+if ! command -v helm &>/dev/null && [[ "${DRY_RUN}" != "true" ]]; then
+    echo "[WARN] helm is not on PATH."
+    zsh "${_CP4D_REPO_ROOT}/src/utilities/cli_tool_utils/install_helm.sh" || true
+    rehash
+fi
 if ! command -v helm &>/dev/null; then
     echo "[ERROR] helm is not on PATH. Install Helm 3 or newer:" >&2
+    echo "[ERROR]   src/utilities/cli_tool_utils/install_helm.sh   (macOS, Linux, Windows)" >&2
     echo "[ERROR]   brew install helm     (macOS)" >&2
     echo "[ERROR]   https://helm.sh/docs/intro/install/" >&2
     exit 1

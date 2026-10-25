@@ -302,5 +302,13 @@ case "$_ver" in
     [0-4].*) warn "zsh $_ver is old; the scripts are written for zsh 5 or newer." ;;
 esac
 info "zsh is ready: /bin/zsh (zsh ${_ver:-unknown version})"
+
+# helm (Confluent Flink, mirroring, Mission Control) has a cross-platform
+# installer in the repo; only report it here, the installer asks before changing anything.
+_helm_installer="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/src/utilities/cli_tool_utils/install_helm.sh"
+if [ -f "$_helm_installer" ]; then
+    /bin/zsh "$_helm_installer" --check 2>&1 | grep -v '^\[TIMER\]' || true
+    have helm || info "Install it with: src/utilities/cli_tool_utils/install_helm.sh"
+fi
 info "Next: the Prerequisites in README.md (oc, cpd-cli, podman, Python + uv)."
 exit 0

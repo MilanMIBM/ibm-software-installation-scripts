@@ -51,8 +51,7 @@ print -r -- "Phase: ${PHASE}"
 run() {   # <label> <script> [args...]
     local label="$1" script="$2"
     shift 2
-    print -r -- ""; print -r -- "==> Running:  ${label}"
-    zsh "${SCRIPT_DIR}/${script}" "$@"
+    h_run_step true "${label}" zsh "${SCRIPT_DIR}/${script}" "$@"
 }
 
 run "4.0 plan the patch update" 4.0_plan_cpd_patch_update.sh "--phase=${PHASE}" "${PLAN_ARGS[@]}"

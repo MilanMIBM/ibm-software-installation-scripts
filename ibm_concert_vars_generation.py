@@ -1600,6 +1600,8 @@ def _(
 ):
     import re
 
+    from src.helpers.version_catalog import catalog_value as _catalog_value
+
     _errors, _warnings = [], []
     _p = {
         k: v == "true"
@@ -1692,9 +1694,11 @@ def _(
             _errors.append(
                 "CONCERT_OPTIMIZE_VERSION must be a Turbonomic release such as 8.21.2 (a t8c-operator tag)."
             )
-        elif _o["CONCERT_OPTIMIZE_VERSION"] != "8.21.2":
+        elif _o["CONCERT_OPTIMIZE_VERSION"] != (
+            _matrix_turbo := _catalog_value("concert/optimize_version")
+        ):
             _warnings.append(
-                f"Optimize {_o['CONCERT_OPTIMIZE_VERSION']}: IBM's version matrix pairs Hub 3.0.3 (Concert 3.1.0) with Turbonomic 8.21.2."
+                f"Optimize {_o['CONCERT_OPTIMIZE_VERSION']}: IBM's version matrix pairs Hub 3.0.3 (Concert 3.1.0) with Turbonomic {_matrix_turbo}."
             )
         _turbo_user = _o["CONCERT_OPTIMIZE_ADMIN_USERNAME"]
         _turbo_pw = _o["CONCERT_OPTIMIZE_ADMIN_PASSWORD"]

@@ -79,9 +79,7 @@ T="${SCRIPT_DIR:h}"
 run() {   # <DO value> <label> <script> [args...]
     local on="$1" label="$2" script="$3"
     shift 3
-    if [[ "${on}" != true ]]; then print -r -- ""; print -r -- "==> Skipping: ${label}"; return 0; fi
-    print -r -- ""; print -r -- "==> Running:  ${label}"
-    zsh "${T}/${script}" "$@"
+    h_run_step "${on}" "${label}" zsh "${T}/${script}" "$@"
 }
 
 cluster_segment() {

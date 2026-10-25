@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - install a connector plugin into Kafka Connect
@@ -100,14 +101,12 @@ KEEP_GOING=false
 
 MANIFEST=""
 
-_need_value() { [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }; }
-
 while (( $# > 0 )); do
     case "$1" in
-        --file|-f)    _need_value "$1" "${2:-}"; MANIFEST="$2"; shift 2 ;;
-        --name)       _need_value "$1" "${2:-}"; PLUGIN_NAME="$2"; shift 2 ;;
+        --file|-f)    h_need_value "$1" "${2:-}"; MANIFEST="$2"; shift 2 ;;
+        --name)       h_need_value "$1" "${2:-}"; PLUGIN_NAME="$2"; shift 2 ;;
         --list)       DO_LIST=true; shift ;;
-        --remove)     _need_value "$1" "${2:-}"; REMOVE_NAME="$2"; shift 2 ;;
+        --remove)     h_need_value "$1" "${2:-}"; REMOVE_NAME="$2"; shift 2 ;;
         --no-restart) NO_RESTART=true; shift ;;
         --keep-going) KEEP_GOING=true; shift ;;
         --force)      FORCE=true; shift ;;
@@ -515,9 +514,7 @@ echo ""
 if $DRY_RUN; then echo "[INFO] --dry-run: no changes made."; exit 0; fi
 
 if ! $ASSUME_YES; then
-    printf "Continue? [y/N] "
-    read -r _r; case "${_r}" in y|Y|yes|YES) ;; *) echo "[INFO] Aborted."; exit 0 ;; esac
-    echo ""
+    cf_continue_or_abort
 fi
 
 # ------------------------------------------------------------------------------

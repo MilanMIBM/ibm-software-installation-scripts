@@ -14,10 +14,12 @@
 [[ -n "${_CLI_HELPERS_LOADED:-}" ]] && return 0
 _CLI_HELPERS_LOADED=1
 
-cli_info()  { print -r -- "[INFO] $*"; }
-cli_warn()  { print -r -- "[WARN] $*" >&2; }
-cli_error() { print -r -- "[ERROR] $*" >&2; }
-cli_die()   { cli_error "$@"; exit 1; }
+source "${${(%):-%x}:A:h}/common_helpers.sh"
+
+cli_info()  { h_info "$@"; }
+cli_warn()  { h_warn "$@"; }
+cli_error() { h_error "$@"; }
+cli_die()   { h_die "$@"; }
 
 # OS and CPU as upstream release URLs spell them (get.helm.sh, dl.k8s.io).
 cli_os() {
@@ -53,13 +55,7 @@ cli_semver() {
 # "v1.33" from "v1.33.5".
 cli_minor_of() { print -r -- "${1%.*}"; }
 
-cli_sha256() {   # <file>
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    else
-        shasum -a 256 "$1" | awk '{print $1}'
-    fi
-}
+cli_sha256() { h_sha256 "$@"; }   # <file>
 
 # Downloads <url> to <file> (curl's progress meter shows) and checks it against
 # the sha256 published at <sha256 url>, either a bare hash (dl.k8s.io) or

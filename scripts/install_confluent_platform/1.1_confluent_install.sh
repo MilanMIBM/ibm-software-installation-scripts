@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
 # ==============================================================================
 # Confluent Platform - install
@@ -50,7 +51,7 @@ oc project "${NS}" >/dev/null
 : "${CONFLUENT_MIN_INSYNC_REPLICAS:=1}"
 # Defaults for configs written before the 8.2.0 / next-gen-C3 topology landed.
 : "${CONFLUENT_BROKER_IMAGE:=${CONFLUENT_REGISTRY}/cp-server:${CONFLUENT_VERSION}}"
-: "${CONFLUENT_C3_VERSION:=2.5.0}"
+: "${CONFLUENT_C3_VERSION:=$(vr_catalog confluent/c3_version)}"
 : "${CONFLUENT_CONTROL_CENTER_IMAGE:=${CONFLUENT_REGISTRY}/cp-enterprise-control-center-next-gen:${CONFLUENT_C3_VERSION}}"
 : "${CONFLUENT_PROMETHEUS_IMAGE:=${CONFLUENT_REGISTRY}/cp-enterprise-prometheus:${CONFLUENT_C3_VERSION}}"
 : "${CONFLUENT_ALERTMANAGER_IMAGE:=${CONFLUENT_REGISTRY}/cp-enterprise-alertmanager:${CONFLUENT_C3_VERSION}}"
@@ -1968,7 +1969,7 @@ if [[ "${CONFLUENT_INSTALL_CONTROL_CENTER}" == "true" ]]; then
         _c3_service_port="${CONFLUENT_C3_GATEWAY_PORT}"
     elif [[ "${CONFLUENT_AUTH_ENABLED}" == "true" ]]; then
         : "${CONFLUENT_C3_GATEWAY_PORT:=8443}"
-        : "${CONFLUENT_C3_GATEWAY_IMAGE:=registry.access.redhat.com/ubi9/nginx-124:latest}"
+        : "${CONFLUENT_C3_GATEWAY_IMAGE:=$(vr_catalog confluent/c3_gateway_image)}"
 
         # Remove the OpenShift-auth resources so the modes stay exclusive.
         oc delete secret "${CONFLUENT_AUTH_SECRET}-oauth" -n "${NS}" --ignore-not-found >/dev/null 2>&1 || true

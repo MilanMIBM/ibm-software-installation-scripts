@@ -39,47 +39,30 @@ DO_WAIT="${DO_WAIT:-true}"                           # 2.3 wait for all pods
 DO_DETAILS="${DO_DETAILS:-true}"                     # 2.4 instance details file
 DO_NETWORKPOLICY="${DO_NETWORKPOLICY:-false}"        # 3.0 internode NetworkPolicy (needs projects)
 
-run_step() {
-    local enabled="$1"
-    local label="$2"
-    local script="$3"
-    shift 3
-
-    if [[ "${enabled}" != "true" ]]; then
-        echo ""
-        echo "==> Skipping: ${label}"
-        return 0
-    fi
-
-    echo ""
-    echo "==> Running:  ${label}"
-    "${script}" "$@"
-}
-
-run_step "${DO_INSTALL_OC}" "0.0 install oc (macOS, CP4D script)" \
+h_run_step "${DO_INSTALL_OC}" "0.0 install oc (macOS, CP4D script)" \
     "${CP4D_ROOT}/0_initial_setup/0.1_install_oc-MAC-ONLY.sh"
-run_step "${DO_FETCH_HELM}" "0.1 helm for Mission Control" \
+h_run_step "${DO_FETCH_HELM}" "0.1 helm for Mission Control" \
     "${SCRIPTS_ROOT}/0_initial_setup/0.1_fetch_helm.sh"
 
-run_step "${DO_CERT_MANAGER}" "1.0 cert-manager operator" \
+h_run_step "${DO_CERT_MANAGER}" "1.0 cert-manager operator" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.0_install_cert_manager.sh"
-run_step "${DO_PREFLIGHT}" "1.1 preflight" \
+h_run_step "${DO_PREFLIGHT}" "1.1 preflight" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.1_cluster_preflight.sh"
-run_step "${DO_NAMESPACE}" "1.2 namespace and pull secrets" \
+h_run_step "${DO_NAMESPACE}" "1.2 namespace and pull secrets" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.2_create_namespace_and_pull_secret.sh"
-run_step "${DO_LABEL_NODES}" "1.3 platform node labels" \
+h_run_step "${DO_LABEL_NODES}" "1.3 platform node labels" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.3_label_platform_nodes.sh"
-run_step "${DO_SCC}" "1.4 SCC (${MC_SCC_MODE})" \
+h_run_step "${DO_SCC}" "1.4 SCC (${MC_SCC_MODE})" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.4_configure_scc.sh"
 
-run_step "${DO_INSTALL}" "2.1 install Mission Control ${MC_VERSION} (${MC_PLANE} plane)" \
+h_run_step "${DO_INSTALL}" "2.1 install Mission Control ${MC_VERSION} (${MC_PLANE} plane)" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.1_install_mission_control.sh"
-run_step "${DO_ROUTE}" "2.2 UI Route" \
+h_run_step "${DO_ROUTE}" "2.2 UI Route" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.2_create_ui_route.sh"
-run_step "${DO_WAIT}" "2.3 wait for Mission Control" \
+h_run_step "${DO_WAIT}" "2.3 wait for Mission Control" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.3_mission_control_status.sh" --wait
-run_step "${DO_DETAILS}" "2.4 instance details" \
+h_run_step "${DO_DETAILS}" "2.4 instance details" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.4_get_instance_details.sh"
 
-run_step "${DO_NETWORKPOLICY}" "3.0 internode NetworkPolicy" \
+h_run_step "${DO_NETWORKPOLICY}" "3.0 internode NetworkPolicy" \
     "${SCRIPTS_ROOT}/3_post_install/3.0_apply_internode_networkpolicy.sh"

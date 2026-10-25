@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 # configs/cp4d_config/cpd_vars.sh sets its own SCRIPT_DIR, so keep this script's folder separately.
 HERE="${0:A:h}"
 
@@ -63,18 +64,14 @@ done
 CPD_BASE="${CPD_URL%/}"
 
 echo "[INFO] Authenticating to ${CPD_BASE} as ${CPD_USERNAME}..."
-TOKEN="$(curl -sk -X POST "${CPD_BASE}/icp4d-api/v1/authorize" \
-  -H 'Content-Type: application/json' \
-  -d "$(python3 -c 'import sys,json; print(json.dumps({"username": sys.argv[1], "api_key": sys.argv[2]}))' "${CPD_USERNAME}" "${CPD_APIKEY}")" \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)"
-if [[ -z "${TOKEN}" ]]; then
+if ! cpdapi_login "${CPD_BASE}" "${CPD_USERNAME}" api_key "${CPD_APIKEY}"; then
   echo "[ERROR] Failed to get a bearer token from ${CPD_BASE}/icp4d-api/v1/authorize." >&2
   exit 1
 fi
 
 # Collects the users, the groups with the admin role and those groups' members,
 # paging through each list, and prints the admins' usernames.
-ADMINS=("${(@f)$(CPD_BASE="${CPD_BASE}" TOKEN="${TOKEN}" python3 - "${ADMIN_ROLE_ID}" <<'PY'
+ADMINS=("${(@f)$(CPD_BASE="${CPD_BASE}" TOKEN="${CPDAPI_TOKEN}" python3 - "${ADMIN_ROLE_ID}" <<'PY'
 import json, os, ssl, sys, urllib.request
 
 base, token, role = os.environ["CPD_BASE"], os.environ["TOKEN"], sys.argv[1]

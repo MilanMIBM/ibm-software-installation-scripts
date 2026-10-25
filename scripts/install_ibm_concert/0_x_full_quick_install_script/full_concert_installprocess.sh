@@ -55,56 +55,39 @@ DO_KEYCLOAK_USERS="${DO_KEYCLOAK_USERS:-auto}"                # 4.1 only when co
 [[ "${DO_ADMIN_PASSWORD}" == auto ]] && { [[ -n "${CONCERT_ADMIN_NEW_PASSWORD:-}" ]] && DO_ADMIN_PASSWORD=true || DO_ADMIN_PASSWORD=false; }
 [[ "${DO_KEYCLOAK_USERS}" == auto ]] && { [[ -f "${CONCERT_CONFIG_DIR}/concert_users.txt" ]] && DO_KEYCLOAK_USERS=true || DO_KEYCLOAK_USERS=false; }
 
-run_step() {
-    local enabled="$1"
-    local label="$2"
-    local script="$3"
-    shift 3
-
-    if [[ "${enabled}" != "true" ]]; then
-        echo ""
-        echo "==> Skipping: ${label}"
-        return 0
-    fi
-
-    echo ""
-    echo "==> Running:  ${label}"
-    "${script}" "$@"
-}
-
-run_step "${DO_INSTALL_OC}" "0.0 install oc (macOS, CP4D script)" \
+h_run_step "${DO_INSTALL_OC}" "0.0 install oc (macOS, CP4D script)" \
     "${CP4D_ROOT}/0_initial_setup/0.1_install_oc-MAC-ONLY.sh"
-run_step "${DO_FETCH_INSTALLER}" "0.1 fetch IBM Concert installer" \
+h_run_step "${DO_FETCH_INSTALLER}" "0.1 fetch IBM Concert installer" \
     "${SCRIPTS_ROOT}/0_initial_setup/0.1_fetch_concert_installer.sh"
-run_step "${DO_PREPARE_RUNNER}" "0.2 prepare installer runner" \
+h_run_step "${DO_PREPARE_RUNNER}" "0.2 prepare installer runner" \
     "${SCRIPTS_ROOT}/0_initial_setup/0.2_prepare_installer_runner.sh"
 
-run_step "${DO_GLOBAL_PULL_SECRET}" "1.0 global pull secret (optional)" \
+h_run_step "${DO_GLOBAL_PULL_SECRET}" "1.0 global pull secret (optional)" \
     "${SCRIPTS_ROOT}/1_registry_access_and_mirroring/1.0_set_up_global_pull_credential_concert.sh"
-run_step "${DO_APPLY_MIRROR_CONFIG}" "1.3 apply mirror configuration" \
+h_run_step "${DO_APPLY_MIRROR_CONFIG}" "1.3 apply mirror configuration" \
     "${SCRIPTS_ROOT}/1_registry_access_and_mirroring/1.3_apply_datastore_mirror_config.sh"
-run_step "${DO_FAAS_REGISTRY}" "1.4 FaaS insecure registry" \
+h_run_step "${DO_FAAS_REGISTRY}" "1.4 FaaS insecure registry" \
     "${SCRIPTS_ROOT}/1_registry_access_and_mirroring/1.4_set_up_faas_insecure_registry.sh"
 
-run_step "${DO_PREFLIGHT}" "2.0 cluster preflight" \
+h_run_step "${DO_PREFLIGHT}" "2.0 cluster preflight" \
     "${SCRIPTS_ROOT}/2_prepare_cluster/2.0_cluster_preflight.sh"
-run_step "${DO_WORKER_CAPACITY}" "2.0.1 worker capacity" \
+h_run_step "${DO_WORKER_CAPACITY}" "2.0.1 worker capacity" \
     "${SCRIPTS_ROOT}/2_prepare_cluster/2.0.1_ensure_worker_capacity.sh"
-run_step "${DO_CREATE_PROJECTS}" "2.1 create projects" \
+h_run_step "${DO_CREATE_PROJECTS}" "2.1 create projects" \
     "${SCRIPTS_ROOT}/2_prepare_cluster/2.1_create_projects.sh"
-run_step "${DO_SERVICE_MESH}" "2.2 Service Mesh + Istio for Workflows" \
+h_run_step "${DO_SERVICE_MESH}" "2.2 Service Mesh + Istio for Workflows" \
     "${SCRIPTS_ROOT}/2_prepare_cluster/2.2_install_service_mesh_for_workflows.sh"
-run_step "${DO_DATASTORES}" "2.3 provision data stores" \
+h_run_step "${DO_DATASTORES}" "2.3 provision data stores" \
     "${SCRIPTS_ROOT}/2_prepare_cluster/2.3_provision_datastores/2.3_full_step_2.3_provision_datastores.sh"
-run_step "${DO_DATASTORE_SECRETS}" "2.4 data store secrets" \
+h_run_step "${DO_DATASTORE_SECRETS}" "2.4 data store secrets" \
     "${SCRIPTS_ROOT}/2_prepare_cluster/2.4_create_datastore_secrets.sh"
 
-run_step "${DO_INSTALL_CONCERT}" "3 install IBM Concert" \
+h_run_step "${DO_INSTALL_CONCERT}" "3 install IBM Concert" \
     "${SCRIPTS_ROOT}/3_install_concert/3_full_step_3_installprocess-concert.sh"
-run_step "${DO_INSTALL_OPTIMIZE}" "5 install Concert Optimize (Turbonomic)" \
+h_run_step "${DO_INSTALL_OPTIMIZE}" "5 install Concert Optimize (Turbonomic)" \
     "${SCRIPTS_ROOT}/5_install_optimize/5_full_step_5_install_optimize.sh"
 
-run_step "${DO_ADMIN_PASSWORD}" "4.0 rotate admin password" \
+h_run_step "${DO_ADMIN_PASSWORD}" "4.0 rotate admin password" \
     "${SCRIPTS_ROOT}/4_post_install/4.0_change_admin_password.sh"
-run_step "${DO_KEYCLOAK_USERS}" "4.1 Keycloak users" \
+h_run_step "${DO_KEYCLOAK_USERS}" "4.1 Keycloak users" \
     "${SCRIPTS_ROOT}/4_post_install/4.1_manage_keycloak_users.sh"

@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- No config needed: find the repo root without sourcing env_bootstrap.sh ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; unset _b
 source "${REPO_ROOT}/src/helpers/cli_install_helpers.sh"
+source "${REPO_ROOT}/src/helpers/version_resolver.sh"
 
 # ---
 
@@ -27,19 +28,23 @@ is never touched; only DIR/helm is written.
 
 Options:
   --version V   vX.Y.Z, "latest" (newest release) or "latest-3" (newest Helm 3).
-                Default: HELM_VERSION, else v3.18.4 - the version this repo pins
-                for DataStax Mission Control (Helm 3.14 - 3.18 only) and the
-                Concert installer runner.
+                Default: HELM_VERSION, else the version this repo pins for
+                DataStax Mission Control (Helm 3.14 - 3.18 only) and the
+                Concert installer runner: helm/pinned_version in
+                src/helpers/version_catalog.json (v3.18.4).
   --dir DIR     install folder (default: CLI_INSTALL_DIR, else /usr/local/bin;
                 ~/bin on Windows). sudo is used when DIR is not writable.
   --force       install even when helm is already on PATH
   --yes, -y     do not ask before installing
   --check       only report the helm on PATH (exit 1 when there is none)
+  --no-path-check
+                skip the PATH warnings after installing (for a pinned helm
+                kept in a folder that is deliberately off PATH)
   -h, --help    this help
 EOF
 }
 
-VERSION="${HELM_VERSION:-}" DIR="" FORCE=false CHECK_ONLY=false
+VERSION="${HELM_VERSION:-}" DIR="" FORCE=false CHECK_ONLY=false PATH_CHECK=true
 while (( $# )); do
     case "$1" in
         --version) [[ -n "${2:-}" ]] || cli_die "--version needs a value"; VERSION="$2"; shift 2 ;;
@@ -49,6 +54,7 @@ while (( $# )); do
         --force) FORCE=true; shift ;;
         -y|--yes) export CLI_ASSUME_YES=true; shift ;;
         --check) CHECK_ONLY=true; shift ;;
+        --no-path-check) PATH_CHECK=false; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; cli_die "Unknown argument: $1" ;;
     esac
@@ -74,10 +80,11 @@ if ${CHECK_ONLY}; then
 fi
 
 # --- 2. Which version ------------------------------------------------------------------
-case "${VERSION:-v3.18.4}" in
+VERSION="${VERSION:-$(vr_catalog helm/pinned_version)}"
+case "${VERSION}" in
     latest)   VERSION="$(curl -fsSL --retry 3 https://get.helm.sh/helm-latest-version || true)" ;;
     latest-3) VERSION="$(curl -fsSL --retry 3 https://get.helm.sh/helm3-latest-version || true)" ;;
-    *)        VERSION="v${${VERSION:-v3.18.4}#v}" ;;
+    *)        VERSION="v${VERSION#v}" ;;
 esac
 [[ "${VERSION}" == v<->.<->.<->* ]] || cli_die "Not a helm version: '${VERSION}' (vX.Y.Z, latest or latest-3)."
 
@@ -115,4 +122,6 @@ fi
 
 cli_install_binary "${TMP}/${OS}-${ARCH}/helm${EXE}" "${DIR}" "helm${EXE}"
 cli_info "Installed: ${TARGET} ($("${TARGET}" version --short 2>/dev/null || print -r -- "${VERSION}"))"
-cli_check_path "${DIR}" helm
+if ${PATH_CHECK}; then
+    cli_check_path "${DIR}" helm
+fi

@@ -13,6 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
 # --- Switches ------------------------------------------------------------------
 # SKIP_RHOAI_INSTALL controls the whole script (RHOAI operator + Service Mesh):
@@ -58,20 +59,12 @@ NAMESPACE="redhat-ods-operator"
 SERVICE_MESH_VERSION="${SERVICE_MESH_VERSION:-$(cp4d_default_service_mesh_version)}"
 TIMEOUT=300
 
-# Map CP4D VERSION to the corresponding RHOAI channel.
-# Channel names are OLM channel identifiers (e.g. "2.25"), not CSV version strings.
-# For unmapped versions, the default channel is resolved from the marketplace.
-case "${VERSION}" in
-  # Software Hub 5.4.0 still pins RHOAI 2.25 (IBM docs, prep-cluster-openshift-ai);
-  # the marketplace default is now stable-3.x, which is a major-version jump.
-  5.3.0|5.3.1|5.4.0) CHANNEL_VERSION="stable-2.25" ;;
-  *)
-    echo "[INFO] No fixed RHOAI channel mapping for CP4D VERSION=${VERSION}, resolving latest stable from marketplace..."
-    CHANNEL_VERSION=$(oc get packagemanifest rhods-operator \
-      -n openshift-marketplace \
-      -o jsonpath='{.status.defaultChannel}')
-    ;;
-esac
+# RHOAI channel for this Software Hub release: the pin in version_catalog.json
+# (IBM docs: 5.3.x / 5.4.0 stay on RHOAI 2.25, while the marketplace default is
+# now stable-3.x, a major-version jump), used only when the cluster's catalog
+# offers it. Otherwise the old map / the catalog's default channel
+# (legacy_rhoai_channel in src/helpers/legacy_version_resolution.sh).
+CHANNEL_VERSION="$(vr_rhoai_channel "${VERSION}")"
 
 echo "[INFO] CP4D VERSION=${VERSION} -> RHOAI channel=${CHANNEL_VERSION}"
 
@@ -158,11 +151,11 @@ EOF
 # Installs cluster-wide into openshift-operators; the global OperatorGroup already exists.
 if [[ "${SERVICE_MESH_VERSION}" == "3" ]]; then
   SM_OPERATOR="servicemeshoperator3"
-  SM_CHANNEL="stable"
+  SM_CHANNEL="$(vr_operator_channel "${SM_OPERATOR}")"
   echo "[INFO] Installing Red Hat OpenShift Service Mesh 3..."
 elif [[ "${SERVICE_MESH_VERSION}" == "2" ]]; then
   SM_OPERATOR="servicemeshoperator"
-  SM_CHANNEL="stable"
+  SM_CHANNEL="$(vr_operator_channel "${SM_OPERATOR}")"
   echo "[INFO] Installing Red Hat OpenShift Service Mesh 2..."
 else
   echo "[ERROR] Unsupported SERVICE_MESH_VERSION=${SERVICE_MESH_VERSION}. Must be 2 or 3." >&2

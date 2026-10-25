@@ -51,12 +51,18 @@ ERRORS=0
 WARNINGS=0
 CHECKS_PASSED=0
 
-# Minimum requirements
-MIN_OCP_VERSION="4.12"
-MIN_WORKER_NODES=4
-MIN_CPU_PER_NODE=16
-MIN_MEMORY_PER_NODE=64  # GB
-MIN_STORAGE_SIZE=500    # GB
+# Minimum requirements: cpd/wxo_prereq in src/helpers/version_catalog.json (the
+# legacy values in legacy_version_resolution.py when it cannot be read). The
+# second argument is this script's own value, used only when python3 cannot run.
+_wxo_catalog="$(cd "$(dirname "$0")/../../helpers" 2>/dev/null && pwd)/version_catalog.py"
+wxo_min() {   # <key> <value without python3>
+    python3 -I "$_wxo_catalog" get "cpd/wxo_prereq/$1" 2>/dev/null || echo "$2"
+}
+MIN_OCP_VERSION="$(wxo_min min_ocp_version 4.12)"
+MIN_WORKER_NODES="$(wxo_min min_worker_nodes 4)"
+MIN_CPU_PER_NODE="$(wxo_min min_cpu_per_node 16)"
+MIN_MEMORY_PER_NODE="$(wxo_min min_memory_per_node_gb 64)"  # GB
+MIN_STORAGE_SIZE="$(wxo_min min_storage_gb 500)"            # GB
 REQUIRED_STORAGE_CLASSES=("block" "file")
 
 # Environment variables with defaults

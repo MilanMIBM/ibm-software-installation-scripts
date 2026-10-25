@@ -43,8 +43,10 @@ elif ! (( ${${(f)CARRIED_BY}[(Ie)${SOURCE}]} )); then
     SOURCE="${${(f)CARRIED_BY}[1]}"
 fi
 
+# CONCERT_DS_PG_OPERATOR_CHANNEL if the catalog offers it, else the catalog's
+# default channel; as given (or stable-v1) when the catalog cannot be read.
 concert_install_operator openshift-operators cloudnative-pg \
-    "${CONCERT_DS_PG_OPERATOR_CHANNEL:-stable-v1}" \
+    "$(vr_operator_channel cloudnative-pg "${CONCERT_DS_PG_OPERATOR_CHANNEL:-}")" \
     "${SOURCE}" \
     'cloudnative-pg\.' all
 

@@ -10,6 +10,7 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - publish the Kafka CA certificates to the Software Hub vault
@@ -75,16 +76,14 @@ CPD_DETAILS_FILE="${CPD_DETAILS_FILE:-${REPO_ROOT}/configs/cp4d_config/cpd_insta
 VAULT_URN="${VAULT_URN:-0000000000:internal}"
 CLI_CPD_URL=""
 
-_need_value() { [[ -n "${2:-}" && "${2}" != --* ]] || { echo "[ERROR] $1 requires a value." >&2; exit 1; }; }
-
 while (( $# > 0 )); do
     case "$1" in
-        --only)        _need_value "$1" "${2:-}"; ONLY="$2"; shift 2 ;;
-        --group)       _need_value "$1" "${2:-}"; GROUP="$2"; USE_GROUP=true; shift 2 ;;
+        --only)        h_need_value "$1" "${2:-}"; ONLY="$2"; shift 2 ;;
+        --group)       h_need_value "$1" "${2:-}"; GROUP="$2"; USE_GROUP=true; shift 2 ;;
         --no-group)    USE_GROUP=false; shift ;;
         --recreate)    RECREATE=true; shift ;;
-        --cpd-url)     _need_value "$1" "${2:-}"; CLI_CPD_URL="$2"; shift 2 ;;
-        --cpd-details) _need_value "$1" "${2:-}"; CPD_DETAILS_FILE="$2"; shift 2 ;;
+        --cpd-url)     h_need_value "$1" "${2:-}"; CLI_CPD_URL="$2"; shift 2 ;;
+        --cpd-details) h_need_value "$1" "${2:-}"; CPD_DETAILS_FILE="$2"; shift 2 ;;
         --dry-run)     DRY_RUN=true; shift ;;
         -q|--quiet)    VERBOSE=false; shift ;;
         -h|--help)     sed -n '16,65p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
