@@ -191,6 +191,24 @@ if [[ -z "${_DATAAPI_ROUTE_EXISTS}" ]]; then
 fi
 DATASTAX_HCD_URL="https://$(oc get route "${_DATAAPI_ROUTE_NAME}" -n "${PROJECT_CPD_INST_OPERANDS}" -o jsonpath='{.spec.host}')"
 
+# --- Local CQL connection details: straight to the HCD database service (no gateway).
+#     cass-operator names it <cluster>-<dc>-service; find it by its datacenter label.
+#     The superuser is the CQL login; the local DC is the datacenter name the driver sees.
+DATASTAX_HCD_CQL_USER="${DATASTAX_HCD_API_USER}"
+DATASTAX_HCD_CQL_PASSWORD="${DATASTAX_HCD_API_PASSWORD}"
+DATASTAX_HCD_CQL_LOCAL_DC="$(oc get cassandradatacenters.cassandra.datastax.com "${_PRIMARY_DC}" -n "${PROJECT_CPD_INST_OPERANDS}" -o json | jq -r '.spec.datacenterName // .metadata.name')"
+DATASTAX_HCD_CQL_SVC="$(oc get service -n "${PROJECT_CPD_INST_OPERANDS}" -l "cassandra.datastax.com/datacenter=${_PRIMARY_DC}" -o name 2>/dev/null \
+    | sed 's|^service/||' | grep -- '-service$' | grep -v -e '-all-pods-service$' -e '-additional-seed-service$' | head -n1 || true)"
+DATASTAX_HCD_CQL_CONTACT_POINT=""
+if [[ -n "${DATASTAX_HCD_CQL_SVC}" ]]; then
+    DATASTAX_HCD_CQL_CONTACT_POINT="${DATASTAX_HCD_CQL_SVC}.${PROJECT_CPD_INST_OPERANDS}.svc:9042"
+    echo "[INFO] HCD CQL contact point: ${DATASTAX_HCD_CQL_CONTACT_POINT} (local DC '${DATASTAX_HCD_CQL_LOCAL_DC}')"
+    echo "[INFO] From your workstation: oc port-forward -n ${PROJECT_CPD_INST_OPERANDS} svc/${DATASTAX_HCD_CQL_SVC} 9042:9042"
+    echo "       then connect to 127.0.0.1:9042 with DATASTAX_HCD_CQL_USER / DATASTAX_HCD_CQL_PASSWORD."
+else
+    echo "[WARN] No CQL service found for datacenter '${_PRIMARY_DC}' - DATASTAX_HCD_CQL_CONTACT_POINT left empty." >&2
+fi
+
 # --- PREPARE_TLS: export certs for secure external connections to the HCD services ---
 DATASTAX_HCD_ROUTE_CA="" DATASTAX_HCD_CQL_CA=""
 if [[ "${PREPARE_TLS}" == "true" ]]; then
@@ -258,7 +276,13 @@ export DATASTAX_HCD_API_USER=\"${DATASTAX_HCD_API_USER}\"
 export DATASTAX_HCD_API_PASSWORD=\"${DATASTAX_HCD_API_PASSWORD}\"
 export DATASTAX_HCD_KEYSPACE=\"default_keyspace\"
 export DATASTAX_HCD_ROUTE_CA=\"${DATASTAX_HCD_ROUTE_CA}\"
-export DATASTAX_HCD_CQL_CA=\"${DATASTAX_HCD_CQL_CA}\""
+export DATASTAX_HCD_CQL_CA=\"${DATASTAX_HCD_CQL_CA}\"
+#--- DataStax HyperConvergedDatabase (HCD) - local CQL (in-cluster service, or 127.0.0.1:9042 via oc port-forward)
+export DATASTAX_HCD_CQL_CONTACT_POINT=\"${DATASTAX_HCD_CQL_CONTACT_POINT}\"
+export DATASTAX_HCD_CQL_SVC=\"${DATASTAX_HCD_CQL_SVC}\"
+export DATASTAX_HCD_CQL_LOCAL_DC=\"${DATASTAX_HCD_CQL_LOCAL_DC}\"
+export DATASTAX_HCD_CQL_USER=\"${DATASTAX_HCD_CQL_USER}\"
+export DATASTAX_HCD_CQL_PASSWORD=\"${DATASTAX_HCD_CQL_PASSWORD}\""
 
 if [[ -f "${VARS_FILE}" ]]; then
     echo "${DATASTAX_BLOCK}" >> "${VARS_FILE}"
