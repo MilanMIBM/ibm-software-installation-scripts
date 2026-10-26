@@ -56,6 +56,10 @@ export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
 # ---- Component toggles -------------------------------------------------------
 # The broker is always installed.
 {{ export_block(confluent_component_toggles) }}
+# ---- Optional Iceberg / watsonx.data integration ------------------------------
+# Requires an existing COS-backed catalog and a filled local setup config.
+export DO_ICEBERG_WATSONX_SETUP="${DO_ICEBERG_WATSONX_SETUP:-false}"
+export ICEBERG_WATSONX_CONFIG_FILE="${ICEBERG_WATSONX_CONFIG_FILE:-${CONFLUENT_CONFIG_DIR}/iceberg_watsonx_setup.sh}"
 # ---- Ports -------------------------------------------------------------------
 {{ export_block(confluent_ports) }}
 # ---- Routes / waits ----------------------------------------------------------

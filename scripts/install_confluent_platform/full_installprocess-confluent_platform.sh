@@ -8,6 +8,7 @@ SECONDS=0
 trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+_iceberg_setup_override="${DO_ICEBERG_WATSONX_SETUP-}"
 # --- Config target: source confluent_vars.sh LAST so its cluster/storage values
 # win over the CP4D ones defined in cpd_vars.sh. Override to point these
 # scripts at a different config:  ENV_TARGET=<name|path> ./<script>.sh
@@ -35,6 +36,11 @@ source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 # addon's full_installprocess-confluent_flink.sh runs once the platform is up.
 # Set DO_FLINK_ADDON=false to skip it even when the settings are present.
 #
+# Iceberg/watsonx.data: DO_ICEBERG_WATSONX_SETUP=true runs the optional integration
+# setup after the platform is ready. Requires a configured external catalog and
+# configs/confluent_platform_config/iceberg_watsonx_setup.sh. The setup utility
+# can also be run separately after installing watsonx.data.
+#
 # Step toggles - override any of them at runtime, e.g.:
 #   DO_CONFLUENT_PREP=false ./full_installprocess-confluent_platform.sh
 # ==============================================================================
@@ -44,6 +50,23 @@ DO_CONFLUENT_INSTALL="${DO_CONFLUENT_INSTALL:-true}"           # 1.1 install the
 DO_CONFLUENT_STATUS="${DO_CONFLUENT_STATUS:-true}"             # 1.2 report component health
 DO_CONFLUENT_INSTANCE_DETAILS="${DO_CONFLUENT_INSTANCE_DETAILS:-true}" # 1.3 write instance details
 DO_FLINK_ADDON="${DO_FLINK_ADDON:-true}"                       # Flink addon full install, if configured
+DO_ICEBERG_WATSONX_SETUP="${_iceberg_setup_override:-${DO_ICEBERG_WATSONX_SETUP:-false}}"
+unset _iceberg_setup_override
+
+case "${DO_ICEBERG_WATSONX_SETUP}" in
+    true|false) ;;
+    *) echo "[ERROR] DO_ICEBERG_WATSONX_SETUP must be true or false." >&2; exit 1 ;;
+esac
+
+if [[ "${DO_ICEBERG_WATSONX_SETUP}" == true ]]; then
+    _iceberg_config="${ICEBERG_WATSONX_CONFIG_FILE:-${_CP4D_REPO_ROOT}/configs/confluent_platform_config/iceberg_watsonx_setup.sh}"
+    if [[ ! -f "${_iceberg_config}" ]]; then
+        echo "[ERROR] Iceberg setup enabled but its config is missing: ${_iceberg_config}" >&2
+        echo "[ERROR] Copy connector_configs/iceberg-watsonx.example.sh into the ignored configs directory first." >&2
+        exit 1
+    fi
+    unset _iceberg_config
+fi
 
 # Fail before touching the cluster if the config was never created.
 if [[ -z "${PROJECT_CONFLUENT_SERVER:-}" ]]; then
@@ -77,8 +100,9 @@ h_run_step --stop "${DO_CONFLUENT_INSTANCE_DETAILS}" \
     "1.3 confluent get instance details" \
     "${SCRIPT_DIR}/1.3_confluent_get_instance_details.sh"
 
-echo ""
-echo "[INFO] Confluent Platform full install complete."
+h_run_step --stop "${DO_ICEBERG_WATSONX_SETUP}" \
+    "iceberg watsonx.data integration" \
+    "${SCRIPT_DIR}/utility_scripts_confluent_platform/x.6_confluent_setup_iceberg_watsonx.sh"
 
 # --- Flink addon - autodetected from confluent_vars.sh ------------------------
 # Both the managed sizing block (PROJECT_CONFLUENT_FLINK) and the unmanaged
@@ -102,3 +126,6 @@ else
         "${SCRIPT_DIR}/install_confluent_platform_flink_addon/full_installprocess-confluent_flink.sh"
 fi
 unset _flink_detected
+
+echo ""
+echo "[INFO] Confluent Platform full install complete."
