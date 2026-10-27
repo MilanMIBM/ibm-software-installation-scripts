@@ -492,7 +492,8 @@ cp4d_license_entitlement_id_records = [
 # Entitlements with a non-production variant, i.e. the only ones that accept
 # --production=false (olm-utils-v4:5.4.0.8 entitlement/metadata.json). Keep in
 # sync with CPDENT_NON_PRODUCTION_CAPABLE in src/helpers/cpd_entitlement_helpers.sh;
-# every other entitlement is always applied as production.
+# every other entitlement is always applied as production. Every entitlement in
+# that metadata has a production variant, so "production" is True for all records.
 cp4d_non_production_entitlement_ids = {
     "cpd-enterprise",
     "data-integration-unstructured-data",
@@ -525,6 +526,7 @@ cp4d_non_production_entitlement_ids = {
 }
 
 for _record in cp4d_license_entitlement_id_records:
+    _record["production"] = True
     _record["non_production"] = (
         _record["license_id"] in cp4d_non_production_entitlement_ids
     )

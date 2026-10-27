@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.24.0"
+__generated_with = "0.25.1"
 app = marimo.App(
     width="full",
     app_title="Cloud Pak For Data - Setup Config Generator",
@@ -208,7 +208,9 @@ def _(custom_pull_prefix, image_pull_creds_select):
     ):
         _kind, _reason = _classify_registry(str(custom_pull_prefix))
         _chosen = (
-            "local" if "Local" in image_pull_creds_select.selected_key else "private"
+            "local"
+            if "Local" in image_pull_creds_select.selected_key
+            else "private"
         )
         if _kind != "unknown" and _kind != _chosen:
             _registry_check = mo.callout(
@@ -363,6 +365,9 @@ def _(
         items={
             "**License Entitlements**": mo.vstack(
                 [
+                    mo.md(
+                        "The **production** and **non_production** columns show which license variants each entitlement can be applied as. Checking the box below applies the selected entitlements as production; leaving it unchecked applies them as non-production, except entitlements whose **non_production** is `false` - those are always applied as production."
+                    ),
                     license_entitlement_table,
                     licenses_are_prod_checkbox.center(),
                     prod_license_check,
@@ -625,7 +630,8 @@ def _(install_component_table_1, install_component_table_2):
 def _(install_component_table_1, install_component_table_2):
     components_to_install = [
         item["component_id"]
-        for item in install_component_table_1.value + install_component_table_2.value
+        for item in install_component_table_1.value
+        + install_component_table_2.value
     ]
     print(components_to_install)
     components_to_install_str = ",".join(components_to_install)
@@ -686,7 +692,8 @@ def _(optional_images_table_1, optional_images_table_2):
 def _(optional_images_table_1, optional_images_table_2):
     optional_images = [
         item["image_group_id"]
-        for item in optional_images_table_1.value + optional_images_table_2.value
+        for item in optional_images_table_1.value
+        + optional_images_table_2.value
     ]
     print(optional_images)
     optional_images_str = ",".join(optional_images)
@@ -1080,7 +1087,9 @@ def _(
     # rendering the templates when "Generate" has not been clicked yet.
     _save_result = None
     if save_to_config_dir_button.value:
-        _config_dir = os.path.join(os.path.dirname(__file__), "configs", "cp4d_config")
+        _config_dir = os.path.join(
+            os.path.dirname(__file__), "configs", "cp4d_config"
+        )
         os.makedirs(_config_dir, exist_ok=True)
 
         _cpd_vars_content = (
