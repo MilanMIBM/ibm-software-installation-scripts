@@ -230,6 +230,129 @@ mc_wait_ready() {
     done
 }
 
+# =============================================================================
+# CQL gateway (CqlConnectivity) - shared by the standalone 3.3 script and the
+# watsonx.data 5_2 script
+# =============================================================================
+# mc_cql_gateway_dns_base <gateway-name> <namespace>
+# Default DNS base for a gateway: <name>-<namespace>.<apps domain>. Sets REPLY.
+mc_cql_gateway_dns_base() {
+    local name="$1" ns="$2" apps_domain label
+    apps_domain="$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
+    [[ -n "${apps_domain}" ]] || mc_die "Could not read the cluster's apps domain - pass --dns-base."
+    label="${name}-${ns}"
+    (( ${#label} <= 63 )) || mc_die "'${label}' is longer than a DNS label allows (63) - pass a shorter --name or --dns-base."
+    REPLY="${label}.${apps_domain}"
+}
+
+# mc_cql_gateway_wait <namespace> <gateway-name> <size> <metadata-host>
+# Wait for the CqlConnectivity to be Ready, its cql-router deployments to be
+# available and the passthrough Route for the metadata host to exist.
+mc_cql_gateway_wait() {
+    local ns="$1" name="$2" size="$3" metadata_host="$4" i t
+    mc_wait_ready cqlconnectivities.missioncontrol.datastax.com "${name}" "${ns}" 600 \
+        || mc_die "CqlConnectivity ${name} not Ready after 10 minutes: oc describe cqlconnectivities.missioncontrol.datastax.com ${name} -n ${ns}"
+
+    # Ready flips before the router pods are up; wait for them and the metadata Route.
+    for (( i = 0; i < size; i++ )); do
+        for (( t = 0; t < 60; t++ )); do
+            oc get deployment "${name}-cql-router-${i}" -n "${ns}" >/dev/null 2>&1 && break
+            sleep 5
+        done
+        oc rollout status "deployment/${name}-cql-router-${i}" -n "${ns}" --timeout=600s >/dev/null \
+            || mc_die "cql-router ${i} did not become available: oc get pods -n ${ns} | grep ${name}-cql-router"
+    done
+    for (( t = 0; t < 60; t++ )); do
+        oc get route -n "${ns}" -o jsonpath='{.items[*].spec.host}' | tr ' ' '\n' | grep -qx "${metadata_host}" && break
+        sleep 5
+    done
+    oc get route -n "${ns}" -o jsonpath='{.items[*].spec.host}' | tr ' ' '\n' | grep -qx "${metadata_host}" \
+        || mc_die "No Route for ${metadata_host} - check: oc get ingress,route -n ${ns}"
+    mc_info "Routers available, metadata Route: ${metadata_host}"
+}
+
+# mc_cql_gateway_scb <namespace> <gateway-name> <metadata-host> <scb-file> <work-dir>
+# Build the gateway's Secure Connect Bundle: an Astra-format zip made from its
+# cert-manager secrets - client cert/key/CA (PEM, for Python/Node/C++/Go),
+# keystore/truststore (JKS, for Java) and config.json pointing at the metadata
+# service. <work-dir> is a private (0700) scratch dir the caller removes on exit;
+# it holds the client key. Sets REPLY to the gateway's local DC.
+mc_cql_gateway_scb() {
+    local ns="$1" name="$2" metadata_host="$3" scb="$4" work="$5"
+    local client_secret="${name}-client" store_pw meta t
+    for (( t = 0; t < 30; t++ )); do
+        oc get secret "${client_secret}" "${name}-pw" -n "${ns}" >/dev/null 2>&1 && break
+        sleep 5
+    done
+    oc get secret "${client_secret}" "${name}-pw" -n "${ns}" >/dev/null 2>&1 \
+        || mc_die "Gateway secrets ${client_secret} / ${name}-pw not found in ${ns}."
+    mkdir -p "${work}/bundle"
+    mc_secret_value "${ns}" "${client_secret}" ca.crt         > "${work}/bundle/ca.crt"
+    mc_secret_value "${ns}" "${client_secret}" tls.crt        > "${work}/bundle/cert"
+    mc_secret_value "${ns}" "${client_secret}" tls.key        > "${work}/bundle/key"
+    mc_secret_value "${ns}" "${client_secret}" keystore.jks   > "${work}/bundle/identity.jks"
+    mc_secret_value "${ns}" "${client_secret}" truststore.jks > "${work}/bundle/trustStore.jks"
+    store_pw="$(mc_secret_value "${ns}" "${name}-pw" keystore-pw)"
+
+    # Check the metadata service the way the drivers call it (mutual TLS; the
+    # drivers do not verify its host name, and its certificate is issued for the
+    # proxy host and router IDs). Its answer also gives the gateway's local DC.
+    meta="$(python3 - "${work}/bundle" "${metadata_host}" <<'PY'
+import json, ssl, sys, time, urllib.request
+d, host = sys.argv[1], sys.argv[2]
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.check_hostname = False
+ctx.load_verify_locations(f"{d}/ca.crt")
+ctx.load_cert_chain(f"{d}/cert", f"{d}/key")
+last = None
+for _ in range(24):
+    try:
+        with urllib.request.urlopen(f"https://{host}:443/metadata", context=ctx, timeout=10) as r:
+            print(json.dumps(json.load(r)))
+            sys.exit(0)
+    except Exception as e:
+        last = e
+        time.sleep(5)
+sys.exit(f"metadata service at https://{host}:443/metadata not reachable: {last}")
+PY
+)" || mc_die "${meta:-metadata service check failed}"
+    REPLY="$(jq -r '.contact_info.local_dc // "dc1"' <<<"${meta}")"
+    mc_info "Metadata service OK: proxy $(jq -r '.contact_info.sni_proxy_address' <<<"${meta}"), $(jq -r '.contact_info.contact_points | length' <<<"${meta}") router(s), local DC '${REPLY}'"
+
+    MC_STORE_PW="${store_pw}" python3 - "${work}/bundle" "${metadata_host}" "${REPLY}" "${scb}" <<'PY'
+import json, os, sys, zipfile
+d, host, local_dc, out = sys.argv[1:5]
+pw = os.environ["MC_STORE_PW"]
+config = {
+    "host": host, "port": 443, "localDC": local_dc,
+    "caCertLocation": "./ca.crt", "certLocation": "./cert", "keyLocation": "./key",
+    "keyStoreLocation": "./identity.jks", "keyStorePassword": pw,
+    "trustStoreLocation": "./trustStore.jks", "trustStorePassword": pw,
+}
+os.makedirs(os.path.dirname(out), mode=0o700, exist_ok=True)
+old = os.umask(0o077)
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("config.json", json.dumps(config, indent=2))
+    for f in ("ca.crt", "cert", "key", "identity.jks", "trustStore.jks"):
+        z.write(os.path.join(d, f), f)
+os.umask(old)
+PY
+    mc_info "Secure Connect Bundle: ${scb#${_CP4D_REPO_ROOT}/}"
+}
+
+# Driver snippets for connecting through a gateway with its Secure Connect Bundle.
+mc_cql_gateway_usage() {
+    cat <<'EOF'
+
+Connect from outside the cluster (driver chooses contact points and TLS from the bundle;
+do not also set contact points, port or SSL options):
+  Python  Cluster(cloud={"secure_connect_bundle": "$DATASTAX_HCD_SCB"},
+                  auth_provider=PlainTextAuthProvider("$DATASTAX_HCD_CQL_USER", "$DATASTAX_HCD_CQL_PASSWORD"))
+  Java    CqlSession.builder().withCloudSecureConnectBundle(Paths.get(scb)).withAuthCredentials(user, pass)
+  cqlsh   cqlsh -b "$DATASTAX_HCD_SCB" -u "$DATASTAX_HCD_CQL_USER" -p "$DATASTAX_HCD_CQL_PASSWORD"
+EOF
+}
+
 # Host of the UI route, empty when it does not exist yet.
 mc_ui_route_host() {
     oc get route "${MC_UI_ROUTE_NAME:-${MC_RELEASE_NAME}-ui}" -n "${MC_NAMESPACE}" \

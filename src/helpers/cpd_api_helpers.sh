@@ -23,6 +23,9 @@ _CPDAPI_HELPERS_LOADED=1
 
 CPDAPI_BASE=""
 CPDAPI_TOKEN=""
+# Extra request headers for every cpdapi call, e.g. CPDAPI_HEADERS=("AuthInstanceId: <id>")
+# for the watsonx.data (lakehouse) API.
+typeset -ga CPDAPI_HEADERS
 
 # cpdapi_authorize <base url> <user> <api_key|password> <secret>
 # POST /icp4d-api/v1/authorize. Sets API_CODE ("000" when unreachable) and API_BODY.
@@ -50,6 +53,8 @@ cpdapi_login() {
 # cpdapi <method> <path> [json body] -> API_CODE, API_BODY
 cpdapi() {
     local -a _args=(-sk -X "$1" -H "Authorization: Bearer ${CPDAPI_TOKEN}" -H 'Accept: application/json' -w $'\n%{http_code}')
+    local _h
+    for _h in "${CPDAPI_HEADERS[@]}"; do _args+=(-H "${_h}"); done
     (( $# >= 3 )) && _args+=(-H 'Content-Type: application/json' --data "$3")
     local _resp
     _resp="$(curl "${_args[@]}" "${CPDAPI_BASE}$2" || true)"

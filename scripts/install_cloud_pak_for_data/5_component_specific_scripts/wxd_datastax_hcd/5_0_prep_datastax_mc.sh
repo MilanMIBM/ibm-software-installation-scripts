@@ -191,14 +191,38 @@ if [[ -z "${_DATAAPI_ROUTE_EXISTS}" ]]; then
 fi
 DATASTAX_HCD_URL="https://$(oc get route "${_DATAAPI_ROUTE_NAME}" -n "${PROJECT_CPD_INST_OPERANDS}" -o jsonpath='{.spec.host}')"
 
-# --- Local CQL connection details: straight to the HCD database service (no gateway).
-#     cass-operator names it <cluster>-<dc>-service; find it by its datacenter label.
+# --- Local CQL connection details: straight to the HCD database services (no gateway).
 #     The superuser is the CQL login; the local DC is the datacenter name the driver sees.
 DATASTAX_HCD_CQL_USER="${DATASTAX_HCD_API_USER}"
 DATASTAX_HCD_CQL_PASSWORD="${DATASTAX_HCD_API_PASSWORD}"
-DATASTAX_HCD_CQL_LOCAL_DC="$(oc get cassandradatacenters.cassandra.datastax.com "${_PRIMARY_DC}" -n "${PROJECT_CPD_INST_OPERANDS}" -o json | jq -r '.spec.datacenterName // .metadata.name')"
+_DC_JSON="$(oc get cassandradatacenters.cassandra.datastax.com "${_PRIMARY_DC}" -n "${PROJECT_CPD_INST_OPERANDS}" -o json)"
+DATASTAX_HCD_CQL_LOCAL_DC="$(jq -r '.spec.datacenterName // .metadata.name' <<< "${_DC_JSON}")"
+
+# Datacenter service: cass-operator's headless <cluster>-<dc>-service, resolving to every
+# database pod. Build the name from the CR (DNS-sanitised; datacenterName override or the
+# CR name, depending on operator version) and keep the first candidate that exists.
+DATASTAX_HCD_DC_SVC="" DATASTAX_HCD_DC_ENDPOINT=""
+for _cand in $(jq -r 'def k8s: ascii_downcase | gsub("[^a-z0-9-]"; "");
+        (.spec.clusterName | k8s) as $c
+        | [.spec.datacenterName, .metadata.name] | map(select(. != null and . != "") | "\($c)-\(k8s)-service") | unique[]' <<< "${_DC_JSON}"); do
+    if oc get service "${_cand}" -n "${PROJECT_CPD_INST_OPERANDS}" &>/dev/null; then
+        DATASTAX_HCD_DC_SVC="${_cand}"
+        break
+    fi
+done
+if [[ -n "${DATASTAX_HCD_DC_SVC}" ]]; then
+    DATASTAX_HCD_DC_ENDPOINT="${DATASTAX_HCD_DC_SVC}.${PROJECT_CPD_INST_OPERANDS}.svc:9042"
+    echo "[INFO] HCD datacenter service endpoint: ${DATASTAX_HCD_DC_ENDPOINT}"
+else
+    echo "[WARN] No <cluster>-<dc>-service found for datacenter '${_PRIMARY_DC}' - DATASTAX_HCD_DC_ENDPOINT left empty." >&2
+fi
+
+# CQL service: the other database-facing service carrying this datacenter's label
+# (e.g. Mission Control's <cluster>-<dc>-cqlsh-service); falls back to the DC service.
 DATASTAX_HCD_CQL_SVC="$(oc get service -n "${PROJECT_CPD_INST_OPERANDS}" -l "cassandra.datastax.com/datacenter=${_PRIMARY_DC}" -o name 2>/dev/null \
-    | sed 's|^service/||' | grep -- '-service$' | grep -v -e '-all-pods-service$' -e '-additional-seed-service$' | head -n1 || true)"
+    | sed 's|^service/||' | grep -- '-service$' | grep -v -e '-all-pods-service$' -e '-additional-seed-service$' \
+    | grep -vxF -- "${DATASTAX_HCD_DC_SVC}" | head -n1 || true)"
+DATASTAX_HCD_CQL_SVC="${DATASTAX_HCD_CQL_SVC:-${DATASTAX_HCD_DC_SVC}}"
 DATASTAX_HCD_CQL_CONTACT_POINT=""
 if [[ -n "${DATASTAX_HCD_CQL_SVC}" ]]; then
     DATASTAX_HCD_CQL_CONTACT_POINT="${DATASTAX_HCD_CQL_SVC}.${PROJECT_CPD_INST_OPERANDS}.svc:9042"
@@ -280,6 +304,8 @@ export DATASTAX_HCD_CQL_CA=\"${DATASTAX_HCD_CQL_CA}\"
 #--- DataStax HyperConvergedDatabase (HCD) - local CQL (in-cluster service, or 127.0.0.1:9042 via oc port-forward)
 export DATASTAX_HCD_CQL_CONTACT_POINT=\"${DATASTAX_HCD_CQL_CONTACT_POINT}\"
 export DATASTAX_HCD_CQL_SVC=\"${DATASTAX_HCD_CQL_SVC}\"
+export DATASTAX_HCD_DC_ENDPOINT=\"${DATASTAX_HCD_DC_ENDPOINT}\"
+export DATASTAX_HCD_DC_SVC=\"${DATASTAX_HCD_DC_SVC}\"
 export DATASTAX_HCD_CQL_LOCAL_DC=\"${DATASTAX_HCD_CQL_LOCAL_DC}\"
 export DATASTAX_HCD_CQL_USER=\"${DATASTAX_HCD_CQL_USER}\"
 export DATASTAX_HCD_CQL_PASSWORD=\"${DATASTAX_HCD_CQL_PASSWORD}\""

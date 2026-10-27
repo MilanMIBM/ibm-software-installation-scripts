@@ -1,0 +1,73 @@
+{#- watsonx.data Presto (Java) engine definition, rendered by
+    scripts/install_cloud_pak_for_data/5_component_specific_scripts/wxd_presto_engines/5_create_wxd_presto_engine.sh
+    through src/helpers/watsonxdata_presto_engine_render.py.
+
+    This file is both the built-in default (1 coordinator + 3 workers, each
+    6 CPU / 16G) and the format example for --template files. Copy it, change
+    the defaults or hardcode values, and pass the copy with --template.
+
+    Variables come from the script's flags / env vars (flags win). Every one is
+    optional here because each has a default; a custom template may drop them:
+        display_name, description, catalogs (list), tags (list),
+        api_size_config, node_type,
+        worker_replicas,
+        worker_cpu_request, worker_cpu_limit, worker_memory_request, worker_memory_limit,
+        coordinator_cpu_request, coordinator_cpu_limit,
+        coordinator_memory_request, coordinator_memory_limit,
+        worker_jvm_xmx, coordinator_jvm_xmx
+    plus anything passed with --set key=value.
+
+    Units follow the lakehouse operator, which reads memory through Ansible's
+    human_to_bytes: memory is <number><K|M|G|T> (12G, not 12Gi); CPU is cores
+    (6, 1.5) or millicores (6000m).
+
+    JVM heap: leave *_jvm_xmx empty and the operator derives it from the memory
+    request (80% of it, or 70% below 8G). The scale presets pin 70G, so only set
+    it when you mean it.
+
+    Output shape (JSON):
+        display_name, description, associated_catalogs, tags, api_size_config, node_type
+            -> POST /lakehouse/api/v3/presto_engines (registers the engine).
+               Software has no custom size, so it is registered as a standard
+               size (small|medium|large, 1 coordinator + 10 workers, as the
+               console sends it) and node_type is the console's default for the
+               environment (bx2.4x16 on dev clusters). The CR fields then resize it.
+        coordinator / worker
+            -> presto_coordinator_* / presto_worker_* fields on the WxdEngine CR
+        cr_overrides
+            -> any other operator customization key, set on the CR spec as is,
+               e.g. "presto_worker_task_concurrency": "8"
+-#}
+{%- set _worker_cpu = worker_cpu_request | default("6", true) -%}
+{%- set _worker_mem = worker_memory_request | default("16G", true) -%}
+{%- set _coord_cpu = coordinator_cpu_request | default("6", true) -%}
+{%- set _coord_mem = coordinator_memory_request | default("16G", true) -%}
+{
+    "display_name": {{ display_name | default("presto-custom", true) | tojson }},
+    "description": {{ description | default("Custom-sized Presto engine", true) | tojson }},
+    "associated_catalogs": {{ catalogs | default([], true) | tojson }},
+    "tags": {{ tags | default([], true) | tojson }},
+    "api_size_config": {{ api_size_config | default("small", true) | tojson }},
+    "node_type": {{ node_type | default("bx2.4x16", true) | tojson }},
+
+    "coordinator": {
+        "resources": {
+            "requests": { "cpu": {{ _coord_cpu | tojson }}, "memory": {{ _coord_mem | tojson }} },
+            "limits":   { "cpu": {{ coordinator_cpu_limit | default(_coord_cpu, true) | tojson }},
+                          "memory": {{ coordinator_memory_limit | default(_coord_mem, true) | tojson }} }
+        },
+        "jvm_xmx": {{ coordinator_jvm_xmx | default("", true) | tojson }}
+    },
+
+    "worker": {
+        "replicas": {{ worker_replicas | default(3, true) | int }},
+        "resources": {
+            "requests": { "cpu": {{ _worker_cpu | tojson }}, "memory": {{ _worker_mem | tojson }} },
+            "limits":   { "cpu": {{ worker_cpu_limit | default(_worker_cpu, true) | tojson }},
+                          "memory": {{ worker_memory_limit | default(_worker_mem, true) | tojson }} }
+        },
+        "jvm_xmx": {{ worker_jvm_xmx | default("", true) | tojson }}
+    },
+
+    "cr_overrides": {}
+}
