@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # source "${SCRIPT_DIR}/../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/cpd_entitlement_helpers.sh"
 
 eval "${CPDM_OC_LOGIN}"
 
@@ -46,11 +47,13 @@ IFS=',' read -rA entitlements <<< "${LICENSE_ENTITLEMENTS}"
 
 for entitlement in "${entitlements[@]}"; do
     entitlement="${entitlement// /}"
+    # --production only for entitlements with a non-production variant.
+    prod_flag=($(cpdent_production_flag "${entitlement}" "${PROD_LICENSE}"))
     echo "[INFO] Removing entitlement: ${entitlement}"
     cpd-cli manage remove-entitlement \
-        --cpd_instance_ns=${PROJECT_CPD_INST_OPERANDS} \
+        --instance_ns=${PROJECT_CPD_INST_OPERANDS} \
         --entitlement=${entitlement} \
-        --production=${PROD_LICENSE} \
+        "${prod_flag[@]}" \
         --restart_pods=false
 done
 

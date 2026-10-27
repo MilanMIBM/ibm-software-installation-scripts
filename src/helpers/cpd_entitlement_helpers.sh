@@ -9,6 +9,7 @@
 #
 # Sections:
 #   - IBMServiceMeterDefinition addOnId labels
+#   - --production flag
 #
 # Notes:
 #   - Must be SOURCED, not executed. Guarded via _CPDENT_HELPERS_LOADED.
@@ -73,4 +74,64 @@ cpdent_ensure_service_meter_addon_labels() {
         fi
         oc label ibmservicemeterdefinition "${name}" -n "${ns}" "icpdsupport/addOnId=${target}" --overwrite
     done <<< "${rows}"
+}
+
+# =============================================================================
+# --production flag
+# =============================================================================
+# apply-/remove-entitlement default to production; --production=false is only
+# valid for entitlements that have a "non-production" variant in the olm-utils
+# metadata (/opt/ansible/bin/entitlement/metadata.json) - for any other one
+# entitlement_utils.check_entitlement raises ValueError. This list mirrors that
+# metadata as of olm-utils-v4:5.4.0.8 (minus the hidden ikc-premium-large); it is
+# longer than the product docs' list, which is out of date.
+CPDENT_NON_PRODUCTION_CAPABLE=(
+    "cpd-enterprise"
+    "data-integration-unstructured-data"
+    "data-lineage"
+    "data-lineage-reserved"
+    "data-product-hub"
+    "datastage"
+    "datastage-plus"
+    "ikc-premium"
+    "product-master"
+    "watsonx-ai"
+    "watsonx-bi-premium-vpc"
+    "watsonx-data"
+    "watsonx-data-premium"
+    "watsonx-data-premium-reserved"
+    "watsonx-data-reserved"
+    "watsonx-dataintegration"
+    "watsonx-dataintegration-reserved"
+    "watsonx-dataintelligence"
+    "watsonx-dataintelligence-reserved"
+    "watsonx-dataintelligence-reserved-vpc"
+    "watsonx-dataintelligence-transition"
+    "watsonx-dataintelligence-transition-reserved"
+    "watsonx-dataintelligence-transition-reserved-vpc"
+    "watsonx-dataintelligence-transition-vpc"
+    "watsonx-dataintelligence-vpc"
+    "watsonx-gov-mm"
+    "watsonx-gov-rc"
+    "watsonx-orchestrate"
+)
+
+# cpdent_production_flag <entitlement> <true|false>
+# Prints "--production=<value>" when <entitlement> has a non-production variant,
+# nothing otherwise (the entitlement is then applied as production - the only
+# value cpd-cli accepts for it; a warning is printed when false was requested).
+# Fails on a value other than true/false. Usage:
+#     prod_flag=($(cpdent_production_flag "${entitlement}" "${PROD_LICENSE}"))
+cpdent_production_flag() {
+    local entitlement="$1" production="$2"
+    if [[ "${production}" != "true" && "${production}" != "false" ]]; then
+        h_error "PROD_LICENSE must be 'true' or 'false' (got '${production}')."
+        return 1
+    fi
+    if (( ${CPDENT_NON_PRODUCTION_CAPABLE[(Ie)${entitlement}]} )); then
+        echo "--production=${production}"
+    elif [[ "${production}" == "false" ]]; then
+        h_warn "Entitlement '${entitlement}' has no non-production variant; applying it as production."
+    fi
+    return 0
 }

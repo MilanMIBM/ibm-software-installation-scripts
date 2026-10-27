@@ -202,13 +202,20 @@ def _(custom_pull_prefix, image_pull_creds_select):
     from src.helpers.registry_classifier import classify as _classify_registry
 
     _registry_check = None
-    if image_pull_creds_select.selected_key != "IBM Entitled Registry" and "<" not in str(custom_pull_prefix):
+    if (
+        image_pull_creds_select.selected_key != "IBM Entitled Registry"
+        and "<" not in str(custom_pull_prefix)
+    ):
         _kind, _reason = _classify_registry(str(custom_pull_prefix))
-        _chosen = "local" if "Local" in image_pull_creds_select.selected_key else "private"
+        _chosen = (
+            "local" if "Local" in image_pull_creds_select.selected_key else "private"
+        )
         if _kind != "unknown" and _kind != _chosen:
             _registry_check = mo.callout(
-                mo.md(f"**{custom_pull_prefix}** looks like a **{_kind}** registry ({_reason}), "
-                      f"but *{image_pull_creds_select.selected_key}* is selected."),
+                mo.md(
+                    f"**{custom_pull_prefix}** looks like a **{_kind}** registry ({_reason}), "
+                    f"but *{image_pull_creds_select.selected_key}* is selected."
+                ),
                 kind="warn",
             )
     _registry_check
@@ -222,9 +229,11 @@ def _(ibm_entitlement_key_input):
     _key_check = None
     if not str(ibm_entitlement_key_input.value or "").strip():
         _key_check = mo.callout(
-            mo.md("**IBM entitlement key is empty.** It is required with every image source - "
-                  "with a private or local registry it is still needed to pull the images from IBM "
-                  "for mirroring."),
+            mo.md(
+                "**IBM entitlement key is empty.** It is required with every image source - "
+                "with a private or local registry it is still needed to pull the images from IBM "
+                "for mirroring."
+            ),
             kind="warn",
         )
     _key_check
@@ -347,6 +356,7 @@ def _(
     licenses_are_prod_checkbox,
     optional_images_selection_tables,
     prepare_inst_options_stack,
+    prod_license_check,
     updating_components_checkbox,
 ):
     component_specs_accordion = mo.accordion(
@@ -355,6 +365,7 @@ def _(
                 [
                     license_entitlement_table,
                     licenses_are_prod_checkbox.center(),
+                    prod_license_check,
                 ],
                 gap=1,
             ).center(),
@@ -508,7 +519,18 @@ def _(cp4d_license_entitlement_id_records, widget_labels):
         data=cp4d_license_entitlement_id_records,
         selection="multi",
         page_size=50,
-        initial_selection=[0, 17, 25, 26, 41],
+        initial_selection=[
+            _i
+            for _i, _r in enumerate(cp4d_license_entitlement_id_records)
+            if _r["license_id"]
+            in (
+                "cpd-enterprise",
+                "watsonx-ai",
+                "watsonx-data",
+                "watsonx-data-premium",
+                "watsonx-orchestrate",
+            )
+        ],
     )
 
     # license_entitlement_table.center()
@@ -524,6 +546,28 @@ def _(license_entitlement_table):
     entitlements_to_apply_str = ",".join(entitlements_to_apply)
     print(entitlements_to_apply_str)
     return
+
+
+@app.cell(hide_code=True)
+def _(license_entitlement_table, licenses_are_prod_checkbox):
+    # Same rule as cpdent_production_flag (3.4_apply_entitlements.sh): entitlements
+    # without a non-production variant get no --production flag, i.e. production.
+    _prod_only = [
+        item["license_id"]
+        for item in license_entitlement_table.value
+        if not item["non_production"]
+    ]
+    prod_license_check = ""
+    if not licenses_are_prod_checkbox.value and _prod_only:
+        prod_license_check = mo.callout(
+            mo.md(
+                "**No non-production variant:** "
+                + ", ".join(f"`{e}`" for e in _prod_only)
+                + " - these are applied as **production** even with the box unchecked."
+            ),
+            kind="warn",
+        )
+    return (prod_license_check,)
 
 
 @app.cell
@@ -698,7 +742,7 @@ def _():
 @app.cell
 def _(widget_labels):
     licenses_are_prod_checkbox = mo.ui.checkbox(
-        label=widget_labels.get("prod_license"), value=True
+        label=widget_labels.get("prod_license"), value=False
     )
     return (licenses_are_prod_checkbox,)
 
@@ -1039,8 +1083,11 @@ def _(
         _config_dir = os.path.join(os.path.dirname(__file__), "configs", "cp4d_config")
         os.makedirs(_config_dir, exist_ok=True)
 
-        _cpd_vars_content = cpd_vars_template_editor.value or render_template_from_environment(
-            template_path="src/helpers/config_file_jinja2_templates/cpd_variable_template.sh.j2"
+        _cpd_vars_content = (
+            cpd_vars_template_editor.value
+            or render_template_from_environment(
+                template_path="src/helpers/config_file_jinja2_templates/cpd_variable_template.sh.j2"
+            )
         )
         _cpd_vars_path = os.path.join(_config_dir, cpd_vars_filename)
         with open(_cpd_vars_path, "w") as _f:
@@ -1049,8 +1096,11 @@ def _(
         _saved = [_cpd_vars_path]
 
         if install_options_addon.value:
-            _inst_opts_content = inst_options_template_editor.value or render_template_from_environment(
-                template_path="src/helpers/config_file_jinja2_templates/install_options_template_v2.sh.j2"
+            _inst_opts_content = (
+                inst_options_template_editor.value
+                or render_template_from_environment(
+                    template_path="src/helpers/config_file_jinja2_templates/install_options_template_v2.sh.j2"
+                )
             )
             _inst_opts_path = os.path.join(_config_dir, inst_options_filename)
             with open(_inst_opts_path, "w") as _f:

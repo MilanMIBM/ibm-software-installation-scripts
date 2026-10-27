@@ -289,6 +289,7 @@ cp4d_component_id_records = [
 
 cp4d_license_entitlement_id_options = [
     "cpd-enterprise",
+    "cpd-standard",
     "cognos-analytics",
     "data-integration-unstructured-data",
     "data-lineage",
@@ -337,6 +338,10 @@ cp4d_license_entitlement_id_records = [
     {
         "license_name": "IBM Cloud Pak for Data Enterprise Edition",
         "license_id": "cpd-enterprise",
+    },
+    {
+        "license_name": "IBM Cloud Pak for Data Standard Edition",
+        "license_id": "cpd-standard",
     },
     {"license_name": "IBM Cognos Analytics", "license_id": "cognos-analytics"},
     {
@@ -483,6 +488,46 @@ cp4d_license_entitlement_id_records = [
         "license_id": "watsonx-orchestrate-with-assistant",
     },
 ]
+
+# Entitlements with a non-production variant, i.e. the only ones that accept
+# --production=false (olm-utils-v4:5.4.0.8 entitlement/metadata.json). Keep in
+# sync with CPDENT_NON_PRODUCTION_CAPABLE in src/helpers/cpd_entitlement_helpers.sh;
+# every other entitlement is always applied as production.
+cp4d_non_production_entitlement_ids = {
+    "cpd-enterprise",
+    "data-integration-unstructured-data",
+    "data-lineage",
+    "data-lineage-reserved",
+    "data-product-hub",
+    "datastage",
+    "datastage-plus",
+    "ikc-premium",
+    "product-master",
+    "watsonx-ai",
+    "watsonx-bi-premium-vpc",
+    "watsonx-data",
+    "watsonx-data-premium",
+    "watsonx-data-premium-reserved",
+    "watsonx-data-reserved",
+    "watsonx-dataintegration",
+    "watsonx-dataintegration-reserved",
+    "watsonx-dataintelligence",
+    "watsonx-dataintelligence-reserved",
+    "watsonx-dataintelligence-reserved-vpc",
+    "watsonx-dataintelligence-transition",
+    "watsonx-dataintelligence-transition-reserved",
+    "watsonx-dataintelligence-transition-reserved-vpc",
+    "watsonx-dataintelligence-transition-vpc",
+    "watsonx-dataintelligence-vpc",
+    "watsonx-gov-mm",
+    "watsonx-gov-rc",
+    "watsonx-orchestrate",
+}
+
+for _record in cp4d_license_entitlement_id_records:
+    _record["non_production"] = (
+        _record["license_id"] in cp4d_non_production_entitlement_ids
+    )
 
 cpd_enterprise_supported_components = [
     # AI services

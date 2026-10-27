@@ -27,39 +27,22 @@ for var in LICENSE_ENTITLEMENTS PROD_LICENSE PROJECT_CPD_INST_OPERANDS; do
     fi
 done
 
-PROD_APPLICABLE=(
-    "cpd-enterprise"
-    "cognos-analytics"
-    "planning-analytics"
-    "data-lineage"
-    "data-lineage-reserved"
-    "data-integration-unstructured-data"
-    "data-product-hub"
-    "watsonx-ai"
-    "watsonx-data"
-    "watsonx-gov-mm"
-    "watsonx-gov-rc"
-    "watsonx-orchestrate"
-)
-
 eval "${CPDM_OC_LOGIN}"
 
 IFS=',' read -rA entitlements <<< "${LICENSE_ENTITLEMENTS}"
 
 for entitlement in "${entitlements[@]}"; do
     entitlement="${entitlement// /}"
-    production=${PROD_LICENSE}
-    if (( ${PROD_APPLICABLE[(Ie)${entitlement}]} == 0 )); then
-        production=false
-    fi
+    # --production only for entitlements with a non-production variant.
+    prod_flag=($(cpdent_production_flag "${entitlement}" "${PROD_LICENSE}"))
     # Re-check per entitlement: apply-entitlement may delete a matching CR and the
     # owning operator recreates it without the label before the next iteration.
     if h_is_true "${ENSURE_SERVICE_METER_ADDON_LABELS}"; then
         cpdent_ensure_service_meter_addon_labels "${PROJECT_CPD_INST_OPERANDS}"
     fi
-    echo "[INFO] Applying entitlement: ${entitlement} (production=${production})"
+    echo "[INFO] Applying entitlement: ${entitlement} (${prod_flag[1]:-production flag not applicable})"
     cpd-cli manage apply-entitlement \
         --instance_ns=${PROJECT_CPD_INST_OPERANDS} \
         --entitlement=${entitlement} \
-        --production=${production}
+        "${prod_flag[@]}"
 done
