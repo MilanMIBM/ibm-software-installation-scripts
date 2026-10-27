@@ -24,8 +24,8 @@ non_olm:
       sparkAdvEnabled: true
       jobAutoDeleteEnabled: true
       kernelCullTime: 30
-      imagePullParallelism: "8"
-      imagePullCompletions: "6"
+      imagePullParallelism: "40"
+      imagePullCompletions: "20"
       kernelCleanupSchedule: "*/30 * * * *"
       jobCleanupSchedule: "*/30 * * * *"
       skipSELinuxRelabeling: "false"
@@ -36,12 +36,13 @@ non_olm:
 # Spark runtime configuration parameters
 # ------------------------------------------------------------------------------
     sparkRuntimeConfig:
-      maxDriverCpuCores: 2
-      maxExecutorCpuCores: 3
-      maxDriverMemory: "20g"
-      maxExecutorMemory: "20g"
-      maxNumWorkers: 6
-      localDirScaleFactor: 5
+      maxDriverCpuCores: 5
+      maxExecutorCpuCores: 5
+      maxDriverMemory: "50g"
+      maxExecutorMemory: "50g"
+      maxNumWorkers: 50
+      localDirScaleFactor: 10
+      
 {% endif %}{% if "replication" in components_to_install %}
 ---
 # ............................................................................
