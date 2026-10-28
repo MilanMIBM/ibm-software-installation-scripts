@@ -1098,6 +1098,23 @@ default_private_registry_setup = [
     },
 ]
 
+# Local private registry (air-gapped): the registry inside the disconnected
+# network. 0.3_local_registry.sh serves <host>:5000 with the login "mirror"
+# (password in registry_mirror_workspace/local-registry/auth/creds.env).
+default_local_registry_setup = [
+    {"key": "PRIVATE_REGISTRY_LOCATION", "value": "<registry-host>:5000/cpd"},
+    {"key": "PRIVATE_REGISTRY_PUSH_USER", "value": "mirror"},
+    {"key": "PRIVATE_REGISTRY_PUSH_PASSWORD", "value": "<insert_registry_password>"},
+    {
+        "key": "PRIVATE_REGISTRY_PULL_USER",
+        "value": "${PRIVATE_REGISTRY_PUSH_USER}",
+    },
+    {
+        "key": "PRIVATE_REGISTRY_PULL_PASSWORD",
+        "value": "${PRIVATE_REGISTRY_PUSH_PASSWORD}",
+    },
+]
+
 ibm_container_registry_domains = [
     "icr.io/<namespace>",  # global with user's endspace
     "icr.io",  # global

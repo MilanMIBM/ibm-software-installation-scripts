@@ -31,6 +31,7 @@ def _():
         cp4d_license_entitlement_id_records,
         default_project_naming_conventions,
         default_private_registry_setup,
+        default_local_registry_setup,
         image_group_id_records,
     )
     from src.helpers.marimo_sortablekv import sortable_kv
@@ -41,6 +42,7 @@ def _():
     return (
         cp4d_component_id_records,
         cp4d_license_entitlement_id_records,
+        default_local_registry_setup,
         default_private_registry_setup,
         default_project_naming_conventions,
         image_group_id_records,
@@ -87,10 +89,22 @@ def _(cp4d_install_project_naming_records):
 
 
 @app.cell
-def _(default_private_registry_setup, sortable_kv):
+def _(
+    default_local_registry_setup,
+    default_private_registry_setup,
+    image_pull_creds_select,
+    sortable_kv,
+):
+    # The defaults follow the image source: an ICR-style cloud registry for
+    # private, the registry inside the disconnected network for local.
+    _local = image_pull_creds_select.selected_key == "Local Private Registry (air-gapped)"
     cp4d_private_registry_naming_records = sortable_kv(
-        label="If you are using a private registry:",
-        value=default_private_registry_setup,
+        label=(
+            "Local private registry (inside the disconnected network):"
+            if _local
+            else "If you are using a private registry:"
+        ),
+        value=default_local_registry_setup if _local else default_private_registry_setup,
         addable=False,
         removable=False,
         editable=True,
@@ -208,9 +222,7 @@ def _(custom_pull_prefix, image_pull_creds_select):
     ):
         _kind, _reason = _classify_registry(str(custom_pull_prefix))
         _chosen = (
-            "local"
-            if "Local" in image_pull_creds_select.selected_key
-            else "private"
+            "local" if "Local" in image_pull_creds_select.selected_key else "private"
         )
         if _kind != "unknown" and _kind != _chosen:
             _registry_check = mo.callout(
@@ -258,7 +270,7 @@ def _():
         "prod_license": "Set licenses to **production** version?",
         "updating_components": "Are you updating **existing** components? **DO NOT** Select if installing a new instance.",
         "cp4d_version": "**Cloud Pak for Data version:**",
-        "cp4d_patch": "**Patch ID (optional):**",
+        "cp4d_patch": "**Patch ID (optional):** *[Check latest version here](https://github.com/IBM/software-hub/releases)*",
         "softwarehub_scale": "**Software Hub (zen) scale:**",
         "entitlement_key": "**Input your ibm entitlement key:** *[Get one here](https://myibm.ibm.com/products-services/containerlibrary)*",
         "cluster_url": "**Enter your openshift cluster url:**",
@@ -630,8 +642,7 @@ def _(install_component_table_1, install_component_table_2):
 def _(install_component_table_1, install_component_table_2):
     components_to_install = [
         item["component_id"]
-        for item in install_component_table_1.value
-        + install_component_table_2.value
+        for item in install_component_table_1.value + install_component_table_2.value
     ]
     print(components_to_install)
     components_to_install_str = ",".join(components_to_install)
@@ -692,8 +703,7 @@ def _(optional_images_table_1, optional_images_table_2):
 def _(optional_images_table_1, optional_images_table_2):
     optional_images = [
         item["image_group_id"]
-        for item in optional_images_table_1.value
-        + optional_images_table_2.value
+        for item in optional_images_table_1.value + optional_images_table_2.value
     ]
     print(optional_images)
     optional_images_str = ",".join(optional_images)
@@ -1087,9 +1097,7 @@ def _(
     # rendering the templates when "Generate" has not been clicked yet.
     _save_result = None
     if save_to_config_dir_button.value:
-        _config_dir = os.path.join(
-            os.path.dirname(__file__), "configs", "cp4d_config"
-        )
+        _config_dir = os.path.join(os.path.dirname(__file__), "configs", "cp4d_config")
         os.makedirs(_config_dir, exist_ok=True)
 
         _cpd_vars_content = (

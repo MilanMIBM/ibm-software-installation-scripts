@@ -24,8 +24,8 @@ non_olm:
       sparkAdvEnabled: true
       jobAutoDeleteEnabled: true
       kernelCullTime: 30
-      imagePullParallelism: "40"
-      imagePullCompletions: "20"
+      imagePullParallelism: "10"
+      imagePullCompletions: "8"
       kernelCleanupSchedule: "*/30 * * * *"
       jobCleanupSchedule: "*/30 * * * *"
       skipSELinuxRelabeling: "false"
@@ -36,12 +36,12 @@ non_olm:
 # Spark runtime configuration parameters
 # ------------------------------------------------------------------------------
     sparkRuntimeConfig:
-      maxDriverCpuCores: 5
-      maxExecutorCpuCores: 5
-      maxDriverMemory: "50g"
-      maxExecutorMemory: "50g"
-      maxNumWorkers: 50
-      localDirScaleFactor: 10
+      maxDriverCpuCores: 2
+      maxExecutorCpuCores: 4
+      maxDriverMemory: "20g"
+      maxExecutorMemory: "20g"
+      maxNumWorkers: 8
+      localDirScaleFactor: 3
       
 {% endif %}{% if "replication" in components_to_install %}
 ---
@@ -481,16 +481,4 @@ non_olm:
       watsonxaiifm: false # Use remote models, if true requires GPUs for on-prem deployment.
       syomModels: []
       # ootbModels: [ibm-slate-30m-english-rtrvr] this model is required if you set watsonxaiifm to true.
-{% endif %}
-{% if "dv" in components_to_install or "dmc" in components_to_install %}
----
-# ............................................................................
-# Db2 Management Console
-# The dmc chart renders no install options (version and storage size are
-# fixed by the chart), so nothing is set here.
-# ............................................................................
-non_olm:
-  Dmcaddon:
-    version: 5.4.0
-    storageSize: 20Gi 
 {% endif %}

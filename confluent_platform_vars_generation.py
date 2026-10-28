@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.0"
+__generated_with = "0.25.2"
 app = marimo.App(
     width="full",
     app_title="Confluent Platform - Setup Config Generator",
@@ -1030,6 +1030,11 @@ def _(widget_labels):
         full_width=False,
     )
     return (flink_s3_secret_key_input,)
+
+
+@app.cell
+def _():
+    return
 
 
 @app.cell

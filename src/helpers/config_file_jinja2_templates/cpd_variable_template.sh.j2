@@ -79,6 +79,13 @@ export PRIVATE_REGISTRY_PUSH_USER="{{ cp4d_private_registry_naming.get("PRIVATE_
 export PRIVATE_REGISTRY_PUSH_PASSWORD="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PUSH_PASSWORD") }}"
 export PRIVATE_REGISTRY_PULL_USER="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PULL_USER") }}"
 export PRIVATE_REGISTRY_PULL_PASSWORD="{{ cp4d_private_registry_naming.get("PRIVATE_REGISTRY_PULL_PASSWORD") }}"
+{% if image_pull_creds_select.selected_key == "Local Private Registry (air-gapped)" %}
+# Air-gapped: case-download reuses the CASE packages in cpd-cli's work dir,
+# restored from the stop-over bundle (2.6_restore_transfer_bundle.sh) - nothing
+# is fetched from github.com / icr.io. Images move with the mirror config's
+# MIRROR_TRANSPORT="stopover" (--phase=save outside, --phase=load inside).
+export CPD_CASE_SOURCE="offline"
+{% endif -%}
 {% endif -%}
 
 # ------------------------------------------------------------------------------
