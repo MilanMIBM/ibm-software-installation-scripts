@@ -28,6 +28,17 @@
 #   medium
 #   large
 #
+# Shared governance dependencies:
+#   Software Hub 5.4 installer metadata maps level_1 -> small_mincpureq and
+#   level_2 -> small for wkc, udp (Data Privacy / datasift), datalineage and
+#   dataproduct. UI scaling can therefore change the internal size name.
+#   Verify mappings for the installed release; they differ between services.
+#   These services can share Metadataimports and Enrichment. Review their owner
+#   sizes together: conflicting settings can repeatedly reconfigure a shared
+#   database. Change the owners when needed; child patches can be overwritten.
+#   Independent services can retain different sizes. After scaling, check with:
+#     python3 src/helpers/cpd_shared_scale_check.py --namespace <operands-namespace>
+#
 # General notes:
 #   - Set --wait=false on cpd-cli to patch the CR and return immediately.
 #   - To scale several services to the same level at once:

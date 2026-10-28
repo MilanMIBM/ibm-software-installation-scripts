@@ -101,3 +101,11 @@ if [[ "${DEFER_MANTAFLOW}" == "true" ]]; then
         echo "[WARN] mantaflow install failed - other components are unaffected. Re-run this script to retry."
     fi
 fi
+
+# Shared dependencies can be reconciled by several services with different sizes.
+# UI/CLI level_1 maps to small_mincpureq for these services in Software Hub 5.4.
+# Keep this check advisory because size names and supported combinations vary by release.
+if ! python3 "${_CP4D_REPO_ROOT}/src/helpers/cpd_shared_scale_check.py" \
+    --namespace "${PROJECT_CPD_INST_OPERANDS}"; then
+    echo "[WARN] Shared governance scale check could not complete; installation result is unchanged."
+fi
