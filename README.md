@@ -116,6 +116,23 @@ Steps 0.1-0.2 and 1.0 are only needed once per workstation/cluster.
 
 Steps 3 and 4 are themselves wrappers - the individual sub-steps (`3.2` admin setup, `3.3` Software Hub install, `3.4` entitlements, `3.5` CCS CR, `4.1` components, `4.2` cpd-cli profile, …) sit next to them and can be run on their own when you need to redo just one part. Step 4 also has watsonx Orchestrate pre-verification and watsonx.data OpenSearch install scripts, and `4.x*` scripts for CR upgrades and image pull fixes.
 
+Software Hub's displayed scaling levels can have different names in custom resources. The checked Software Hub 5.4 installer metadata (`features_component_meta.<component>.scale_config_values` in olm-utils' `/opt/ansible/ansible-play/config-vars/service_features.yml`) maps these levels for Knowledge Catalog (`wkc`), Data Privacy (`udp`, custom resource `datasift`), Manta Data Lineage (`datalineage`) and Data Product Hub (`dataproduct`):
+
+| UI / CLI level | Internal `spec.scaleConfig` value |
+| --- | --- |
+| `level_1` | `small_mincpureq` |
+| `level_2` | `small` |
+
+Consequently, scaling from level 2 to level 1 through the UI can produce `small_mincpureq` without anyone entering that size name or changing the installation scripts. Verify the mapping for the installed release and component; it is not universal across services.
+
+These governance services can share Metadataimports and Enrichment dependencies. Reducing only one owner can leave their operators requesting different sizes for the same dependency, causing repeated database reconfiguration and policy-service outages. Asset access can then report an unavailable required profile even when a completed profile still exists. Review the related owners' supported sizing together after scaling, and correct the owners' configuration when needed: directly changing a shared child or database can be overwritten during reconciliation. Independent services can keep their own sizes.
+
+After component installation or upgrade, `4.1_install_components.sh` checks the installed Metadataimports and Enrichment dependencies for conflicting `spec.scaleConfig` values among their actual owners. This is advisory: it never resizes services or blocks installation. Unrelated services can use different sizes, and matching low-resource sizes are accepted. Missing components are skipped; access failures report an incomplete check. Run it again after changing service sizes in the UI:
+
+```bash
+python3 src/helpers/cpd_shared_scale_check.py --namespace cpd-operands
+```
+
 Scripts run `./scripts/0.0_make_executable.sh` on their own if any `.sh` isn't executable or the podman machine isn't running; you can also run it manually.
 
 ---
