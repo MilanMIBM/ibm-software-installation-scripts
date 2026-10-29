@@ -20,9 +20,13 @@ mc_require_config
 SCRIPTS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CP4D_ROOT="${_CP4D_REPO_ROOT}/scripts/install_cloud_pak_for_data"
 
+h_steps_parse --strict "$@"
+
 # ---------------------------------------------------------------------------
 # Step toggles - true runs a step, false skips it. Override at runtime, e.g.:
 #   DO_CERT_MANAGER=false DO_PREFLIGHT=false ./full_datastax_mc_installprocess.sh
+# Or pick steps by name: --from <step> resumes there, --skip <step>[,...] leaves
+# steps out, --list-steps shows the plan.
 # The config itself comes first, from
 #   0_initial_setup/0.0_generate_datastax_mc_config.sh --empty | --from-cpd
 # ---------------------------------------------------------------------------
@@ -46,32 +50,35 @@ mc_is_true "${MC_PROJECT_AUTO_PREPARE}" && PROJECT_ARGS+=(--auto)
 [[ -n "${MC_BASE_PROJECT}" && "${MC_PLANE}" == control ]] \
     && PROJECT_ARGS+=(--create "${MC_BASE_PROJECT}" --name "${MC_BASE_PROJECT_NAME}")
 
-h_run_step "${DO_INSTALL_OC}" "0.0 install oc (macOS, CP4D script)" \
+h_step oc            "${DO_INSTALL_OC}"    "0.0 install oc (macOS, CP4D script)" \
     "${CP4D_ROOT}/0_initial_setup/0.1_install_oc-MAC-ONLY.sh"
-h_run_step "${DO_FETCH_HELM}" "0.1 helm for Mission Control" \
+h_step helm          "${DO_FETCH_HELM}"    "0.1 helm for Mission Control" \
     "${SCRIPTS_ROOT}/0_initial_setup/0.1_fetch_helm.sh"
 
-h_run_step "${DO_CERT_MANAGER}" "1.0 cert-manager operator" \
+h_step cert-manager  "${DO_CERT_MANAGER}"  "1.0 cert-manager operator" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.0_install_cert_manager.sh"
-h_run_step "${DO_PREFLIGHT}" "1.1 preflight" \
+h_step preflight     "${DO_PREFLIGHT}"     "1.1 preflight" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.1_cluster_preflight.sh"
-h_run_step "${DO_NAMESPACE}" "1.2 namespace and pull secrets" \
+h_step namespace     "${DO_NAMESPACE}"     "1.2 namespace and pull secrets" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.2_create_namespace_and_pull_secret.sh"
-h_run_step "${DO_LABEL_NODES}" "1.3 platform node labels" \
+h_step label-nodes   "${DO_LABEL_NODES}"   "1.3 platform node labels" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.3_label_platform_nodes.sh"
-h_run_step "${DO_SCC}" "1.4 SCC (${MC_SCC_MODE})" \
+h_step scc           "${DO_SCC}"           "1.4 SCC (${MC_SCC_MODE})" \
     "${SCRIPTS_ROOT}/1_prepare_cluster/1.4_configure_scc.sh"
 
-h_run_step "${DO_INSTALL}" "2.1 install Mission Control ${MC_VERSION} (${MC_PLANE} plane)" \
+h_step install       "${DO_INSTALL}"       "2.1 install Mission Control ${MC_VERSION} (${MC_PLANE} plane)" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.1_install_mission_control.sh"
-h_run_step "${DO_ROUTE}" "2.2 UI Route" \
+h_step route         "${DO_ROUTE}"         "2.2 UI Route" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.2_create_ui_route.sh"
-h_run_step "${DO_WAIT}" "2.3 wait for Mission Control" \
+h_step wait          "${DO_WAIT}"          "2.3 wait for Mission Control" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.3_mission_control_status.sh" --wait
-h_run_step "${DO_DETAILS}" "2.4 instance details" \
+h_step details       "${DO_DETAILS}"       "2.4 instance details" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.4_get_instance_details.sh"
 
-h_run_step "${DO_PROJECTS}" "3.1 projects (auto-prepare: ${MC_PROJECT_AUTO_PREPARE}, base project: ${MC_BASE_PROJECT:-none})" \
+h_step projects      "${DO_PROJECTS}"      "3.1 projects (auto-prepare: ${MC_PROJECT_AUTO_PREPARE}, base project: ${MC_BASE_PROJECT:-none})" \
     "${SCRIPTS_ROOT}/3_post_install/3.1_prepare_mc_projects.sh" "${PROJECT_ARGS[@]}"
-h_run_step "${DO_NETWORKPOLICY}" "3.0 internode NetworkPolicy" \
+h_step networkpolicy "${DO_NETWORKPOLICY}" "3.0 internode NetworkPolicy" \
     "${SCRIPTS_ROOT}/3_post_install/3.0_apply_internode_networkpolicy.sh"
+
+h_steps_plan
+h_steps_run

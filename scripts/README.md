@@ -20,7 +20,7 @@ Run the full install for your target products, like:
 ```bash
 ./scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh
 ```
-Resume from a step with `--from <step>` (e.g. `--from softwarehub`); `--help` lists the steps.
+Resume from a step with `--from <step>` (e.g. `--from softwarehub`); `--help` lists the steps. All the chained install scripts below take the same options.
 
 **IBM Concert**
 ```bash

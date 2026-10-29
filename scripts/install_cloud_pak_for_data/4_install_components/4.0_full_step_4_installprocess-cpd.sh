@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # source "${SCRIPT_DIR}/../../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Temporary in-cluster watcher (deployed by 4.0_wxo_install_preverification.sh) that works
@@ -20,13 +21,17 @@ CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # watsonx_orchestrate is in CPD_COMPONENTS; set to false to turn it off.
 export WXO_DOCPROC_WATCHER="${WXO_DOCPROC_WATCHER:-false}"
 
+h_steps_parse --strict "$@"
+
 # Runs before the install: the prerequisite check is a pre-install check, and the watcher has to
 # be up while install-components waits on the CR.
-if [[ "${PREP_WXO:-}" == "true" ]]; then
+h_step wxo-preverify  "${PREP_WXO:-false}"        "4.0 watsonx Orchestrate install preverification (PREP_WXO)" \
     "${CURRENT_DIR}/4.0_wxo_install_preverification.sh"
-fi
-"${CURRENT_DIR}/4.1_install_components.sh"
-if [[ "${PREP_OPENSEARCH:-}" == "true" ]]; then
+h_step components     true                        "4.1 install components" \
+    "${CURRENT_DIR}/4.1_install_components.sh"
+h_step opensearch     "${PREP_OPENSEARCH:-false}" "4.1.1 watsonx.data OpenSearch (PREP_OPENSEARCH)" \
     "${CURRENT_DIR}/4.1.1_inst_wxd_opensearch.sh"
-fi
-"${CURRENT_DIR}/4.2_cpd_profile.sh"
+h_step profile        true                        "4.2 cpd profile" \
+    "${CURRENT_DIR}/4.2_cpd_profile.sh"
+h_steps_plan
+h_steps_run

@@ -15,30 +15,27 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Run each step; a non-zero exit warns but does not abort the chain, so a
-# benign "already installed" failure in one step still lets the rest proceed.
-run_step() { h_run_step --warn true "$(basename "$1")" "$@"; }
-
-run_step "${CURRENT_DIR}/3.2_set_up_cpd_admin.sh"
-run_step "${CURRENT_DIR}/3.3_install_ibm_softwarehub.sh"
-run_step "${CURRENT_DIR}/3.3.1_get_instance_creds.sh"
-run_step "${CURRENT_DIR}/3.3.2_softwarehub_admission_controller.sh"
-run_step "${CURRENT_DIR}/3.4_apply_entitlements.sh"
+h_steps_parse --strict "$@"
 
 # Optional: create ccs-cr only when ccs is listed as a component. Exact match on
 # the comma-separated list, so e.g. "ccs_foo" does not trigger it.
 _components=",${SOFTWARE_HUB:-},${CPD_COMPONENTS:-},"
-if [[ "${_components// /}" == *",ccs,"* ]]; then
-    run_step "${CURRENT_DIR}/3.5_create_ccs_cr_if_missing.sh"
-else
-    echo "[INFO] ccs not in SOFTWARE_HUB or CPD_COMPONENTS; skipping 3.5_create_ccs_cr_if_missing.sh."
-fi
+[[ "${_components// /}" == *",ccs,"* ]] && DO_CCS_CR=true || DO_CCS_CR=false
 unset _components
-
 # Optional: Software Hub Control Center, only when ibm_swhcc is listed.
 source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
-if cp4d_has_component ibm_swhcc; then
-    run_step "${CURRENT_DIR}/3.6_setup_software_hub_control_center.sh"
-else
-    echo "[INFO] ibm_swhcc not in COMPLETE_COMPONENT_LIST; skipping 3.6_setup_software_hub_control_center.sh."
-fi
+cp4d_has_component ibm_swhcc && DO_CONTROL_CENTER=true || DO_CONTROL_CENTER=false
+
+# Each step only warns when it fails, so a benign "already installed" failure in
+# one step still lets the rest proceed.
+h_step --warn admin                true "3.2 set up cpd admin"            "${CURRENT_DIR}/3.2_set_up_cpd_admin.sh"
+h_step --warn softwarehub          true "3.3 install IBM Software Hub"    "${CURRENT_DIR}/3.3_install_ibm_softwarehub.sh"
+h_step --warn instance-creds       true "3.3.1 get instance credentials"  "${CURRENT_DIR}/3.3.1_get_instance_creds.sh"
+h_step --warn admission-controller true "3.3.2 admission controller"      "${CURRENT_DIR}/3.3.2_softwarehub_admission_controller.sh"
+h_step --warn entitlements         true "3.4 apply entitlements"          "${CURRENT_DIR}/3.4_apply_entitlements.sh"
+h_step --warn ccs-cr               "${DO_CCS_CR}" "3.5 create ccs-cr if missing (ccs in SOFTWARE_HUB / CPD_COMPONENTS)" \
+    "${CURRENT_DIR}/3.5_create_ccs_cr_if_missing.sh"
+h_step --warn control-center       "${DO_CONTROL_CENTER}" "3.6 Software Hub Control Center (ibm_swhcc in COMPLETE_COMPONENT_LIST)" \
+    "${CURRENT_DIR}/3.6_setup_software_hub_control_center.sh"
+h_steps_plan
+h_steps_run

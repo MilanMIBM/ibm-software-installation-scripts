@@ -21,6 +21,7 @@ concert_require_config
 # Each step decides for itself whether it has work (its store is external and
 # set to provision); the DO_* toggles only let you skip steps by hand:
 #   DO_PG_OPERATOR=false ./2.3_full_step_2.3_provision_datastores.sh
+# or by name: --from <step>, --skip <step>[,...], --list-steps.
 # PostgreSQL also runs for an *existing* server (the init Job creates the
 # databases, roles and pgvector there).
 # ==============================================================================
@@ -33,10 +34,13 @@ DO_MYSQL="${DO_MYSQL:-true}"                       # 2.3.5 MySQL (Workflows)
 DO_REDIS="${DO_REDIS:-true}"                       # 2.3.6 Redis (Data Apps)
 DO_NEO4J="${DO_NEO4J:-true}"                       # 2.3.7 Neo4j (VEIAS graph)
 
-h_run_step "${DO_PG_OPERATOR}"    "2.3.1 CloudNativePG operator"        "${SCRIPT_DIR}/2.3.1_install_cloudnative_pg_operator.sh"
-h_run_step "${DO_POSTGRES}"       "2.3.2 PostgreSQL cluster + databases" "${SCRIPT_DIR}/2.3.2_provision_postgres.sh"
-h_run_step "${DO_OBJECT_GATEWAY}" "2.3.3 Multicloud Object Gateway"     "${SCRIPT_DIR}/2.3.3_install_object_gateway.sh"
-h_run_step "${DO_BUCKETS}"        "2.3.4 S3 bucket claims"              "${SCRIPT_DIR}/2.3.4_provision_buckets.sh"
-h_run_step "${DO_MYSQL}"          "2.3.5 MySQL for Workflows"           "${SCRIPT_DIR}/2.3.5_provision_mysql.sh"
-h_run_step "${DO_REDIS}"          "2.3.6 Redis for Data Apps"           "${SCRIPT_DIR}/2.3.6_provision_redis.sh"
-h_run_step "${DO_NEO4J}"          "2.3.7 Neo4j for the Concert graph"   "${SCRIPT_DIR}/2.3.7_provision_neo4j.sh"
+h_steps_parse --strict "$@"
+h_step pg-operator    "${DO_PG_OPERATOR}"    "2.3.1 CloudNativePG operator"        "${SCRIPT_DIR}/2.3.1_install_cloudnative_pg_operator.sh"
+h_step postgres       "${DO_POSTGRES}"       "2.3.2 PostgreSQL cluster + databases" "${SCRIPT_DIR}/2.3.2_provision_postgres.sh"
+h_step object-gateway "${DO_OBJECT_GATEWAY}" "2.3.3 Multicloud Object Gateway"     "${SCRIPT_DIR}/2.3.3_install_object_gateway.sh"
+h_step buckets        "${DO_BUCKETS}"        "2.3.4 S3 bucket claims"              "${SCRIPT_DIR}/2.3.4_provision_buckets.sh"
+h_step mysql          "${DO_MYSQL}"          "2.3.5 MySQL for Workflows"           "${SCRIPT_DIR}/2.3.5_provision_mysql.sh"
+h_step redis          "${DO_REDIS}"          "2.3.6 Redis for Data Apps"           "${SCRIPT_DIR}/2.3.6_provision_redis.sh"
+h_step neo4j          "${DO_NEO4J}"          "2.3.7 Neo4j for the Concert graph"   "${SCRIPT_DIR}/2.3.7_provision_neo4j.sh"
+h_steps_plan
+h_steps_run

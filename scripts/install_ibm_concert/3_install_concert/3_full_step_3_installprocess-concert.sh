@@ -18,6 +18,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 # Step 3 - install IBM Concert (3.0 -> 3.4)
 # ------------------------------------------------------------------------------
 # Override any toggle at runtime, e.g.:  DO_PREVIEW=true ./3_full_step_3_installprocess-concert.sh
+# or pick steps by name: --from <step>, --skip <step>[,...], --list-steps.
 # ==============================================================================
 
 DO_RENDER_PARAMS="${DO_RENDER_PARAMS:-true}"   # 3.0 params.ini + Workflows override values
@@ -26,8 +27,11 @@ DO_SETUP="${DO_SETUP:-true}"                   # 3.2 IBM installer
 DO_STATUS="${DO_STATUS:-true}"                 # 3.3 wait until ready
 DO_DETAILS="${DO_DETAILS:-true}"               # 3.4 instance details
 
-h_run_step "${DO_RENDER_PARAMS}" "3.0 render params.ini"    "${SCRIPT_DIR}/3.0_render_params_ini.sh"
-h_run_step "${DO_PREVIEW}"       "3.1 preview (experimental)" "${SCRIPT_DIR}/3.1_preview_install.sh"
-h_run_step "${DO_SETUP}"         "3.2 run IBM Concert setup" "${SCRIPT_DIR}/3.2_run_concert_setup.sh"
-h_run_step "${DO_STATUS}"        "3.3 wait for Concert"      "${SCRIPT_DIR}/3.3_concert_status.sh" --wait=1800
-h_run_step "${DO_DETAILS}"       "3.4 instance details"      "${SCRIPT_DIR}/3.4_get_instance_details.sh"
+h_steps_parse --strict "$@"
+h_step render-params "${DO_RENDER_PARAMS}" "3.0 render params.ini"      "${SCRIPT_DIR}/3.0_render_params_ini.sh"
+h_step preview       "${DO_PREVIEW}"       "3.1 preview (experimental)" "${SCRIPT_DIR}/3.1_preview_install.sh"
+h_step setup         "${DO_SETUP}"         "3.2 run IBM Concert setup"  "${SCRIPT_DIR}/3.2_run_concert_setup.sh"
+h_step status        "${DO_STATUS}"        "3.3 wait for Concert"       "${SCRIPT_DIR}/3.3_concert_status.sh" --wait=1800
+h_step details       "${DO_DETAILS}"       "3.4 instance details"       "${SCRIPT_DIR}/3.4_get_instance_details.sh"
+h_steps_plan
+h_steps_run

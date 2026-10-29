@@ -33,7 +33,11 @@ source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 #
 # Step toggles - override any of them at runtime, e.g.:
 #   DO_FLINK_PREP=false ./full_installprocess-confluent_flink.sh
+# Or pick steps by name: --from <step> resumes there, --skip <step>[,...] leaves
+# steps out, --list-steps shows the plan.
 # ==============================================================================
+
+h_steps_parse --strict "$@"
 
 DO_FLINK_PREP="${DO_FLINK_PREP:-true}"                         # 1.0 prepare the cluster
 DO_FLINK_INSTALL="${DO_FLINK_INSTALL:-true}"                   # 1.1 install operator + CMF
@@ -52,25 +56,18 @@ echo " Confluent Platform for Apache Flink full install - project '${PROJECT_CON
 echo "=============================================================================="
 echo "[INFO] CMF chart: ${FLINK_CMF_CHART_VERSION:-?}  Operator chart: ${FLINK_OPERATOR_CHART_VERSION:-?}"
 
-# --- Step 1.0 - Prepare the cluster -------------------------------------------
-h_run_step --stop "${DO_FLINK_PREP}" \
-    "1.0 flink prep" \
+# 1.1 runs with --no-status because 1.2 follows it; a failing status only warns.
+h_step         prep             "${DO_FLINK_PREP}"             "1.0 flink prep" \
     "${SCRIPT_DIR}/1.0_flink_prep.sh"
-
-# --- Step 1.1 - Install the Flink operator, CMF and default resources ---------
-h_run_step --stop "${DO_FLINK_INSTALL}" \
-    "1.1 flink install" \
+h_step         install          "${DO_FLINK_INSTALL}"          "1.1 flink install" \
     "${SCRIPT_DIR}/1.1_flink_install.sh" --no-status
-
-# --- Step 1.2 - Status report -------------------------------------------------
-h_run_step --warn "${DO_FLINK_STATUS}" \
-    "1.2 flink status" \
+h_step --warn  status           "${DO_FLINK_STATUS}"           "1.2 flink status" \
     "${SCRIPT_DIR}/1.2_flink_status.sh"
-
-# --- Step 1.3 - Write confluent_flink_instance_details.sh ---------------------
-h_run_step --stop "${DO_FLINK_INSTANCE_DETAILS}" \
-    "1.3 flink get instance details" \
+h_step         instance-details "${DO_FLINK_INSTANCE_DETAILS}" "1.3 flink get instance details" \
     "${SCRIPT_DIR}/1.3_flink_get_instance_details.sh"
+
+h_steps_plan
+h_steps_run
 
 echo ""
 echo "[INFO] Confluent Platform for Apache Flink full install complete."

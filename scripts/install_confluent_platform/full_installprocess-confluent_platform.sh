@@ -43,7 +43,11 @@ source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 #
 # Step toggles - override any of them at runtime, e.g.:
 #   DO_CONFLUENT_PREP=false ./full_installprocess-confluent_platform.sh
+# Or pick steps by name: --from <step> resumes there, --skip <step>[,...] leaves
+# steps out, --list-steps shows the plan.
 # ==============================================================================
+
+h_steps_parse --strict "$@"
 
 DO_CONFLUENT_PREP="${DO_CONFLUENT_PREP:-true}"                 # 1.0 prepare the cluster
 DO_CONFLUENT_INSTALL="${DO_CONFLUENT_INSTALL:-true}"           # 1.1 install the platform
@@ -80,52 +84,33 @@ echo " Confluent Platform full install - project '${PROJECT_CONFLUENT_SERVER}'"
 echo "=============================================================================="
 echo "[INFO] Version: ${CONFLUENT_VERSION:-?}  Control Center: ${CONFLUENT_C3_VERSION:-?}"
 
-# --- Step 1.0 - Prepare the cluster -------------------------------------------
-h_run_step --stop "${DO_CONFLUENT_PREP}" \
-    "1.0 confluent prep" \
-    "${SCRIPT_DIR}/1.0_confluent_prep.sh"
-
-# --- Step 1.1 - Install the platform ------------------------------------------
-h_run_step --stop "${DO_CONFLUENT_INSTALL}" \
-    "1.1 confluent install" \
-    "${SCRIPT_DIR}/1.1_confluent_install.sh"
-
-# --- Step 1.2 - Status report (non-zero = a component is not ready yet) -------
-h_run_step --warn "${DO_CONFLUENT_STATUS}" \
-    "1.2 confluent status" \
-    "${SCRIPT_DIR}/1.2_confluent_status.sh"
-
-# --- Step 1.3 - Write confluent_instance_details.sh ---------------------------
-h_run_step --stop "${DO_CONFLUENT_INSTANCE_DETAILS}" \
-    "1.3 confluent get instance details" \
-    "${SCRIPT_DIR}/1.3_confluent_get_instance_details.sh"
-
-h_run_step --stop "${DO_ICEBERG_WATSONX_SETUP}" \
-    "iceberg watsonx.data integration" \
-    "${SCRIPT_DIR}/utility_scripts_confluent_platform/x.6_confluent_setup_iceberg_watsonx.sh"
-
-# --- Flink addon - autodetected from confluent_vars.sh ------------------------
-# Both the managed sizing block (PROJECT_CONFLUENT_FLINK) and the unmanaged
-# settings (FLINK_CMF_CHART_VERSION) must be present for the addon to install.
+# Flink addon - autodetected from confluent_vars.sh: both the managed sizing
+# block (PROJECT_CONFLUENT_FLINK) and the unmanaged settings
+# (FLINK_CMF_CHART_VERSION) must be present for the addon to install.
 if [[ -n "${PROJECT_CONFLUENT_FLINK:-}" && -n "${FLINK_CMF_CHART_VERSION:-}" ]]; then
-    _flink_detected=true
+    _flink_note="detected in confluent_vars.sh"
 else
-    _flink_detected=false
+    _flink_note="no Flink settings in confluent_vars.sh - add them with 0_flink_prepare_template_config.sh or the notebook"
+    DO_FLINK_ADDON=false
 fi
 
-if [[ "${DO_FLINK_ADDON}" != "true" ]]; then
-    echo ""
-    echo "==> Skipping: flink addon full install (DO_FLINK_ADDON=${DO_FLINK_ADDON}, detected in config: ${_flink_detected})"
-elif [[ "${_flink_detected}" != "true" ]]; then
-    echo ""
-    echo "==> Skipping: flink addon full install (no Flink settings in confluent_vars.sh -"
-    echo "    add them with 0_flink_prepare_template_config.sh or the notebook)"
-else
-    h_run_step --stop true \
-        "flink addon full install" \
-        "${SCRIPT_DIR}/install_confluent_platform_flink_addon/full_installprocess-confluent_flink.sh"
-fi
-unset _flink_detected
+# Status (non-zero = a component is not ready yet) only warns.
+h_step         prep             "${DO_CONFLUENT_PREP}"             "1.0 confluent prep" \
+    "${SCRIPT_DIR}/1.0_confluent_prep.sh"
+h_step         install          "${DO_CONFLUENT_INSTALL}"          "1.1 confluent install" \
+    "${SCRIPT_DIR}/1.1_confluent_install.sh"
+h_step --warn  status           "${DO_CONFLUENT_STATUS}"           "1.2 confluent status" \
+    "${SCRIPT_DIR}/1.2_confluent_status.sh"
+h_step         instance-details "${DO_CONFLUENT_INSTANCE_DETAILS}" "1.3 confluent get instance details" \
+    "${SCRIPT_DIR}/1.3_confluent_get_instance_details.sh"
+h_step         iceberg          "${DO_ICEBERG_WATSONX_SETUP}"      "iceberg watsonx.data integration" \
+    "${SCRIPT_DIR}/utility_scripts_confluent_platform/x.6_confluent_setup_iceberg_watsonx.sh"
+h_step         flink            "${DO_FLINK_ADDON}"                "flink addon full install (${_flink_note})" \
+    "${SCRIPT_DIR}/install_confluent_platform_flink_addon/full_installprocess-confluent_flink.sh"
+unset _flink_note
+
+h_steps_plan
+h_steps_run
 
 echo ""
 echo "[INFO] Confluent Platform full install complete."

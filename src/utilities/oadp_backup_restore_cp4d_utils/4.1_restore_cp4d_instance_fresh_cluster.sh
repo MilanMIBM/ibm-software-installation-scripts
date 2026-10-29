@@ -62,6 +62,7 @@ set -euo pipefail
 #     --name <name>               restore name (default restore-<timestamp>)
 #     --skip <step>[,<step>...]   leave these steps out (repeatable)
 #     --from <step>               start at this step, e.g. to resume after a failure
+#     --list-steps                print the steps and what this run would do, then exit
 #     --prepare-only              stop after the 'oadp' step; no --backup needed
 #     --no-clean                  no clean start before the restore (passed to 4_restore_cp4d_instance.sh)
 #     --wipe-healthy              delete the instance projects even if they hold a finished, healthy
@@ -85,6 +86,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # because --target decides which config to load.
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; unset _b
 source "${REPO_ROOT}/src/helpers/oadp_br_helpers.sh"
+source "${REPO_ROOT}/src/helpers/common_helpers.sh"
 
 SECONDS=0
 trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
@@ -92,33 +94,28 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 INSTALL_DIR="${REPO_ROOT}/scripts/install_cloud_pak_for_data"
 PREP_DIR="${INSTALL_DIR}/2_prepare_cluster"
 
-STEPS=(
-    certmanager pull-secret projects cluster-resources cluster-components prereq-operators
-    oadp restore
-    oadp-full pull-secret-relink mcg-secrets admission-controller
-)
-typeset -A STEP_INFO
-STEP_INFO=(
-    certmanager          "1.0 Red Hat cert-manager operator"
-    pull-secret          "1.1 global pull secret"
-    projects             "2.0.1 shared projects (not the instance projects)"
-    cluster-resources    "2.0.2 CASE download + cluster-scoped resources"
-    cluster-components   "2.1 License Service + scheduling service"
-    prereq-operators     "2.2 prerequisite operators"
-    oadp                 "OADP + cpdbr-tenant cluster roles"
-    restore              "tenant restore"
-    oadp-full            "cpdbr-tenant + br_orchestration in the restored instance"
-    pull-secret-relink   "1.1 pull secret into the restored projects"
-    mcg-secrets          "2.2.4 MCG secrets for the restored instance"
-    admission-controller "3.3.2 configuration admission controller"
-)
+h_steps_parse --no-help "$@"
+set -- "${H_STEPS_ARGS[@]}"
+# Up to and including the restore, a failed step stops everything after it;
+# after it, the failed step is recorded and the next one still runs.
+h_step        certmanager          true "1.0 Red Hat cert-manager operator"
+h_step        pull-secret          true "1.1 global pull secret"
+h_step        projects             true "2.0.1 shared projects (not the instance projects)"
+h_step        cluster-resources    true "2.0.2 CASE download + cluster-scoped resources"
+h_step        cluster-components   true "2.1 License Service + scheduling service"
+h_step        prereq-operators     true "2.2 prerequisite operators"
+h_step        oadp                 true "OADP + cpdbr-tenant cluster roles"
+h_step        restore              true "tenant restore"
+h_step --warn oadp-full            true "cpdbr-tenant + br_orchestration in the restored instance"
+h_step --warn pull-secret-relink   true "1.1 pull secret into the restored projects"
+h_step --warn mcg-secrets          true "2.2.4 MCG secrets for the restored instance"
+h_step --warn admission-controller true "3.3.2 configuration admission controller"
+h_step_hint restore "(the restore step clears what the failed attempt left before it starts again)"
 
 TARGET=""
 BACKUP_NAME=""
 BUCKET=""
 RESTORE_NAME=""
-SKIP_STEPS=()
-FROM_STEP=""
 PREPARE_ONLY=false
 FORCE=false
 NO_CLEAN=false
@@ -134,8 +131,6 @@ while [[ $# -gt 0 ]]; do
         --backup)            BACKUP_NAME="${2:?--backup needs a tenant backup name}"; shift 2 ;;
         --bucket)            BUCKET="${2:?--bucket needs a config name or path}"; shift 2 ;;
         --name)              RESTORE_NAME="${2:?--name needs a value}"; shift 2 ;;
-        --skip)              SKIP_STEPS+=(${(s:,:)${2:?--skip needs step names}}); shift 2 ;;
-        --from)              FROM_STEP="${2:?--from needs a step name}"; shift 2 ;;
         --prepare-only)      PREPARE_ONLY=true; shift ;;
         --force)             FORCE=true; shift ;;
         --no-clean)          NO_CLEAN=true; RESTORE_PASS+=(--no-clean); shift ;;
@@ -156,34 +151,16 @@ while [[ $# -gt 0 ]]; do
         *)                   echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
     esac
 done
+[[ "${PREPARE_ONLY}" == "true" ]] && h_steps_until oadp
+${H_STEPS_LIST} && h_steps_plan
 if [[ -z "${TARGET}" ]]; then
     echo "[ERROR] --target is required: the restore target config (1.2_generate_restore_target_config.sh)." >&2
     echo "[ERROR] To restore onto the cluster the backup came from, use 4_restore_cp4d_instance.sh --same-cluster." >&2
     exit 1
 fi
-for _s in "${SKIP_STEPS[@]}" ${FROM_STEP:+"${FROM_STEP}"}; do
-    if (( ! ${STEPS[(Ie)${_s}]} )); then
-        echo "[ERROR] Unknown step '${_s}'. Steps: ${STEPS[*]}" >&2
-        exit 1
-    fi
-done
-
-FROM_IDX=1
-[[ -n "${FROM_STEP}" ]] && FROM_IDX=${STEPS[(Ie)${FROM_STEP}]}
-LAST_IDX=${#STEPS}
-[[ "${PREPARE_ONLY}" == "true" ]] && LAST_IDX=${STEPS[(Ie)oadp]}
-step_selected() {
-    local i=${STEPS[(Ie)$1]}
-    (( i >= FROM_IDX && i <= LAST_IDX && ! ${SKIP_STEPS[(Ie)$1]} ))
-}
 if [[ "${LIST_ONLY}" != "true" ]]; then
-    _n=0
-    for _s in "${STEPS[@]}"; do step_selected "${_s}" && (( ++_n )); done
-    if (( _n == 0 )); then
-        echo "[ERROR] No steps left to run with these --from/--skip/--prepare-only options." >&2
-        exit 1
-    fi
-    if step_selected restore && [[ -z "${BACKUP_NAME}" ]]; then
+    h_steps_check
+    if h_step_selected restore && [[ -z "${BACKUP_NAME}" ]]; then
         echo "[ERROR] --backup is required for the restore step (or pass --prepare-only; --list shows the backups)." >&2
         exit 1
     fi
@@ -198,7 +175,7 @@ BUCKET_FILE=""
 BUCKET_ARGS=()
 _bucket_files=("${BUCKET_CONFIG_DIR}"/*"${BUCKET_CONFIG_SUFFIX}"(N))
 if [[ -n "${BUCKET}" ]] || (( ${#_bucket_files} )) \
-        || { [[ "${LIST_ONLY}" != "true" ]] && { step_selected oadp || step_selected oadp-full; }; }; then
+        || { [[ "${LIST_ONLY}" != "true" ]] && { h_step_selected oadp || h_step_selected oadp-full; }; }; then
     BUCKET_FILE="$(oadp_resolve_config "${BUCKET_CONFIG_DIR}" "${BUCKET_CONFIG_SUFFIX}" bucket "${BUCKET}" 1.1_generate_backup_bucket_config.sh)"
     BUCKET_ARGS=(--bucket "${BUCKET_FILE}")
 fi
@@ -229,7 +206,7 @@ export PULL_SECRET_FILE="${TARGET_CONFIG_DIR}/${TARGET_BASE}.pull-secret.dockerc
 source "${REPO_ROOT}/env_bootstrap.sh"
 oadp_require_target_login
 oadp_require_vars OCP_URL OC_LOGIN CPDM_OC_LOGIN OADP_PROJECT PROJECT_CPD_INST_OPERATORS PROJECT_CPD_INST_OPERANDS
-if [[ "${LIST_ONLY}" != "true" ]] && { step_selected cluster-resources || step_selected cluster-components; }; then
+if [[ "${LIST_ONLY}" != "true" ]] && { h_step_selected cluster-resources || h_step_selected cluster-components; }; then
     if ! oadp_require_vars VERSION SOFTWARE_HUB COMPLETE_COMPONENT_LIST IMAGE_PULL_PREFIX IMAGE_PULL_SECRET \
             PROJECT_LICENSE_SERVICE PROJECT_SCHEDULING_SERVICE; then
         echo "[ERROR] These come from the source config: regenerate ${ENV_TARGET:t} with 1.2_generate_restore_target_config.sh" >&2
@@ -260,14 +237,14 @@ EXISTING_NS=()
 for ns in "${PROJECT_CPD_INST_OPERATORS}" "${PROJECT_CPD_INST_OPERANDS}"; do
     oc get namespace "${ns}" >/dev/null 2>&1 && EXISTING_NS+=("${ns}")
 done
-if step_selected restore && (( ${#EXISTING_NS} )) && [[ "${FORCE}" != "true" && "${NO_CLEAN}" == "true" ]]; then
+if h_step_selected restore && (( ${#EXISTING_NS} )) && [[ "${FORCE}" != "true" && "${NO_CLEAN}" == "true" ]]; then
     echo "[ERROR] ${EXISTING_NS[*]} already exist(s) on ${OCP_URL}: not a fresh cluster for this instance." >&2
     echo "[ERROR] Drop --no-clean to have the restore step delete them first, or pass --force to restore into them." >&2
     exit 1
 fi
 
 # Restoring without this run's 'oadp' step: OADP must already be on the cluster.
-if step_selected restore && ! step_selected oadp \
+if h_step_selected restore && ! h_step_selected oadp \
         && [[ -z "$(oc get dataprotectionapplications.oadp.openshift.io -n "${OADP_PROJECT}" -o name 2>/dev/null)" ]]; then
     echo "[ERROR] OADP is not set up on ${OCP_URL} (no DPA in ${OADP_PROJECT}), and this run skips the 'oadp' step." >&2
     echo "[ERROR] On a fresh cluster, run without --from to do the cluster setup and OADP first, or" >&2
@@ -286,7 +263,7 @@ for _v in STG_CLASS_BLOCK STG_CLASS_FILE; do
     [[ -n "${(P)_v:-}" ]] || continue
     oc get storageclass "${(P)_v}" >/dev/null 2>&1 || MISSING_SC+=("${(P)_v} (${_v})")
 done
-if step_selected restore && (( ${#MISSING_SC} )); then
+if h_step_selected restore && (( ${#MISSING_SC} )); then
     echo "[ERROR] Storage class(es) missing on ${OCP_URL}: ${MISSING_SC[*]}. The restored PVCs would stay Pending." >&2
     echo "[ERROR] Create them with the source cluster's names first. Storage classes here: $(oc get storageclass -o name 2>/dev/null | sed 's|.*/||' | tr '\n' ' ')" >&2
     exit 1
@@ -301,22 +278,18 @@ echo ""
 echo "  Cluster:   ${OCP_URL} (target config: ${ENV_TARGET:t})"
 [[ -n "${TARGET_KUBECONFIG}" ]] && echo "  oc config: ${TARGET_KUBECONFIG}"
 [[ -n "${BUCKET_FILE}" ]] && echo "  Bucket:    ${BUCKET_FILE:t}"
-step_selected restore && echo "  Backup:    ${BACKUP_NAME}"
+h_step_selected restore && echo "  Backup:    ${BACKUP_NAME}"
 echo "  Instance:  ${PROJECT_CPD_INST_OPERATORS} (operators) / ${PROJECT_CPD_INST_OPERANDS} (operands)"
-if (( ${#EXISTING_NS} )) && step_selected restore; then
+if (( ${#EXISTING_NS} )) && h_step_selected restore; then
     if [[ "${FORCE}" == "true" ]]; then
         echo "  --force:   restoring into existing ${EXISTING_NS[*]}"
     else
         echo "  Leftover:  ${EXISTING_NS[*]} exist(s): the restore step deletes them first (clean start)"
     fi
 fi
-echo "  Steps:"
-for _s in "${STEPS[@]}"; do
-    if step_selected "${_s}"; then _mark="run "; else _mark="skip"; fi
-    printf '    [%s] %-21s %s\n' "${_mark}" "${_s}" "${STEP_INFO[$_s]}"
-done
+h_steps_print
 echo ""
-if step_selected restore; then
+if h_step_selected restore; then
     oadp_confirm "This sets up ${OCP_URL} for Software Hub and restores ${BACKUP_NAME} onto it."
 else
     oadp_confirm "This sets up ${OCP_URL} for Software Hub."
@@ -330,58 +303,34 @@ fi
 # directly for mcg-secrets), so they install only what the components need.
 export CP4D_PREREQ_GATE_DEFAULT="${CP4D_PREREQ_GATE_DEFAULT:-auto}"
 
-# run_step <step> <command...>: runs the command when the step is selected.
-run_step() {
-    local step="$1"
-    shift
-    step_selected "${step}" || return 0
-    echo ""
-    echo "==> ${step}: ${STEP_INFO[$step]}"
-    "$@"
-}
-# Up to and including the restore, a failed step stops everything after it.
-must_step() {
-    run_step "$@" && return 0
-    echo "[ERROR] Step '$1' failed. Fix the cause, then re-run the same command with --from $1 added." >&2
-    [[ "$1" == "restore" ]] && echo "[ERROR] (the restore step clears what the failed attempt left before it starts again)" >&2
-    exit 1
-}
-# After the restore, a failed step is recorded and the next one still runs.
-POST_FAILED=()
-post_step() {
-    run_step "$@" && return 0
-    POST_FAILED+=("$1")
-    echo "[WARN] Step '$1' failed; continuing with the rest." >&2
-}
-
-must_step certmanager        "${INSTALL_DIR}/1_global_pull_secret_and_certmanager/1.0_set_up_openshift_certmanager.sh"
-must_step pull-secret        "${INSTALL_DIR}/1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh"
-must_step projects           env SETUP_INSTANCE_PROJECTS=false \
+h_step_run certmanager        "${INSTALL_DIR}/1_global_pull_secret_and_certmanager/1.0_set_up_openshift_certmanager.sh"
+h_step_run pull-secret        "${INSTALL_DIR}/1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh"
+h_step_run projects           env SETUP_INSTANCE_PROJECTS=false \
                              "${PREP_DIR}/2.0-2.1_preliminary_setup/2.0.1_preliminary_project_setup.sh"
-must_step cluster-resources  "${PREP_DIR}/2.0-2.1_preliminary_setup/2.0.2_cluster_component_case_download.sh"
-must_step cluster-components env AUTHORIZE_INSTANCE_TOPOLOGY=false \
+h_step_run cluster-resources  "${PREP_DIR}/2.0-2.1_preliminary_setup/2.0.2_cluster_component_case_download.sh"
+h_step_run cluster-components env AUTHORIZE_INSTANCE_TOPOLOGY=false \
                              "${PREP_DIR}/2.0-2.1_preliminary_setup/2.1_apply_shared_cluster_CASE_packages.sh"
-must_step prereq-operators   env MCG_SETUP_INSTANCE_SECRETS=false \
+h_step_run prereq-operators   env MCG_SETUP_INSTANCE_SECRETS=false \
                              "${PREP_DIR}/2.2_install_prerequisite_operators/2.2_install_prerequisite_operators.sh"
-must_step oadp               "${SCRIPT_DIR}/2_install_oadp_br_utilities.sh" --target "${ENV_TARGET}" "${BUCKET_ARGS[@]}" "${OADP_ARGS[@]}" --rbac-only
-must_step restore            "${SCRIPT_DIR}/4_restore_cp4d_instance.sh" "${RESTORE_ARGS[@]}"
+h_step_run oadp               "${SCRIPT_DIR}/2_install_oadp_br_utilities.sh" --target "${ENV_TARGET}" "${BUCKET_ARGS[@]}" "${OADP_ARGS[@]}" --rbac-only
+h_step_run restore            "${SCRIPT_DIR}/4_restore_cp4d_instance.sh" "${RESTORE_ARGS[@]}"
 
-post_step oadp-full            "${SCRIPT_DIR}/2_install_oadp_br_utilities.sh" --target "${ENV_TARGET}" "${BUCKET_ARGS[@]}" "${OADP_ARGS[@]}" --full
-post_step pull-secret-relink   "${INSTALL_DIR}/1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh"
-post_step mcg-secrets          "${PREP_DIR}/2.2_install_prerequisite_operators/2.2.4_install_multicloud_object_gateway_operator.sh"
-post_step admission-controller "${INSTALL_DIR}/3_install_softwarehub/3.3.2_softwarehub_admission_controller.sh"
+h_step_run oadp-full            "${SCRIPT_DIR}/2_install_oadp_br_utilities.sh" --target "${ENV_TARGET}" "${BUCKET_ARGS[@]}" "${OADP_ARGS[@]}" --full
+h_step_run pull-secret-relink   "${INSTALL_DIR}/1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh"
+h_step_run mcg-secrets          "${PREP_DIR}/2.2_install_prerequisite_operators/2.2.4_install_multicloud_object_gateway_operator.sh"
+h_step_run admission-controller "${INSTALL_DIR}/3_install_softwarehub/3.3.2_softwarehub_admission_controller.sh"
 
 echo ""
 [[ -n "${TARGET_KUBECONFIG}" ]] && echo "[INFO] oc against the target from your shell: export KUBECONFIG=${TARGET_KUBECONFIG}"
-if (( ${#POST_FAILED} )); then
-    echo "[WARN] The restore finished, but these steps after it failed: ${POST_FAILED[*]}" >&2
+if (( ${#H_STEPS_FAILED} )); then
+    echo "[WARN] The restore finished, but these steps after it failed: ${H_STEPS_FAILED[*]}" >&2
     echo "[WARN] Re-run one with --from <step> once fixed (--skip the ones already done)." >&2
     exit 1
 fi
-if step_selected restore; then
+if h_step_selected restore; then
     echo "[OK] ${BACKUP_NAME} restored onto ${OCP_URL}"
     echo "[INFO] Check the instance: oc get ibmcpd -n ${PROJECT_CPD_INST_OPERANDS}; cpd-cli manage get-cr-status --cpd_instance_ns=${PROJECT_CPD_INST_OPERANDS}"
-elif (( LAST_IDX < ${STEPS[(Ie)restore]} )); then
+elif [[ "${PREPARE_ONLY}" == "true" ]]; then
     echo "[OK] ${OCP_URL} is set up for the restore"
     echo "[INFO] Next: $0 --target ${TARGET} --list"
     echo "[INFO]       $0 --target ${TARGET} --backup <backup name> --from restore"

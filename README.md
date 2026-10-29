@@ -94,6 +94,8 @@ To resume after a failure, start at a named step with `--from` (and leave others
 
 Steps: `registry-config`, `certmanager`, `pull-secret`, `preliminary`, `prereq-operators`, `softwarehub`, `cpd`.
 
+Every chained script (the `full_*` installs for each product, the step sub-chains such as `3.1_full_step_3_*`, the mirroring track and the OADP fresh-cluster restore) takes the same `--from` / `--skip` / `--list-steps` options; `--help` lists its step names. The CP4D patch update uses `--from-step`, since its `--from` is a version.
+
 ### Step by step
 
 Run these in order - each one is standalone and loads the config itself:
