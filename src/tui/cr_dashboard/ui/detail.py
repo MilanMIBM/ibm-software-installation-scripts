@@ -11,6 +11,7 @@ from textual.widgets import ProgressBar, Sparkline, Static
 
 from .cr_list import ago
 from .glow_dot import GlowDot
+from .util import set_attr, set_display, set_text
 
 
 def _hhmm(ts: datetime | None) -> str:
@@ -45,7 +46,7 @@ class Detail(Horizontal):
             return
         v = n.verdict
         self.query_one(GlowDot).set_state(v.state, v.badge)
-        self.border_title = f"{n.label} · {v.state.word}" + (f" since {_hhmm(v.since)}" if v.since else "")
+        set_attr(self, "border_title", f"{n.label} · {v.state.word}" + (f" since {_hhmm(v.since)}" if v.since else ""))
         t = Text()
         t.append(v.reason + "\n", style="bold")
         op = n.op
@@ -96,10 +97,12 @@ class Detail(Horizontal):
             t.append(note + "\n", style="yellow")
         if n.cr.reconcile_history:
             t.append("history " + n.cr.reconcile_history[-1][:160] + "\n", style="dim")
-        self.query_one("#d-body", Static).update(t)
+        set_text(self.query_one("#d-body", Static), t)
         bar = self.query_one(ProgressBar)
-        bar.update(progress=n.cr.progress if n.cr.progress is not None else 0)
+        pct = n.cr.progress if n.cr.progress is not None else 0
+        if bar.progress != pct:
+            bar.update(progress=pct)
         spark = self.query_one(Sparkline)
-        spark.display = len(n.history) >= 2      # one point draws as solid bars
-        spark.data = n.history
-        spark.set_class(True, f"-{v.state.value}")
+        set_display(spark, len(n.history) >= 2)      # one point draws as solid bars
+        if list(spark.data or []) != n.history:
+            spark.data = list(n.history)

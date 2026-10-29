@@ -25,6 +25,7 @@ from .detail import Detail
 from .glow_dot import DOT_COLORS, GlowDot, as_content
 from .pulse import PulseClock
 from .screens import LegendScreen, OpLogScreen
+from .util import set_attr, set_text
 
 TREE_MODES = ("live", "owns", "deps")
 
@@ -145,13 +146,18 @@ class DashboardApp(App):
             bits.append(f"{len(v.errors)} source error{'s' if len(v.errors) > 1 else ''}")
         if not self.pulse.animate:
             bits.append("animation off")
-        self.query_one("#updated", Label).update(" · ".join(bits))
+        set_text(self.query_one("#updated", Label), " · ".join(bits))
 
     def _render_view(self) -> None:
+        # one repaint per refresh, and only the widgets whose content changed are touched
+        with self.batch_update():
+            self._render_view_now()
+
+    def _render_view_now(self) -> None:
         v = self.view
         nodes, now = v.nodes, v.computed_at
         for s in State:
-            self.query_one(f"#cnt-{s.value}", Label).update(f"{v.counts.get(s, 0)} {s.word}")
+            set_text(self.query_one(f"#cnt-{s.value}", Label), f"{v.counts.get(s, 0)} {s.word}")
         self._update_clock()
         rp = self.query_one("#root-problem", Static)
         if v.root_problems:
@@ -163,10 +169,11 @@ class DashboardApp(App):
                 t.append(f" {n.label}: {n.verdict.reason}\n")
             if len(v.root_problems) > 2:
                 t.append(f"… and {len(v.root_problems) - 2} more (f: problems only)")
-            rp.update(t.rstrip() or t)
+            t.rstrip()
+            set_text(rp, t)
             rp.set_class(False, "-none")
         else:
-            rp.update("loading…" if v.loading else "no problems: every component is healthy, in progress or inactive")
+            set_text(rp, "loading…" if v.loading else "no problems: every component is healthy, in progress or inactive")
             rp.set_class(True, "-none")
         drows = display_rows(v.rows, nodes, self.expanded_groups)
         self.query_one(ChainView).show(drows, nodes, self.collapsed)
@@ -180,16 +187,16 @@ class DashboardApp(App):
             q = self.search.lower()
             keys = [k for k in keys if q in nodes[k].label.lower() or q in (nodes[k].component or "").lower()]
         crlist = self.query_one(CRList)
-        crlist.border_title = f"all CRs · sort {self.sort_mode}" + (" · problems only" if self.problems_only else "") \
-            + (f" · '{self.search}'" if self.search else "")
+        set_attr(crlist, "border_title", f"all CRs · sort {self.sort_mode}"
+                 + (" · problems only" if self.problems_only else "") + (f" · '{self.search}'" if self.search else ""))
         crlist.show(sort_keys(keys, nodes, self.sort_mode, now), nodes, now)
         if self.selected not in nodes:
             ordered = sort_keys(v.list_keys, nodes, "severity", now)
             self.selected = v.root_problems[0] if v.root_problems else (ordered[0] if ordered else None)
         if self.selected in nodes:
             self.query_one(Detail).show(nodes[self.selected], now)
-        self.query_one(ChainView).border_title = f"chains · {self.engine.tree_mode}" + \
-            (" + deps" if self.engine.show_deps else "")
+        set_attr(self.query_one(ChainView), "border_title",
+                 f"chains · {self.engine.tree_mode}" + (" + deps" if self.engine.show_deps else ""))
         self._log_events(v)
 
     def _log_events(self, v) -> None:

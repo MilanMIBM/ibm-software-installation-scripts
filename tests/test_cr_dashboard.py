@@ -453,3 +453,57 @@ if pytest is not None:
             await pilot.click(leaf.query_one(ToggleArrow))
             await pilot.pause(0.1)
             assert any(r.drow.key.startswith("DataStage/") for r in rows())
+
+    @pytest.mark.asyncio
+    async def test_ui_refresh_reuses_rows_and_skips_unchanged_updates():
+        from unittest.mock import patch
+
+        from textual.widgets import Static
+
+        from tui.cr_dashboard.ui.app import DashboardApp
+
+        hub, profile, engine = fake_engine()
+        intro = Introspector(None, hub, [], enabled=False)
+        app = DashboardApp(kube=None, profile=profile, hub=hub, engine=engine, intro=intro, resources=[],
+                           user="tester", header="cr-dashboard · test")
+
+        def chain_rows():
+            return {r.drow.row_id: r for r in app.query("ChainRow")}
+
+        def list_rows():
+            return {r.key: r for r in app.query("CRListRow")}
+
+        async with app.run_test(size=(160, 45)) as pilot:
+            app._recompute()
+            for _ in range(40):
+                await pilot.pause(0.02)
+            chain_before, list_before = chain_rows(), list_rows()
+            assert chain_before and list_before
+
+            # 1. nothing changed: same row widgets, (almost) no widget updates
+            calls = []
+            orig = Static.update
+
+            def counting(self, *a, **kw):
+                calls.append(self)
+                return orig(self, *a, **kw)
+
+            with patch.object(Static, "update", counting):
+                app._recompute()
+                await pilot.pause(0.05)
+            assert chain_rows() == chain_before
+            assert list_rows() == list_before
+            assert len(calls) <= 1, [type(c).__name__ for c in calls]   # at most the "updated Ns ago" clock
+
+            # 2. DataStage recovers: WKC is no longer blocked and the list re-sorts - by moving rows
+            ds = obj("DataStage", "datastage", status={"dsStatus": "Completed", "progressMessage": "ok"})
+            hub._sync("cr:x.ibm.com/v1/datastages", {ds["metadata"]["uid"]: ds})
+            engine.th = Thresholds(debounce=timedelta(0))   # no recovery debounce for the test
+            app._recompute()
+            for _ in range(20):
+                await pilot.pause(0.02)
+            after = list_rows()
+            assert all(after[k] is list_before[k] for k in after if k in list_before)
+            order = [r.key for r in app.query("CRListRow")]
+            assert order.index("WKC/ops/wkc-cr") < order.index("DataStage/ops/datastage")
+            assert app.view.nodes["DataStage/ops/datastage"].verdict.state == State.HEALTHY

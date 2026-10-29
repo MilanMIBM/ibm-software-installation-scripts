@@ -13,6 +13,7 @@ from textual.widgets import Label
 from ..model import State
 from .chain_view import RowFocused
 from .glow_dot import GlowDot
+from .util import reconcile, set_text
 
 SORTS = ("severity", "name", "kind", "progress", "changed")
 
@@ -21,10 +22,8 @@ def ago(ts: datetime | None, now: datetime) -> str:
     if ts is None:
         return ""
     s = int((now - ts).total_seconds())
-    if s < 0:
-        return "0s"
-    if s < 60:
-        return f"{s}s"
+    if s < 60:          # minute resolution: a ticking seconds column is just repaint churn
+        return "<1m"
     if s < 3600:
         return f"{s // 60}m"
     if s < 86400:
@@ -52,35 +51,43 @@ class CRListRow(Horizontal, can_focus=True):
     CRListRow.-inactive .c-state { color: $dot-inactive; }
     """
 
-    def __init__(self, key: str):
+    def __init__(self, key: str, pending: tuple | None = None):
         super().__init__()
         self.key = key
+        self._pending = pending   # (node, now): filled once the row has its children
 
     def compose(self) -> ComposeResult:
         yield GlowDot()
         for c in ("c-name", "c-kind", "c-state", "c-pct", "c-why", "c-age"):
             yield Label("", classes=c)
 
+    def on_mount(self) -> None:
+        if self._pending is not None:
+            n, now = self._pending
+            self._pending = None
+            self.fill(n, now)
+
     def on_focus(self) -> None:
         self.post_message(RowFocused(self.key))
 
     def fill(self, n, now: datetime) -> None:
+        """Show node n; every cell is only touched when its content changes."""
         v = n.verdict
         for s in State:
             self.set_class(s == v.state, f"-{s.value}")
         self.query_one(GlowDot).set_state(v.state, v.badge)
-        self.query_one(".c-name", Label).update(n.label if not n.placeholder else n.component or n.label)
-        self.query_one(".c-kind", Label).update(n.ref.kind if not n.placeholder else "-")
-        self.query_one(".c-state", Label).update(v.state.word)
+        set_text(self.query_one(".c-name", Label), n.label if not n.placeholder else n.component or n.label)
+        set_text(self.query_one(".c-kind", Label), n.ref.kind if not n.placeholder else "-")
+        set_text(self.query_one(".c-state", Label), v.state.word)
         pct = n.cr.progress
         quiet = v.state in (State.HEALTHY, State.INACTIVE)
-        self.query_one(".c-pct", Label).update("" if pct is None or (quiet and pct == 100) else f"{pct}")
+        set_text(self.query_one(".c-pct", Label), "" if pct is None or (quiet and pct == 100) else f"{pct}")
         why = v.reason if v.state != State.HEALTHY or not v.notices else v.notices[0]
         if v.notices and v.state != State.HEALTHY:
             why = f"{why}  [{v.notices[0]}]"
-        self.query_one(".c-why", Label).update(why)
+        set_text(self.query_one(".c-why", Label), why)
         # healthy / inactive: time since the CR's own last transition; otherwise since the last change seen
-        self.query_one(".c-age", Label).update(ago(v.since if quiet else (n.last_change or v.since), now))
+        set_text(self.query_one(".c-age", Label), ago(v.since if quiet else (n.last_change or v.since), now))
 
 
 class CRList(VerticalScroll, can_focus=False):
@@ -100,7 +107,6 @@ class CRList(VerticalScroll, can_focus=False):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._keys: list[str] = []
         self._rows: list[CRListRow] = []
         self.border_title = "all CRs"
 
@@ -112,28 +118,13 @@ class CRList(VerticalScroll, can_focus=False):
                 yield Label(t, classes=c)
 
     def show(self, keys: list[str], nodes: dict, now: datetime) -> None:
-        if keys != self._keys:
-            focused = self.app.focused
-            keep = focused.key if isinstance(focused, CRListRow) else None
-            with self.app.batch_update():
-                for r in self._rows:
-                    r.remove()
-                self._rows = [CRListRow(k) for k in keys]
-                self.mount_all(self._rows)
-            self._keys = list(keys)
-            self.call_after_refresh(self._fill_all, nodes, now, keep)
-        else:
-            self._fill_all(nodes, now, None)
-
-    def _fill_all(self, nodes, now, keep):
+        # rows are reused and moved when the sort order changes, never rebuilt
+        self._rows, fresh = reconcile(self, self._rows, keys, lambda r: r.key,
+                                      lambda k: CRListRow(k, pending=(nodes[k], now)),
+                                      first_anchor=self.query_one("#list-head"))
         for r in self._rows:
-            if r.is_mounted and r.key in nodes:
+            if r not in fresh and r.is_mounted and r.key in nodes:
                 r.fill(nodes[r.key], now)
-        if keep:
-            for r in self._rows:
-                if r.key == keep:
-                    r.focus(scroll_visible=False)
-                    break
 
     def action_move(self, delta: int) -> None:
         if not self._rows:

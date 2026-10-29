@@ -14,6 +14,7 @@ from textual.widgets import Label, ProgressBar, Static
 from ..display import DRow
 from ..model import State
 from .glow_dot import GlowDot
+from .util import reconcile, set_display, set_text
 
 
 class RowFocused(Message):
@@ -75,10 +76,11 @@ class ChainRow(Horizontal, can_focus=True):
     ChainRow.-ref .name, ChainRow.-group .name { color: $text-muted; text-style: italic; }
     """
 
-    def __init__(self, drow: DRow):
+    def __init__(self, drow: DRow, pending: tuple | None = None):
         super().__init__()
         self.drow = drow
         self.key = drow.key
+        self._pending = pending   # (guide, nodes, collapsed): filled once the row has its children
 
     def compose(self) -> ComposeResult:
         yield Static("", classes="guide")
@@ -90,18 +92,25 @@ class ChainRow(Horizontal, can_focus=True):
         yield GlowDot(size="mini", classes="worst")
         yield Label("", classes="badge")
 
+    def on_mount(self) -> None:
+        if self._pending is not None:
+            guide, nodes, collapsed = self._pending
+            self._pending = None
+            self.fill(self.drow, guide, nodes, collapsed)
+
     def on_focus(self) -> None:
         self.post_message(RowFocused(self.drow.key if self.drow.kind != "group" else None))
 
     def fill(self, drow: DRow, guide: str, nodes: dict, collapsed: bool) -> None:
+        """Show drow; every child widget is only touched when its content changes."""
         self.drow = drow
         self.key = drow.key
         self.set_class(drow.kind == "ref", "-ref")
         self.set_class(drow.kind == "group", "-group")
-        self.query_one(".guide", Static).update(guide)
+        set_text(self.query_one(".guide", Static), guide)
         toggle = ("▶" if collapsed or (drow.kind == "group" and not drow.expanded) else "▼") if drow.has_children else " "
         arrow = self.query_one(ToggleArrow)
-        arrow.update(toggle + " ")
+        set_text(arrow, toggle + " ")
         arrow.set_class(drow.has_children, "-active")
         dot = self.query_one(GlowDot)
         bar = self.query_one(ProgressBar)
@@ -109,11 +118,11 @@ class ChainRow(Horizontal, can_focus=True):
         name, why, badge = self.query_one(".name", Label), self.query_one(".why", Label), self.query_one(".badge", Label)
         if drow.kind == "group":
             dot.set_state(State.HEALTHY)
-            name.update(f"+{drow.summary}" if not drow.expanded else drow.summary)
-            why.update("")
-            bar.display = False
-            worst.display = False
-            badge.update("")
+            set_text(name, f"+{drow.summary}" if not drow.expanded else drow.summary)
+            set_text(why, "")
+            set_display(bar, False)
+            set_display(worst, False)
+            set_text(badge, "")
             return
         n = nodes.get(drow.key)
         if n is None or n.verdict is None:
@@ -121,25 +130,25 @@ class ChainRow(Horizontal, can_focus=True):
         v = n.verdict
         dot.set_state(v.state, v.badge)
         if drow.kind == "ref":
-            name.update(f"→ {n.label}")
-            why.update("shown elsewhere")
-            bar.display = False
-            worst.display = False
-            badge.update("")
+            set_text(name, f"→ {n.label}")
+            set_text(why, "shown elsewhere")
+            set_display(bar, False)
+            set_display(worst, False)
+            set_text(badge, "")
             return
-        name.update(n.label)
-        why.update("" if v.state == State.HEALTHY else v.reason)
+        set_text(name, n.label)
+        set_text(why, "" if v.state == State.HEALTHY else v.reason)
         show_bar = n.cr.progress is not None and v.state not in (State.HEALTHY, State.INACTIVE)
-        bar.display = show_bar
-        if show_bar:
+        set_display(bar, show_bar)
+        if show_bar and bar.progress != n.cr.progress:
             bar.update(progress=n.cr.progress)
         w = n.worst_desc
-        worst.display = bool(w and w.severity < v.state.severity)   # something below is worse
+        set_display(worst, bool(w and w.severity < v.state.severity))   # something below is worse
         if worst.display:
             worst.set_state(w)
         tags = sorted({note.split(" ", 1)[0] for note in v.notices if note.split(" ", 1)[0].endswith("!")}
                       | ({"drift"} if any(nt.startswith("drift") for nt in v.notices) else set()))
-        badge.update(" ".join(tags))
+        set_text(badge, " ".join(tags))
 
 
 class ChainView(VerticalScroll, can_focus=False):
@@ -163,7 +172,6 @@ class ChainView(VerticalScroll, can_focus=False):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._ids: list[str] = []
         self._rows: list[ChainRow] = []
         self.border_title = "chains"
         self.border_subtitle = "click ▶ / ▼ (or ← →, enter) to expand / collapse"
@@ -181,30 +189,18 @@ class ChainView(VerticalScroll, can_focus=False):
             visible.append(d)
             if d.row_id in collapsed and d.has_children:
                 cut = d.depth
-        ids = [d.row_id for d in visible]
-        gl = guides(visible)
-        if ids != self._ids:
-            focused = self.app.focused
-            keep = focused.drow.row_id if isinstance(focused, ChainRow) else None
-            with self.app.batch_update():
-                for r in self._rows:
-                    r.remove()
-                self._rows = [ChainRow(d) for d in visible]
-                self.mount_all(self._rows)
-            self._ids = ids
-            self.call_after_refresh(self._fill_all, visible, gl, nodes, collapsed, keep)
-        else:
-            self._fill_all(visible, gl, nodes, collapsed, None)
+        by_id = {d.row_id: (d, g) for d, g in zip(visible, guides(visible))}
 
-    def _fill_all(self, visible, gl, nodes, collapsed, keep):
-        for row, d, g in zip(self._rows, visible, gl):
-            if row.is_mounted:
+        def make(row_id: str) -> ChainRow:
+            d, g = by_id[row_id]
+            return ChainRow(d, pending=(g, nodes, row_id in collapsed))
+
+        # rows are reused and moved, never rebuilt: no flicker, focus and glow phase are kept
+        self._rows, fresh = reconcile(self, self._rows, list(by_id), lambda r: r.drow.row_id, make)
+        for row in self._rows:
+            if row not in fresh and row.is_mounted:
+                d, g = by_id[row.drow.row_id]
                 row.fill(d, g, nodes, d.row_id in collapsed)
-        if keep:
-            for row in self._rows:
-                if row.drow.row_id == keep:
-                    row.focus(scroll_visible=False)
-                    break
 
     def _index(self) -> int | None:
         f = self.app.focused
