@@ -124,6 +124,7 @@ export CPD_ADMIN_USERNAME="{{ cpd_admin_username_input.value }}"
 
 export SOFTWARE_HUB="ibm-licensing,scheduler,cpfs,cpd_platform,ccs,zen"
 export SOFTWAREHUB_SCALE="{{ softwarehub_scale_select.value }}" # level_2 (default zen size, no scale-config applied), level_3 or level_4
+export SCHEDULER_SCALE="{{ scheduler_scale_select.value }}" # level_2 (default scheduler size, no scale-config applied), level_3 or level_4
 export CPD_COMPONENTS="{{ components_to_install_str.split(',') | reject('equalto', 'ibm_wxd_opensearch') | join(',') }}"
 export COMPLETE_COMPONENT_LIST="${SOFTWARE_HUB},${CPD_COMPONENTS}"
 {% if optional_images_str -%}

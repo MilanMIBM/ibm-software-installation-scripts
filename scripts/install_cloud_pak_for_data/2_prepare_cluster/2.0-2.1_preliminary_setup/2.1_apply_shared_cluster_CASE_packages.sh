@@ -111,5 +111,25 @@ if [[ "${HAS_SCHEDULER}" == true ]]; then
         --scheduler_ns=${PROJECT_SCHEDULING_SERVICE} \
         --image_pull_prefix=${IMAGE_PULL_PREFIX} \
         --image_pull_secret=${IMAGE_PULL_SECRET} \
-        ${PATCH_FLAG[@]+"${PATCH_FLAG[@]}"} 
+        ${PATCH_FLAG[@]+"${PATCH_FLAG[@]}"}
+
+    # Optionally scale up the scheduling service. level_2 ("small") is the
+    # default size, so only level_3 / level_4 need the scale-config call.
+    case "${SCHEDULER_SCALE:-}" in
+        ""|level_2)
+            echo "[INFO] SCHEDULER_SCALE is '${SCHEDULER_SCALE:-unset}'; skipping apply-cluster-component-scale-config."
+            ;;
+        level_3|level_4)
+            echo "[INFO] Applying scheduler scale ${SCHEDULER_SCALE} in ${PROJECT_SCHEDULING_SERVICE}"
+            cpd-cli manage apply-cluster-component-scale-config \
+                --cluster_component_ns=${PROJECT_SCHEDULING_SERVICE} \
+                --component=scheduler \
+                --release=${VERSION} \
+                --scale=${SCHEDULER_SCALE}
+            ;;
+        *)
+            echo "Error: SCHEDULER_SCALE='${SCHEDULER_SCALE}' is invalid. Use level_2, level_3 or level_4 in ./cpd_vars.sh."
+            exit 1
+            ;;
+    esac
 fi

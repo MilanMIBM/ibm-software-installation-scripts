@@ -272,6 +272,7 @@ def _():
         "cp4d_version": "**Cloud Pak for Data version:**",
         "cp4d_patch": "**Patch ID (optional):** *[Check latest version here](https://github.com/IBM/software-hub/releases)*",
         "softwarehub_scale": "**Software Hub (zen) scale:**",
+        "scheduler_scale": "**Scheduling service scale:**",
         "entitlement_key": "**Input your ibm entitlement key:** *[Get one here](https://myibm.ibm.com/products-services/containerlibrary)*",
         "cluster_url": "**Enter your openshift cluster url:**",
         "cluster_token": "**Enter your openshift token:**",
@@ -294,6 +295,7 @@ def _(
     file_storage_class_select,
     image_pull_creds_select,
     login_argument_select,
+    scheduler_scale_select,
     softwarehub_scale_select,
     widget_width,
 ):
@@ -330,6 +332,7 @@ def _(
             mo.hstack(
                 [
                     softwarehub_scale_select.style({"width": widget_width}),
+                    scheduler_scale_select.style({"width": widget_width}),
                 ],
                 justify="space-around",
             ),
@@ -801,6 +804,18 @@ def _(widget_labels):
         full_width=True,
     )
     return (softwarehub_scale_select,)
+
+
+@app.cell
+def _(widget_labels):
+    scheduler_scale_select = mo.ui.dropdown(
+        label=widget_labels.get("scheduler_scale"),
+        options=["level_2", "level_3", "level_4"],
+        value="level_3",
+        allow_select_none=False,
+        full_width=True,
+    )
+    return (scheduler_scale_select,)
 
 
 @app.cell
