@@ -30,6 +30,11 @@ eval "${CPDM_OC_LOGIN}"
 
 COMPONENTS=${COMPLETE_COMPONENT_LIST}
 
+SWHCC_FLAG=()
+if SWHCC_OPERATORS_NS="$(cp4d_swhcc_operator_ns)"; then
+    SWHCC_FLAG=(--swhcc_operator_ns=${SWHCC_OPERATORS_NS})
+fi
+
 cpd-cli manage case-download \
     --components=${COMPONENTS} \
     --release=${VERSION} \
@@ -37,6 +42,7 @@ cpd-cli manage case-download \
     --operator_ns=${PROJECT_CPD_INST_OPERATORS} \
     --cluster_resources=true \
     --from_oci=${CP_OPEN_DOWNLOAD} \
+    "${SWHCC_FLAG[@]}" \
     "${PATCH_FLAG[@]}"
     
 eval "${OC_LOGIN}"

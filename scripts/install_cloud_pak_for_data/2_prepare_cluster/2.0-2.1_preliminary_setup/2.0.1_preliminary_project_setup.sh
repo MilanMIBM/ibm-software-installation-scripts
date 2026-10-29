@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # source "${SCRIPT_DIR}/../../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
 
 # --- Pull secret options
 SET_DEFAULT_PULL_SECRET="${SET_DEFAULT_PULL_SECRET:-true}"
@@ -109,6 +110,12 @@ if [[ "${SETUP_INSTANCE_PROJECTS}" == "true" ]]; then
     setup_project "${PROJECT_CPD_INST_OPERANDS:-}"
 else
     echo "[INFO] SETUP_INSTANCE_PROJECTS=false - not creating ${PROJECT_CPD_INST_OPERATORS:-} / ${PROJECT_CPD_INST_OPERANDS:-}."
+fi
+
+# Software Hub Control Center (operators: the project 2.0.2 passes to case-download)
+if SWHCC_OPERATORS_NS="$(cp4d_swhcc_operator_ns)"; then
+    setup_project "${SWHCC_OPERATORS_NS}"
+    setup_project "$(cp4d_swhcc_operand_ns)"
 fi
 
 # --- Additional non-standard projects

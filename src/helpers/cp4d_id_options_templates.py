@@ -1082,6 +1082,8 @@ default_project_naming_conventions = [
     {"key": "PROJECT_SCHEDULING_SERVICE", "value": "ibm-scheduler"},
     {"key": "PROJECT_IBM_EVENTS", "value": "ibm-knative-events"},
     {"key": "PROJECT_PRIVILEGED_MONITORING_SERVICE", "value": "ibm-cpd-privileged"},
+    {"key": "PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS", "value": "cpd-swhub-center"},
+    {"key": "PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS", "value": "cpd-swhub-center-operands"},
 ]
 
 default_private_registry_setup = [

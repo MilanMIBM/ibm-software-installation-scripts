@@ -48,6 +48,12 @@ export PROJECT_IBM_EVENTS="{{ cp4d_install_project_naming.get("PROJECT_IBM_EVENT
 {% if cp4d_install_project_naming.get("PROJECT_PRIVILEGED_MONITORING_SERVICE") -%}
 export PROJECT_PRIVILEGED_MONITORING_SERVICE="{{ cp4d_install_project_naming.get("PROJECT_PRIVILEGED_MONITORING_SERVICE") }}"
 {% endif -%}
+{% if cp4d_install_project_naming.get("PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS") -%}
+export PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS="{{ cp4d_install_project_naming.get("PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS") }}"
+{% endif -%}
+{% if cp4d_install_project_naming.get("PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS") -%}
+export PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS="{{ cp4d_install_project_naming.get("PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS") }}"
+{% endif -%}
 export PROJECT_CPD_INST_OPERATORS="{{ cp4d_install_project_naming.get("PROJECT_CPD_INST_OPERATORS") }}"
 export PROJECT_CPD_INST_OPERANDS="{{ cp4d_install_project_naming.get("PROJECT_CPD_INST_OPERANDS") }}"
 

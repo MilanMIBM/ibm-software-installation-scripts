@@ -34,3 +34,11 @@ else
     echo "[INFO] ccs not in SOFTWARE_HUB or CPD_COMPONENTS; skipping 3.5_create_ccs_cr_if_missing.sh."
 fi
 unset _components
+
+# Optional: Software Hub Control Center, only when ibm_swhcc is listed.
+source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
+if cp4d_has_component ibm_swhcc; then
+    run_step "${CURRENT_DIR}/3.6_setup_software_hub_control_center.sh"
+else
+    echo "[INFO] ibm_swhcc not in COMPLETE_COMPONENT_LIST; skipping 3.6_setup_software_hub_control_center.sh."
+fi

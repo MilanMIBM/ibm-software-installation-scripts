@@ -382,6 +382,44 @@ cp4d_prereq_gate() {
 }
 
 # -----------------------------------------------------------------------------
+# cp4d_has_component <component> [comma-separated list]
+# -----------------------------------------------------------------------------
+# True when <component> is an exact entry of the list (default
+# ${COMPLETE_COMPONENT_LIST}), so ibm_swhcc does not match e.g. ibm_swhcc_x.
+cp4d_has_component() {
+    [[ ",${2-${COMPLETE_COMPONENT_LIST:-}}," == *",$1,"* ]]
+}
+
+# -----------------------------------------------------------------------------
+# cp4d_swhcc_operator_ns / cp4d_swhcc_operand_ns
+# -----------------------------------------------------------------------------
+# Echo the Software Hub Control Center projects when ibm_swhcc is in
+# ${COMPLETE_COMPONENT_LIST} (cpd_vars.sh or the caller's environment win):
+#   operators  ${PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS}, else cpd-swhub-center
+#   operands   ${PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS}, else cpd-swhub-center-operands
+# `cpd-cli manage case-download` refuses ibm_swhcc without --swhcc_operator_ns,
+# and setup-control-center takes both. Echo nothing and return 1 when ibm_swhcc
+# is not selected.
+cp4d_swhcc_operator_ns() {
+    cp4d_has_component ibm_swhcc || return 1
+    echo "${PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS:-cpd-swhub-center}"
+}
+cp4d_swhcc_operand_ns() {
+    cp4d_has_component ibm_swhcc || return 1
+    echo "${PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS:-cpd-swhub-center-operands}"
+}
+
+# -----------------------------------------------------------------------------
+# cp4d_olm_utils_is_premium
+# -----------------------------------------------------------------------------
+# True when ${OLM_UTILS_IMAGE} is the IBM Software Hub Premium olm-utils image
+# (cp.icr.io/cp/cpd/olm-utils-premium-v4). Premium-only commands such as
+# setup-control-center are stubs that exit 1 in the standard olm-utils-v4.
+cp4d_olm_utils_is_premium() {
+    [[ "${OLM_UTILS_IMAGE:-}" == */olm-utils-premium-v4:* ]]
+}
+
+# -----------------------------------------------------------------------------
 # cp4d_offline_case_check
 # -----------------------------------------------------------------------------
 # CPD_CASE_SOURCE=offline (air-gapped; written to configs/cp4d_config/
