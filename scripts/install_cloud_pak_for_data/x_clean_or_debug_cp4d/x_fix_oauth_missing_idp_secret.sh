@@ -20,13 +20,22 @@ eval "${OC_LOGIN}"
 # Fixes the authentication ClusterOperator being Degraded with e.g.
 #   OAuthServerConfigObservationDegraded: error validating secret
 #   openshift-config/htpasswd-secret: secret "htpasswd-secret" not found
-# by removing every identity provider in oauth/cluster whose secret is missing
-# from openshift-config. Nobody can log in through such a provider anyway.
-# Re-add a password login afterwards with set_htpasswd_users.sh if needed.
-# Usage: x_fix_oauth_missing_idp_secret.sh [--dry-run]
+# Default: creates each missing HTPasswd secret in openshift-config, empty (no
+# users), so oauth/cluster is left untouched. Add users to it later with
+# set_htpasswd_users.sh. Other provider types (LDAP, OpenID, ...) can't be
+# filled with an empty secret, they are only listed.
+# --remove: instead removes every identity provider whose secret is missing.
+# Usage: x_fix_oauth_missing_idp_secret.sh [--dry-run] [--remove]
 #---
 DRY_RUN=false
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
+REMOVE=false
+for _arg in "$@"; do
+    case "${_arg}" in
+        --dry-run) DRY_RUN=true ;;
+        --remove)  REMOVE=true ;;
+        *) echo "[ERROR] Unknown argument: ${_arg}"; exit 1 ;;
+    esac
+done
 #---
 
 SECRETS_JSON=$(oc get secrets -n openshift-config -o json | jq '[.items[].metadata.name]')
@@ -50,6 +59,30 @@ fi
 
 echo "[INFO] Identity providers with a missing secret in openshift-config:"
 printf '  - %s\n' "${BROKEN[@]}"
+
+if ! ${REMOVE}; then
+    MISSING_HTPW=(${(f)"$(jq -r --argjson s "${SECRETS_JSON}" '
+        [(.spec.identityProviders // [])[] | .htpasswd.fileData.name // empty
+         | select(IN($s[]) | not)] | unique[]' <<< "${OAUTH_JSON}")"})
+    OTHERS=$(jq -r --argjson s "${SECRETS_JSON}" "
+        [(.spec.identityProviders // [])[] | select(.htpasswd == null)
+         | ${_IDP_SECRET} as \$sec | select(\$sec != \"\" and (\$sec | IN(\$s[]) | not))] | length" <<< "${OAUTH_JSON}")
+
+    for sec in "${MISSING_HTPW[@]}"; do
+        if ${DRY_RUN}; then
+            echo "[DRY-RUN] Would create empty secret openshift-config/${sec}."
+            continue
+        fi
+        # A lone newline: the key is non-empty but holds no users.
+        oc create secret generic "${sec}" -n openshift-config --from-literal=htpasswd=$'\n' >/dev/null
+        echo "[OK] Created empty secret openshift-config/${sec} (no users). Add some with set_htpasswd_users.sh."
+    done
+    (( OTHERS > 0 )) && echo "[WARN] ${OTHERS} non-HTPasswd provider(s) still lack a secret. Create it by hand or re-run with --remove."
+    ${DRY_RUN} && exit 0
+    [[ -n "${MISSING_HTPW[1]:-}" ]] && htpw_wait_auth_rollout
+    oc get co authentication
+    exit 0
+fi
 
 if ${DRY_RUN}; then
     echo "[DRY-RUN] Would remove them from oauth/cluster."
