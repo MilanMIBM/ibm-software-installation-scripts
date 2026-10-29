@@ -34,4 +34,5 @@ h_step opensearch     "${PREP_OPENSEARCH:-false}" "4.1.1 watsonx.data OpenSearch
 h_step profile        true                        "4.2 cpd profile" \
     "${CURRENT_DIR}/4.2_cpd_profile.sh"
 h_steps_plan
+h_step_on components && h_info "Watch live CR state in another terminal: scripts/install_cloud_pak_for_data/check_cr_status/x_cr_state_dashboard.sh"
 h_steps_run

@@ -9,3 +9,8 @@ transformers
 pydantic-ai
 wigglystuff
 jinja2
+textual
+kubernetes
+pyyaml
+pytest
+pytest-asyncio

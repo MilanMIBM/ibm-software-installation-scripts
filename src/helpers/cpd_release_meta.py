@@ -9,6 +9,7 @@ VERSION / PATCH_ID instead of lookup tables in the scripts:
   release-<VERSION>.yml             olm-utils container, config-vars/
                                     release_components_meta: every component
   service_features.yml              olm-utils container, config-vars/ (scale config, add-on ids)
+  global.yml                        olm-utils container, config-vars/ (cr_kind / cr_name / dependencies)
   <case>/<version>/*-images.csv     ${CPD_CLI_WORK_PATH}/offline/<VERSION>/.ibm-pak/data/cases/
 
 Files from the container are read with `podman exec <container> cat` (never a
@@ -23,6 +24,7 @@ Usage (results on stdout, where they came from on stderr; exit 1 when not found)
   cpd_release_meta.py image-tag <case> --repo REGEX [--component C | --case-version V] [--arch A]
   cpd_release_meta.py case-groups [<case>...]
   cpd_release_meta.py features <component> [<field>]
+  cpd_release_meta.py global <component> [<field>]       (read-only: never writes the cache)
   cpd_release_meta.py cache
 
 Environment: VERSION (required), PATCH_ID, CPD_CLI_WORK_PATH (~/cpd-cli/work),
@@ -113,8 +115,11 @@ def _cache_dir():
     return os.path.join(_work(), "offline", "release-meta")
 
 
-def _container_file(name, cache_name):
-    """config-vars/<name> from the olm-utils container, cached as <cache_name>."""
+def _container_file(name, cache_name, cache=True):
+    """config-vars/<name> from the olm-utils container, cached as <cache_name>.
+
+    cache=False only reads: the container first, then an existing cache file; it never writes one.
+    """
     cached = os.path.join(_cache_dir(), cache_name)
     container = os.environ.get("OLM_UTILS_CONTAINER") or "olm-utils-play-v4"
     try:
@@ -124,9 +129,10 @@ def _container_file(name, cache_name):
     except (OSError, subprocess.TimeoutExpired):
         text = ""
     if text.strip():
-        os.makedirs(_cache_dir(), exist_ok=True)
-        with open(cached, "w") as fh:
-            fh.write(text)
+        if cache:
+            os.makedirs(_cache_dir(), exist_ok=True)
+            with open(cached, "w") as fh:
+                fh.write(text)
         return text, f"{name} in {container}"
     if os.path.isfile(cached):
         with open(cached) as fh:
@@ -151,21 +157,45 @@ def patch_meta():
     return meta, os.path.basename(path)
 
 
-def release_meta():
-    text, src = _container_file(f"release-{_version()}.yml", f"release-{_version()}.yml")
+def release_meta(cache=True):
+    text, src = _container_file(f"release-{_version()}.yml", f"release-{_version()}.yml", cache=cache)
     return section(text, "release_components_meta"), src
 
 
-def meta(component, field):
+def meta(component, field, cache=True):
     """(value, source): the patch file wins for the components it lists."""
     pm, psrc = patch_meta()
     if field in pm.get(component, {}):
         return pm[component][field], psrc
-    rm, rsrc = release_meta()
+    rm, rsrc = release_meta(cache=cache)
     if field in rm.get(component, {}):
         return rm[component][field], rsrc
     where = f"{psrc} or {rsrc}" if psrc else rsrc
     raise MetaError(f"no {component}.{field} in {where}")
+
+
+def global_components(cache=False):
+    """({component: {field: str | [str]}}, source) from config-vars/global.yml.
+
+    Keeps string lists (component_dependencies, operator_only_dependencies), which
+    section() drops. Read-only by default: used by the CR dashboard, which writes nothing.
+    """
+    text, src = _container_file("global.yml", "global.yml", cache=cache)
+    import yaml
+    doc = yaml.load(text, Loader=yaml.BaseLoader) or {}
+    out = {}
+    for comp, fields in (doc.get("global_components_meta") or {}).items():
+        if not isinstance(fields, dict):
+            continue
+        keep = {}
+        for k, v in fields.items():
+            if isinstance(v, str):
+                keep[k] = v
+            elif isinstance(v, list) and all(isinstance(x, str) for x in v):
+                keep[k] = v
+        if "cr_kind" in keep or "case_name" in keep or "component_dependencies" in keep:
+            out[comp] = keep
+    return out, src
 
 
 def features():
@@ -272,6 +302,9 @@ def main(argv=None):
     p = sub.add_parser("features")
     p.add_argument("component")
     p.add_argument("field", nargs="?")
+    p = sub.add_parser("global")
+    p.add_argument("component")
+    p.add_argument("field", nargs="?")
     sub.add_parser("cache")
     a = ap.parse_args(argv)
 
@@ -300,6 +333,15 @@ def main(argv=None):
                 print(f"{grp}\t{','.join(cases)}")
         elif a.cmd == "features":
             doc, src = features()
+            entry = doc.get(a.component)
+            if entry is None:
+                raise MetaError(f"no {a.component} in {src}")
+            value = entry.get(a.field) if a.field else entry
+            if value is None:
+                raise MetaError(f"no {a.component}.{a.field} in {src}")
+            print(value if isinstance(value, str) else json.dumps(value, indent=2))
+        elif a.cmd == "global":
+            doc, src = global_components()
             entry = doc.get(a.component)
             if entry is None:
                 raise MetaError(f"no {a.component} in {src}")

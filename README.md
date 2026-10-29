@@ -15,7 +15,7 @@ The Cloud Pak for Data workflow has two stages:
 | --- | --- |
 | `*_vars_generation*.py` | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options. |
 | `configs/` | Your generated configs live here (gitignored), one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts. `openshift_config/` holds the credential files written by the user/service ID utilities. |
-| `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), service instance provisioning (`4.5_service_instance_setups/`), plus cleanup/debug scripts under `x_clean_or_debug_cp4d/` |
+| `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), service instance provisioning (`4.5_service_instance_setups/`), the live CR state dashboard under `check_cr_status/`, plus cleanup/debug scripts under `x_clean_or_debug_cp4d/` |
 | `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README) |
 | `scripts/install_ibm_concert/` | IBM Concert install steps (0 → 4) around IBM's own installer, data store provisioning, optional Concert Optimize / Turbonomic (5), plus cleanup/debug scripts under `x_clean_or_debug_concert/` |
 | `scripts/install_datastax_mc_standalone/` | DataStax Mission Control on OpenShift with Helm, independent of CP4D: config generator (0), cluster prep (1), install (2), internode NetworkPolicy (3), uninstall under `x_clean_or_debug_datastax_mc/`. DataStax's OpenShift Helm values templates are in `src/helpers/datastax_mc_helm_values_templates/` |
@@ -138,7 +138,12 @@ Scripts run `./scripts/0.0_make_executable.sh` on their own if any `.sh` isn't e
 
 # Troubleshooting and teardown
 ls scripts/install_cloud_pak_for_data/x_clean_or_debug_cp4d/
+
+# Live dashboard of the component CRs (read-only; q to quit, ? for the colour legend)
+./scripts/install_cloud_pak_for_data/check_cr_status/x_cr_state_dashboard.sh
 ```
+
+`check_cr_status/x_cr_state_dashboard.sh` shows every CP4D component CR from `cpd_vars.sh` as a glowing dot - healthy, in progress, scaling, stuck, failing, or inactive - with the chains they wait on and own, % progress and the step the operator is on. It works on whatever the CRs are doing (install, scale change, crash, shutdown), never changes the cluster and writes no files. `--once` prints the state and exits; `--help` lists every option. The code is the `src/tui/cr_dashboard/` package (`src/tui/` holds the Textual TUIs).
 
 After the base install is up:
 
