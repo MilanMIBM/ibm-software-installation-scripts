@@ -330,6 +330,10 @@ _platform_defaults=(
     'CONFLUENT_INSTALL_KSQLDB|true|'
     'CONFLUENT_INSTALL_REST_PROXY|true|'
     'CONFLUENT_INSTALL_CONTROL_CENTER|true|'
+    'DO_ICEBERG_WATSONX_SETUP|false|# Optional Iceberg sink integration with an existing watsonx.data/COS catalog.
+# Configure configs/confluent_platform_config/iceberg_watsonx_setup.sh first.
+# The integration utility can also be run separately after both platforms exist.'
+    'ICEBERG_WATSONX_CONFIG_FILE|${CONFLUENT_CONFIG_DIR}/iceberg_watsonx_setup.sh|'
     'CONFLUENT_MONITORING_NETWORK_POLICY|true|# Restricts Prometheus/Alertmanager ingress to the Confluent pods. They run
 # unauthenticated (as upstream does), so set this to "false" only if something
 # outside the namespace must scrape them.'
@@ -450,13 +454,9 @@ for _entry in "${_platform_defaults[@]}"; do
 
     _backfilled_names+=("${_name}")
     [[ -n "${_comment}" ]] && _backfill+=$'\n'"${_comment}"
-    # Feature toggles are written as ${VAR:-default} so that a parent script can
-    # export a different value and have it survive: x.2/x.4 flip these on and
-    # then invoke 1.1_confluent_install.sh, which re-sources this file. A plain
-    # assignment would silently overwrite the export and the feature would look
-    # like it applied while changing nothing.
+    # Preserve caller overrides when nested install scripts reload this file.
     case "${_name}" in
-        *_ENABLED)
+        *_ENABLED|DO_ICEBERG_WATSONX_SETUP|ICEBERG_WATSONX_CONFIG_FILE)
             _backfill+=$'\n'"export ${_name}=\"\${${_name}:-${_value}}\"" ;;
         *)
             _backfill+=$'\n'"export ${_name}=\"${_value}\"" ;;
