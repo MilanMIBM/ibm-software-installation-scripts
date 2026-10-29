@@ -33,6 +33,11 @@ if [[ "${ENV_TARGET_FILE:-}" == *datastax_mc_vars.sh ]]; then
 else
     export MC_CONFIG_DIR="${DATASTAX_MC_CONFIG_DIR:-${_CP4D_REPO_ROOT}/configs/datastax_mc_config}"
 fi
+# Mission Control projects (3.1_prepare_mc_projects.sh). Defaults for configs
+# generated before these settings existed; an empty MC_BASE_PROJECT means none.
+export MC_BASE_PROJECT="${MC_BASE_PROJECT-hcd}"
+export MC_BASE_PROJECT_NAME="${MC_BASE_PROJECT_NAME:-${MC_BASE_PROJECT}}"
+export MC_PROJECT_AUTO_PREPARE="${MC_PROJECT_AUTO_PREPARE:-true}"
 # DataStax's OpenShift Helm values files with **TOKEN** placeholders, filled in
 # by 2.0_render_values.sh (source URL and local changes in each file's header).
 export MC_VALUES_SRC_DIR="${_CP4D_REPO_ROOT}/src/helpers/datastax_mc_helm_values_templates"

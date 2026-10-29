@@ -94,12 +94,15 @@ if [[ "${RHOAI_CSV_PHASE}" == "Succeeded" ]]; then
 
   if [[ "${DSCI_PHASE}" == "Ready" && "${DSC_READY}" == "True" ]]; then
     # A different channel family (stable -> fast) or major version is not an
-    # in-place upgrade OLM can roll, so the helper fails and we stop.
+    # in-place upgrade OLM can roll, so the helper fails. RHOAI is healthy, so
+    # leave it on its channel and let the rest of the install carry on.
     CHANNEL_STATE="$(cp4d_reconcile_subscription_channel \
       "${NAMESPACE}" "rhods-operator" "${CHANNEL_VERSION}")" || {
-      echo "[ERROR] RHOAI is on a channel CP4D ${VERSION} cannot upgrade in place (target ${CHANNEL_VERSION})." >&2
-      echo "[ERROR] Migrate it manually before re-running." >&2
-      exit 1
+      CURRENT_CHANNEL=$(oc get subscriptions.operators.coreos.com rhods-operator -n "${NAMESPACE}" \
+        -o jsonpath='{.spec.channel}' 2>/dev/null || true)
+      echo "[WARN] RHOAI is healthy but on channel ${CURRENT_CHANNEL:-unknown}, which CP4D ${VERSION} cannot move to ${CHANNEL_VERSION} in place." >&2
+      echo "[WARN] Leaving it as-is and continuing; migrate it manually if CP4D needs ${CHANNEL_VERSION}." >&2
+      exit 0
     }
     case "${CHANNEL_STATE}" in
       match)

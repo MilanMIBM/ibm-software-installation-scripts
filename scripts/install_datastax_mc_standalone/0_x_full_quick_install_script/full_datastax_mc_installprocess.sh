@@ -37,7 +37,14 @@ DO_INSTALL="${DO_INSTALL:-true}"                     # 2.1 render values + helm 
 DO_ROUTE="${DO_ROUTE:-true}"                         # 2.2 UI Route (control plane only)
 DO_WAIT="${DO_WAIT:-true}"                           # 2.3 wait for all pods
 DO_DETAILS="${DO_DETAILS:-true}"                     # 2.4 instance details file
+DO_PROJECTS="${DO_PROJECTS:-true}"                   # 3.1 project auto-prepare + base project
 DO_NETWORKPOLICY="${DO_NETWORKPOLICY:-false}"        # 3.0 internode NetworkPolicy (needs projects)
+
+# 3.1 arguments from datastax_mc_vars.sh; projects are a control-plane concept.
+PROJECT_ARGS=()
+mc_is_true "${MC_PROJECT_AUTO_PREPARE}" && PROJECT_ARGS+=(--auto)
+[[ -n "${MC_BASE_PROJECT}" && "${MC_PLANE}" == control ]] \
+    && PROJECT_ARGS+=(--create "${MC_BASE_PROJECT}" --name "${MC_BASE_PROJECT_NAME}")
 
 h_run_step "${DO_INSTALL_OC}" "0.0 install oc (macOS, CP4D script)" \
     "${CP4D_ROOT}/0_initial_setup/0.1_install_oc-MAC-ONLY.sh"
@@ -64,5 +71,7 @@ h_run_step "${DO_WAIT}" "2.3 wait for Mission Control" \
 h_run_step "${DO_DETAILS}" "2.4 instance details" \
     "${SCRIPTS_ROOT}/2_install_mission_control/2.4_get_instance_details.sh"
 
+h_run_step "${DO_PROJECTS}" "3.1 projects (auto-prepare: ${MC_PROJECT_AUTO_PREPARE}, base project: ${MC_BASE_PROJECT:-none})" \
+    "${SCRIPTS_ROOT}/3_post_install/3.1_prepare_mc_projects.sh" "${PROJECT_ARGS[@]}"
 h_run_step "${DO_NETWORKPOLICY}" "3.0 internode NetworkPolicy" \
     "${SCRIPTS_ROOT}/3_post_install/3.0_apply_internode_networkpolicy.sh"

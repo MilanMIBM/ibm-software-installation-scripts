@@ -22,6 +22,7 @@ Uninstall the standalone Mission Control release (DataStax "Uninstall", Helm).
   x_uninstall_mission_control.sh [options]
 
 Always:  helm uninstall, the UI Route, the SCC grants (1.4 --remove), the
+         project auto-prepare reconciler (3.1 --remove-auto), the
          certificate secrets cert-manager leaves behind on OpenShift, and the
          pull/object-storage secrets these scripts created.
 Options:
@@ -89,6 +90,7 @@ fi
 
 oc delete route "${MC_UI_ROUTE_NAME:-${MC_RELEASE_NAME}-ui}" -n "${NS}" --ignore-not-found >/dev/null 2>&1 || true
 "${SCRIPT_DIR}/../1_prepare_cluster/1.4_configure_scc.sh" --remove
+"${SCRIPT_DIR}/../3_post_install/3.1_prepare_mc_projects.sh" --remove-auto
 
 if oc get namespace "${NS}" >/dev/null 2>&1; then
     # The OpenShift cert-manager operator keeps a Certificate's secret after the

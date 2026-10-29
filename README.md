@@ -86,6 +86,14 @@ The two **Save your … file** buttons next to it download the files to your bro
 
 This chains the steps below in order, timing each one and stopping on the first failure. The `DO_*` toggles at the top of the script let you skip stages you've already completed.
 
+To resume after a failure, start at a named step with `--from` (and leave others out with `--skip`); `--list-steps` shows what a run would do:
+
+```bash
+./scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh --from prereq-operators
+```
+
+Steps: `registry-config`, `certmanager`, `pull-secret`, `preliminary`, `prereq-operators`, `softwarehub`, `cpd`.
+
 ### Step by step
 
 Run these in order - each one is standalone and loads the config itself:

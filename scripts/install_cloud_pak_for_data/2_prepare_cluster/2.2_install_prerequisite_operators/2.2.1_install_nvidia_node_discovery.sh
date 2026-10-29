@@ -37,8 +37,9 @@ NFD_PHASE="$(cp4d_csv_phase "${NAMESPACE}" "nfd")"
 
 if [[ "${NFD_PHASE}" == "Succeeded" ]]; then
   CHANNEL_STATE="$(cp4d_reconcile_subscription_channel "${NAMESPACE}" "nfd" "${CHANNEL}")" || {
-    echo "[ERROR] NFD is on an incompatible channel for target ${CHANNEL}; migrate it manually." >&2
-    exit 1
+    # Healthy as-is: warn and keep going rather than stop the whole install.
+    echo "[WARN] NFD is healthy but on a channel that cannot move to ${CHANNEL} in place; leaving it as-is (migrate manually if needed)." >&2
+    exit 0
   }
   case "${CHANNEL_STATE}" in
     match)

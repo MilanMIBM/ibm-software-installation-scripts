@@ -239,9 +239,22 @@ cp4d_reconcile_subscription_channel() {
     target_family="${REPLY_FAMILY}" target_major="${REPLY_MAJOR}"
     unset REPLY_FAMILY REPLY_MAJOR
 
+    # A family/major mismatch is still safe when the installed CSV is itself an
+    # entry of the target channel (e.g. RHOAI 2.25.12 on "fast" -> "stable-2.25"):
+    # OLM keeps the same CSV and only follows a different upgrade graph.
     if [[ "${current_family}" != "${target_family}" || "${current_major}" != "${target_major}" ]]; then
-        echo "incompatible"
-        return 1
+        local pkg installed_csv target_entries
+        pkg=$(oc get subscriptions.operators.coreos.com "${subscription}" -n "${namespace}" \
+            -o jsonpath='{.spec.name}' 2>/dev/null || true)
+        installed_csv=$(oc get subscriptions.operators.coreos.com "${subscription}" -n "${namespace}" \
+            -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)
+        target_entries=" $(oc get packagemanifest "${pkg:-${subscription}}" -n openshift-marketplace \
+            -o jsonpath="{.status.channels[?(@.name==\"${target_channel}\")].entries[*].name}" 2>/dev/null || true) "
+        if [[ -z "${installed_csv}" || "${target_entries}" != *" ${installed_csv} "* ]]; then
+            echo "incompatible"
+            return 1
+        fi
+        echo "[INFO] ${subscription}: ${installed_csv} is in channel ${target_channel}; switching from ${current}." >&2
     fi
 
     oc patch subscriptions.operators.coreos.com "${subscription}" -n "${namespace}" \

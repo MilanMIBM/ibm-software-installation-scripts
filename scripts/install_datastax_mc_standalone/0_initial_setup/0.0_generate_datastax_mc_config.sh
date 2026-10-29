@@ -210,6 +210,19 @@ export MC_SCC_MODE="nonroot-v2"
 export MC_PLATFORM_NODES="all-workers"
 
 # ------------------------------------------------------------------------------
+# Projects (namespaces that hold database clusters)
+# ------------------------------------------------------------------------------
+# HCD/DSE/Cassandra pods run as UID/GID 999, which OpenShift's default
+# restricted-v2 SCC rejects, so every project needs nonroot-v2 for its service
+# accounts (3.1_prepare_mc_projects.sh).
+# Auto-prepare: an in-cluster reconciler in MC_NAMESPACE that does this for
+# every project as soon as it appears - created in the UI or by 3.1 --create.
+export MC_PROJECT_AUTO_PREPARE="true"
+# Project created at install (control plane only); empty = none
+export MC_BASE_PROJECT="hcd"
+export MC_BASE_PROJECT_NAME="HCD"
+
+# ------------------------------------------------------------------------------
 # Admin login (Dex static password). The bcrypt hash is computed at install.
 # ------------------------------------------------------------------------------
 export MC_ADMIN_EMAIL=$(q "${ADMIN_EMAIL}")
