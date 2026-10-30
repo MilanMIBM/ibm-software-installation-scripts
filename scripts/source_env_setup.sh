@@ -179,12 +179,19 @@ export CPD_CONFIG_PATH_CONTAINER="/cp4d_config"
 # Copy cp4d_config files into the work directory so the container can read them at /tmp/work/cp4d_config/
 _CONFIG_WORK_DIR="${CPD_CLI_WORK_PATH}/cp4d_config"
 mkdir -p "${_CONFIG_WORK_DIR}"
-if cp "${CONFIG_DIR}/"* "${_CONFIG_WORK_DIR}/" 2>/dev/null; then
+# Top-level files only: subdirs (e.g. certs/) are host-side outputs and plain cp would fail on them.
+_cfg_copy_ok=1
+for _cfg_f in "${CONFIG_DIR}/"*; do
+    [ -f "${_cfg_f}" ] || continue
+    cp "${_cfg_f}" "${_CONFIG_WORK_DIR}/" 2>/dev/null || _cfg_copy_ok=0
+done
+unset _cfg_f
+if [ "${_cfg_copy_ok}" = 1 ]; then
     _env_log "copied ${CONFIG_DIR#${_env_repo}/}/* -> ${_CONFIG_WORK_DIR}/"
 else
     echo "[WARN] Could not copy ${CONFIG_DIR}/* -> ${_CONFIG_WORK_DIR}/ (continuing)" >&2
 fi
-unset _CONFIG_WORK_DIR
+unset _CONFIG_WORK_DIR _cfg_copy_ok
 
 # Override CPD_CONFIG_PATH_CONTAINER to point at the copied location inside the container
 export CPD_CONFIG_PATH_CONTAINER="/tmp/work/cp4d_config"
