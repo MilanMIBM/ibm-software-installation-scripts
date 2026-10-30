@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
-# Local oc + jq (CPDM_OC_LOGIN only logs in the cpd-cli container).
+# Local oc + jq only, so OC_LOGIN (CPDM_OC_LOGIN would also log in the cpd-cli container).
 eval "${OC_LOGIN}"
 
 # Removes OLM duplicates that leave operators degraded, cluster-wide:

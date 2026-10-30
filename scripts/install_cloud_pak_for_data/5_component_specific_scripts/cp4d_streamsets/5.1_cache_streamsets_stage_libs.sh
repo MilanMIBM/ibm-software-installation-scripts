@@ -69,12 +69,13 @@ LIBS_IMAGE="${LIBS_REPO}:${IMAGE_TAG}"
 PVC_NAME="sset-stagelibs-$(print -r -- "${IMAGE_TAG:l}" | tr -c 'a-z0-9-' '-' | sed 's/-*$//')"
 JOB_NAME="${PVC_NAME}-copy"
 
-if ! oc whoami &>/dev/null; then
-  if [[ -z "${OC_LOGIN:-}" ]]; then
-    echo "[ERROR] oc is not logged in and OC_LOGIN is not set (configs/cp4d_config/cpd_vars.sh)." >&2
-    exit 1
-  fi
+# OC_LOGIN skips the login when oc is already on OCP_URL, and switches over when it is on
+# another cluster - a plain 'oc whoami' check would keep working against that other cluster.
+if [[ -n "${OC_LOGIN:-}" ]]; then
   eval "${OC_LOGIN}"
+elif ! oc whoami &>/dev/null; then
+  echo "[ERROR] oc is not logged in and OC_LOGIN is not set (configs/cp4d_config/cpd_vars.sh)." >&2
+  exit 1
 fi
 
 if [[ "$(oc get pvc "${PVC_NAME}" -n "${NAMESPACE}" \

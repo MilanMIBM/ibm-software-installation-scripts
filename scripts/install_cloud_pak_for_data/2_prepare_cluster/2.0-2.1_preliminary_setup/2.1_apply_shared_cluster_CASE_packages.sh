@@ -12,6 +12,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # source "${SCRIPT_DIR}/../../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+
+# ==============================================================================
+# 2.1 - apply the shared cluster components, one named step each:
+#   authorize-topology   authorize-instance-topology (operator + operand projects)
+#   cluster-components   apply-cluster-components (License Service; ibm-licensing)
+#   scheduler            apply-scheduler (scheduling service; scheduler)
+#   scheduler-scale      apply-cluster-component-scale-config (SCHEDULER_SCALE)
+# Pick steps with --from <step>, --skip <step>[,...], --only <step>[,...], or
+# --<step> to run just that one (e.g. --authorize-topology); --list-steps / --help.
+# A step listed as "off" is off by its toggle (see below) and never runs.
+# ==============================================================================
 
 
 PARAM_FILE_FLAG=()
@@ -59,9 +71,6 @@ run_tolerate_already_installed() {
     return "${_rc}"
 }
 
-# ---
-eval "${CPDM_OC_LOGIN}"
-
 # Split SOFTWARE_HUB into cluster-scoped and instance-scoped components
 HAS_LICENSING=false
 HAS_SCHEDULER=false
@@ -76,34 +85,33 @@ for _c in "${_all_components[@]}"; do
     esac
 done
 
+# level_2 ("small") is the scheduler's default size, so only level_3 / level_4
+# (or an invalid value, which the step reports) need the scale-config call.
+DO_SCHEDULER_SCALE=false
+[[ "${HAS_SCHEDULER}" == true && "${SCHEDULER_SCALE:-level_2}" != (|level_2) ]] && DO_SCHEDULER_SCALE=true
+
 # Set AUTHORIZE_INSTANCE_TOPOLOGY=false to skip it: it works in the instance
 # projects, which a tenant restore onto a fresh cluster brings back (with this
 # RBAC in them) and which must not exist before it.
-if [[ "${AUTHORIZE_INSTANCE_TOPOLOGY:-true}" == true ]]; then
+step_authorize_topology() {
     cpd-cli manage authorize-instance-topology \
         --operator_ns=${PROJECT_CPD_INST_OPERATORS} \
         --instance_ns=${PROJECT_CPD_INST_OPERANDS} \
         --verbose
-else
-    echo "[INFO] AUTHORIZE_INSTANCE_TOPOLOGY=false - skipping authorize-instance-topology."
-fi
+}
 
-
-# Apply cluster-wide components (License Service + cert-manager) if ibm-licensing is listed
-if [[ "${HAS_LICENSING}" == true ]]; then
-    echo "[INFO] Running apply-cluster-components (ibm-licensing)"
+# Cluster-wide components (License Service + cert-manager), when ibm-licensing is listed
+step_cluster_components() {
     run_tolerate_already_installed "apply-cluster-components" \
         cpd-cli manage apply-cluster-components \
         --release=${VERSION} \
         --license_acceptance=true \
         --licensing_ns=${PROJECT_LICENSE_SERVICE} \
         ${PATCH_FLAG[@]+"${PATCH_FLAG[@]}"}
+}
 
-fi
-
-# Apply the scheduling service if scheduler is listed
-if [[ "${HAS_SCHEDULER}" == true ]]; then
-    echo "[INFO] Running apply-scheduler (scheduler)"
+# The scheduling service, when scheduler is listed
+step_scheduler() {
     run_tolerate_already_installed "apply-scheduler" \
         cpd-cli manage apply-scheduler \
         --release=${VERSION} \
@@ -112,13 +120,11 @@ if [[ "${HAS_SCHEDULER}" == true ]]; then
         --image_pull_prefix=${IMAGE_PULL_PREFIX} \
         --image_pull_secret=${IMAGE_PULL_SECRET} \
         ${PATCH_FLAG[@]+"${PATCH_FLAG[@]}"}
+}
 
-    # Optionally scale up the scheduling service. level_2 ("small") is the
-    # default size, so only level_3 / level_4 need the scale-config call.
+# Scale up the scheduling service (SCHEDULER_SCALE=level_3 / level_4)
+step_scheduler_scale() {
     case "${SCHEDULER_SCALE:-}" in
-        ""|level_2)
-            echo "[INFO] SCHEDULER_SCALE is '${SCHEDULER_SCALE:-unset}'; skipping apply-cluster-component-scale-config."
-            ;;
         level_3|level_4)
             echo "[INFO] Applying scheduler scale ${SCHEDULER_SCALE} in ${PROJECT_SCHEDULING_SERVICE}"
             cpd-cli manage apply-cluster-component-scale-config \
@@ -128,8 +134,18 @@ if [[ "${HAS_SCHEDULER}" == true ]]; then
                 --scale=${SCHEDULER_SCALE}
             ;;
         *)
-            echo "Error: SCHEDULER_SCALE='${SCHEDULER_SCALE}' is invalid. Use level_2, level_3 or level_4 in ./cpd_vars.sh."
-            exit 1
+            echo "Error: SCHEDULER_SCALE='${SCHEDULER_SCALE:-}' is invalid. Use level_2, level_3 or level_4 in ./cpd_vars.sh."
+            return 1
             ;;
     esac
-fi
+}
+
+h_steps_parse --strict "$@"
+h_step authorize-topology "${AUTHORIZE_INSTANCE_TOPOLOGY:-true}" "authorize-instance-topology"                   step_authorize_topology
+h_step cluster-components "${HAS_LICENSING}"                      "apply-cluster-components (ibm-licensing)"     step_cluster_components
+h_step scheduler          "${HAS_SCHEDULER}"                      "apply-scheduler (scheduler)"                  step_scheduler
+h_step scheduler-scale    "${DO_SCHEDULER_SCALE}"                 "scheduler scale ${SCHEDULER_SCALE:-level_2}"  step_scheduler_scale
+h_steps_plan
+
+eval "${CPDM_OC_LOGIN}"
+h_steps_run

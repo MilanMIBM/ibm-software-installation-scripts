@@ -53,6 +53,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 command -v oc >/dev/null 2>&1 || { echo "[ERROR] 'oc' CLI not found on PATH." >&2; exit 1; }
+[[ -n "${OC_LOGIN:-}" ]] && eval "${OC_LOGIN}"
 
 # --- Resolve the namespace ---
 if [[ -z "${NAMESPACE}" ]]; then

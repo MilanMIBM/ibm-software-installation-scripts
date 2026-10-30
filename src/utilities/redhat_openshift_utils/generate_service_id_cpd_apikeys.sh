@@ -140,6 +140,8 @@ fi
 cluster_url() {
     local -a found
     oc whoami &>/dev/null || return 0
+    # Only trust the current oc session when it is on the configured cluster.
+    [[ -z "${OCP_URL:-}" || "$(oc whoami --show-server 2>/dev/null)" == "${OCP_URL%/}" ]] || return 0
     found=(${(f)"$(oc get zenservice -A \
         -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null || true)"})
     (( ${#found} == 1 )) || return 0

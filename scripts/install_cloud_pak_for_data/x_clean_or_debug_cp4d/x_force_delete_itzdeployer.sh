@@ -15,8 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
-# Everything below uses the local oc client, so log it in (CPDM_OC_LOGIN only
-# logs in the cpd-cli container).
+# Everything below uses the local oc client only, so OC_LOGIN (CPDM_OC_LOGIN
+# would also log in the cpd-cli container).
 eval "${OC_LOGIN}"
 
 # ---------------------------------------------------------------------------

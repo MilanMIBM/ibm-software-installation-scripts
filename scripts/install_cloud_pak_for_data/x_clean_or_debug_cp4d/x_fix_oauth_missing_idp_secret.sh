@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/ocp_utils_helpers.sh"
 
-# Local oc + jq (CPDM_OC_LOGIN only logs in the cpd-cli container).
+# Local oc + jq only, so OC_LOGIN (CPDM_OC_LOGIN would also log in the cpd-cli container).
 eval "${OC_LOGIN}"
 
 # Fixes the authentication ClusterOperator being Degraded with e.g.

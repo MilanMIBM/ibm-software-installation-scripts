@@ -8,7 +8,8 @@ set -euo pipefail
 #   TEAM_GROUP     read-only on the whole cluster, plus 'edit' in EDIT_NAMESPACES
 #   STUDENT_GROUP  read-only on the whole cluster
 #
-# Assumes 'oc' is already logged in as a cluster-admin. Safe to re-run: existing
+# Logs in with OC_LOGIN from cpd_vars.sh (needs a cluster-admin), or uses the
+# current oc session when there is no OC_LOGIN. Safe to re-run: existing
 # groups, members and bindings are left as they are.
 
 # --- Edit these ---------------------------------------------------------------
@@ -39,7 +40,13 @@ EDIT_NAMESPACES=(
 DISABLE_SELF_PROVISIONER=true
 # ------------------------------------------------------------------------------
 
-echo "[INFO] Target cluster: $(oc whoami --show-server)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
+_b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/ocp_utils_helpers.sh"
+
+# OC_LOGIN from cpd_vars.sh when set (skipped if oc is already on OCP_URL), else the current session.
+ocu_login
 echo "[INFO] Logged in as:   $(oc whoami)"
 
 if [[ "$(oc auth can-i '*' '*' --all-namespaces 2>/dev/null)" != "yes" ]]; then

@@ -156,7 +156,8 @@ unset _o
 # Scripts run eval "${OC_LOGIN}" / eval "${CPDM_OC_LOGIN}" before touching the
 # cluster. Wrap both so they skip the login when the existing session is still
 # valid (token accepted by the API) and points at ${OCP_URL}; otherwise log in
-# as before. The unconditional commands stay available as *_FORCE.
+# as before. CPDM_OC_LOGIN covers the local oc too. The unconditional commands
+# stay available as *_FORCE.
 # The wrapped strings are self-contained so they also work in child shells.
 export OLM_UTILS_CONTAINER="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
 # OCP_URL is unset when there is no cpd_vars.sh; treat that as empty under 'set -u'.
@@ -167,7 +168,17 @@ if [[ -n "${OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
 fi
 if [[ -n "${CPDM_OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
     export CPDM_OC_LOGIN_FORCE="${CPDM_OC_LOGIN}"
-    export CPDM_OC_LOGIN="if podman exec ${OLM_UTILS_CONTAINER} oc whoami >/dev/null 2>&1 && [ \"\$(podman exec ${OLM_UTILS_CONTAINER} oc whoami --show-server 2>/dev/null)\" = \"${_oc_url}\" ]; then echo \"[INFO] cpd-cli (${OLM_UTILS_CONTAINER}) already logged in to ${_oc_url} - skipping login-to-ocp\"; else ${CPDM_OC_LOGIN_FORCE}; fi"
+    # cpd-cli manage recreates the container (dropping its login) when its image name differs
+    # from OLM_UTILS_IMAGE, e.g. after a PATCH_ID bump or a cpd-cli run without cpd_vars.sh
+    # (cpd-cli then defaults to olm-utils-v4:<release>) - so only skip when the name matches.
+    CPDM_OC_LOGIN="if { [ -z \"\${OLM_UTILS_IMAGE:-}\" ] || [ \"\$(podman inspect -f '{{.ImageName}}' ${OLM_UTILS_CONTAINER} 2>/dev/null)\" = \"\${OLM_UTILS_IMAGE}\" ]; } && podman exec ${OLM_UTILS_CONTAINER} oc whoami >/dev/null 2>&1 && [ \"\$(podman exec ${OLM_UTILS_CONTAINER} oc whoami --show-server 2>/dev/null)\" = \"${_oc_url}\" ]; then echo \"[INFO] cpd-cli (${OLM_UTILS_CONTAINER}) already logged in to ${_oc_url} - skipping login-to-ocp\"; else ${CPDM_OC_LOGIN_FORCE}; fi"
+    # The container login does not touch the local kubeconfig, yet nearly every script that
+    # logs cpd-cli in also runs local oc (directly or through helpers). Log that in too, so a
+    # script run on its own never works against an expired session or another cluster.
+    # Joined with ';', not '&&': zsh's errexit ignores a failure on the left of '&&', so this
+    # way either failed login still stops a 'set -e' script.
+    [[ -n "${OC_LOGIN:-}" ]] && CPDM_OC_LOGIN="if command -v oc >/dev/null 2>&1; then ${OC_LOGIN}; fi; ${CPDM_OC_LOGIN}"
+    export CPDM_OC_LOGIN
 fi
 
 export CPD_CLI_MANAGE_WORKSPACE="$HOME/cpd-cli"

@@ -35,7 +35,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
-eval "${CPDM_OC_LOGIN}"
+# The dashboard reads the local kubeconfig only. Never CPDM_OC_LOGIN here: it runs next to
+# install-components, and a cpd-cli login can recreate the container and kill that job.
+eval "${OC_LOGIN}"
 
 COMPONENT_LIST_STRING="${COMPLETE_COMPONENT_LIST:-}"
 FALLBACK_COMPONENTS="cpfs,cpd_platform,ccs,${CPD_COMPONENTS:-}"

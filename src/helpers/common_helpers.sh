@@ -188,14 +188,18 @@ h_run_step() {
 #   --from <step>              start at this step (--from-step too; with --no-from
 #                              only --from-step, for scripts whose --from means
 #                              something else)
-#   --skip <step>[,<step>...]  leave these steps out (repeatable)
+#   --skip <step>[,<step>...]  leave these steps out (repeatable; --skip-steps too)
+#   --only <step>[,<step>...]  run just these steps (repeatable; --only-steps too)
+#   --<step>                   same as --only <step>, e.g. --authorize-topology
+#                              (--strict only: otherwise it is the script's option)
 #   --list-steps               print the plan, then exit
 #   -h, --help                 usage + plan, then exit (not with --no-help: the
 #                              script has its own and should mention the options)
+# Option names take '_' for '-' too (--skip_steps, --from_step, --authorize_topology).
 # H_STEPS_USAGE, set before h_steps_plan, adds the script's own options to --help.
 #
-# A step runs when its toggle is "true" and --from / --skip / h_steps_until
-# select it. When it fails:
+# A step runs when its toggle is "true" and --from / --skip / --only /
+# h_steps_until select it. When it fails:
 #   (default) --stop   stop the chain and name the --from that resumes it
 #   --warn             warn, add it to H_STEPS_FAILED, carry on
 # A chain with logic between steps runs them one at a time with h_step_run <name>.
@@ -209,28 +213,42 @@ h_steps_parse() {   # [--strict] [--no-from] [--no-help] <args...>
         esac
         shift
     done
-    typeset -ga H_STEPS=() H_STEPS_ARGS=() H_STEPS_SKIP=() H_STEPS_FAILED=()
+    typeset -ga H_STEPS=() H_STEPS_ARGS=() H_STEPS_SKIP=() H_STEPS_ONLY=() H_STEPS_PICK=() H_STEPS_FAILED=()
     typeset -gA H_STEP_TOGGLE=() H_STEP_LABEL=() H_STEP_MODE=() H_STEP_CMD=() H_STEP_HINT=()
     typeset -g H_STEPS_FROM="" H_STEPS_UNTIL="" H_STEPS_LIST=false H_STEPS_HELP=false
-    typeset -g H_STEPS_FROM_OPT=--from
+    typeset -g H_STEPS_FROM_OPT=--from H_STEPS_STRICT=${strict}
     ${take_from} || H_STEPS_FROM_OPT=--from-step
+    local opt
     while (( $# )); do
-        case "$1" in
+        # Match on the option name with '_' read as '-'; pass the original on.
+        opt="$1"
+        if [[ "${opt}" == --?*=* ]]; then opt="${${opt%%=*}//_/-}=${opt#*=}"
+        elif [[ "${opt}" == --?* ]]; then opt="${opt//_/-}"; fi
+        case "${opt}" in
             --from-step)    H_STEPS_FROM="${2:?$1 needs a step name}"; shift 2 ;;
             --from-step=*)  H_STEPS_FROM="${1#*=}"; shift ;;
-            --skip)         H_STEPS_SKIP+=(${(s:,:)${2:?--skip needs step names}}); shift 2 ;;
-            --skip=*)       H_STEPS_SKIP+=(${(s:,:)${1#*=}}); shift ;;
+            --skip|--skip-steps)
+                            H_STEPS_SKIP+=(${(s:,:)${2:?$1 needs step names}}); shift 2 ;;
+            --skip=*|--skip-steps=*)
+                            H_STEPS_SKIP+=(${(s:,:)${1#*=}}); shift ;;
+            --only|--only-steps)
+                            H_STEPS_ONLY+=(${(s:,:)${2:?$1 needs step names}}); shift 2 ;;
+            --only=*|--only-steps=*)
+                            H_STEPS_ONLY+=(${(s:,:)${1#*=}}); shift ;;
             --list-steps)   H_STEPS_LIST=true; shift ;;
             --)
                 ${strict} && h_die "Unknown option: $1 (see --help)"
                 H_STEPS_ARGS+=("$@"); break ;;
             *)
-                if ${take_from} && [[ "$1" == --from ]]; then
-                    H_STEPS_FROM="${2:?--from needs a step name}"; shift 2
-                elif ${take_from} && [[ "$1" == --from=* ]]; then
+                if ${take_from} && [[ "${opt}" == --from ]]; then
+                    H_STEPS_FROM="${2:?$1 needs a step name}"; shift 2
+                elif ${take_from} && [[ "${opt}" == --from=* ]]; then
                     H_STEPS_FROM="${1#*=}"; shift
-                elif ${take_help} && [[ "$1" == (-h|--help) ]]; then
+                elif ${take_help} && [[ "${opt}" == (-h|--help) ]]; then
                     H_STEPS_HELP=true; shift
+                elif ${strict} && [[ "${opt}" == --[[:alnum:]]* && "${opt}" != *=* ]]; then
+                    # Maybe --<step>: steps are not declared yet, _h_steps_check_names decides.
+                    H_STEPS_PICK+=("${opt#--}"); shift
                 elif ${strict}; then
                     h_die "Unknown option: $1 (see --help)"
                 else
@@ -261,33 +279,40 @@ h_step_hint() { H_STEP_HINT[$1]="$2"; }
 # h_steps_until <step>: nothing after this step runs (e.g. a --prepare-only option).
 h_steps_until() { H_STEPS_UNTIL="$1"; }
 
-# h_step_selected <step>: --from / --skip / h_steps_until leave it in (toggle aside).
+# h_step_selected <step>: --from / --skip / --only / h_steps_until leave it in (toggle aside).
 h_step_selected() {
     local i=${H_STEPS[(Ie)$1]} from=1 last=${#H_STEPS}
     [[ -n "${H_STEPS_FROM}" ]] && from=${H_STEPS[(Ie)${H_STEPS_FROM}]}
     [[ -n "${H_STEPS_UNTIL}" ]] && last=${H_STEPS[(Ie)${H_STEPS_UNTIL}]}
-    (( i >= from && i <= last && ! ${H_STEPS_SKIP[(Ie)$1]} ))
+    (( i >= from && i <= last && ! ${H_STEPS_SKIP[(Ie)$1]} )) \
+        && (( ! ${#H_STEPS_ONLY} || ${H_STEPS_ONLY[(Ie)$1]} ))
 }
 
 # h_step_on <step>: the step will run (toggle on and selected).
 h_step_on() { [[ "${H_STEP_TOGGLE[$1]}" == true ]] && h_step_selected "$1"; }
 
-# h_steps_check: every step named in --from / --skip exists, and they leave something to run.
+# h_steps_check: every step named in --from / --skip / --only exists, and they leave something to run.
 h_steps_check() {
     _h_steps_check_names
     _h_steps_check_left
 }
 _h_steps_check_names() {
     local s
-    for s in "${H_STEPS_SKIP[@]}" ${H_STEPS_FROM:+"${H_STEPS_FROM}"} ${H_STEPS_UNTIL:+"${H_STEPS_UNTIL}"}; do
+    # Each --<name> h_steps_parse could not place must be a step: it becomes --only <name>.
+    for s in "${H_STEPS_PICK[@]}"; do
+        (( ${H_STEPS[(Ie)${s}]} )) || h_die "Unknown option: --${s} (see --help). Steps: ${H_STEPS[*]}"
+        H_STEPS_ONLY+=("${s}")
+    done
+    H_STEPS_PICK=()
+    for s in "${H_STEPS_SKIP[@]}" "${H_STEPS_ONLY[@]}" ${H_STEPS_FROM:+"${H_STEPS_FROM}"} ${H_STEPS_UNTIL:+"${H_STEPS_UNTIL}"}; do
         (( ${H_STEPS[(Ie)${s}]} )) || h_die "Unknown step '${s}'. Steps: ${H_STEPS[*]}"
     done
 }
 _h_steps_check_left() {
     local s
-    [[ -n "${H_STEPS_FROM}${H_STEPS_UNTIL}${H_STEPS_SKIP[*]}" ]] || return 0
+    [[ -n "${H_STEPS_FROM}${H_STEPS_UNTIL}${H_STEPS_SKIP[*]}${H_STEPS_ONLY[*]}" ]] || return 0
     for s in "${H_STEPS[@]}"; do h_step_on "${s}" && return 0; done
-    h_die "No steps left to run with these --from / --skip options."
+    h_die "No steps left to run with these --from / --skip / --only options (a step marked 'off' above is off by its toggle)."
 }
 
 # h_steps_print: one line per step - run, skip (--from / --skip) or off (toggle).
@@ -306,12 +331,15 @@ h_steps_print() {
 h_steps_plan() {
     _h_steps_check_names
     if ${H_STEPS_HELP}; then
-        print -r -- "Usage: ${ZSH_ARGZERO:t} [${H_STEPS_FROM_OPT} <step>] [--skip <step>[,<step>...]] [--list-steps]${H_STEPS_USAGE:+ [options]}"
+        print -r -- "Usage: ${ZSH_ARGZERO:t} [${H_STEPS_FROM_OPT} <step>] [--skip <step>[,<step>...]] [--only <step>[,<step>...]] [--list-steps]${H_STEPS_USAGE:+ [options]}"
         printf '  %-28s%s\n' "${H_STEPS_FROM_OPT} <step>" "start at this step, e.g. to resume after a failure" \
-            "--skip <step>[,<step>...]" "leave these steps out (repeatable)" \
-            "--list-steps" "print the steps and what this run would do, then exit"
+            "--skip <step>[,<step>...]" "leave these steps out (repeatable; alias --skip-steps)" \
+            "--only <step>[,<step>...]" "run just these steps (repeatable; alias --only-steps)"
+        ${H_STEPS_STRICT} && printf '  %-28s%s\n' "--<step>" "same as --only <step>, e.g. --${H_STEPS[1]}"
+        printf '  %-28s%s\n' "--list-steps" "print the steps and what this run would do, then exit"
         [[ -n "${H_STEPS_USAGE:-}" ]] && print -r -- "${H_STEPS_USAGE}"
-        print -r -- "A step runs when its DO_* toggle is on and ${H_STEPS_FROM_OPT} / --skip select it."
+        print -r -- "Option names accept '_' for '-' (e.g. --skip_steps)."
+        print -r -- "A step runs when its toggle is on and ${H_STEPS_FROM_OPT} / --skip / --only select it."
         print ""
     fi
     h_steps_print
