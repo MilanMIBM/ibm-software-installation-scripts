@@ -15,6 +15,20 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 
 # ---
 
+# --components=a,b,c installs only those components instead of COMPLETE_COMPONENT_LIST.
+# A bare run (or the 4.0 chain, which passes no arguments) keeps the full list.
+COMPONENTS_OVERRIDE=""
+for _arg in "$@"; do
+    case "${_arg}" in
+        --components=*) COMPONENTS_OVERRIDE="${_arg#*=}" ;;
+        *) echo "Error: unknown argument: ${_arg} (only --components=<comma-separated list>)"; exit 1 ;;
+    esac
+done
+if [[ "$*" == *--components=* && -z "${COMPONENTS_OVERRIDE}" ]]; then
+    echo "Error: --components= needs a comma-separated list, e.g. --components=watsonx_data"
+    exit 1
+fi
+
 for var in CPD_COMPONENTS VERSION PROJECT_CPD_INST_OPERATORS PROJECT_CPD_INST_OPERANDS STG_CLASS_BLOCK STG_CLASS_FILE IMAGE_PULL_PREFIX IMAGE_PULL_SECRET; do
     if [[ -z "${(P)var:-}" ]]; then
         echo "Error: ${var} is not set. Set it in ./cpd_vars.sh before running this script."
@@ -39,7 +53,12 @@ if [[ -n "${PATCH_ID:-}" ]]; then
     PATCH_FLAG=(--patch_id="${PATCH_ID}")
 fi
 
-COMPONENTS=${COMPLETE_COMPONENT_LIST}
+if [[ -n "${COMPONENTS_OVERRIDE}" ]]; then
+    COMPONENTS=${COMPONENTS_OVERRIDE}
+    echo "[INFO] --components override: installing only ${COMPONENTS} (ignoring COMPLETE_COMPONENT_LIST)"
+else
+    COMPONENTS=${COMPLETE_COMPONENT_LIST}
+fi
 
 # --- Databand needs a customer-provided postgres secret before its chart can install ---
 DATABAND_COMPONENTS=(ibm-databand watsonx_data_premium watsonx_dataintegration)
