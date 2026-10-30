@@ -10,8 +10,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import ProgressBar, Sparkline, Static
 
 from .cr_list import ago
-from .glow_dot import GlowDot
-from .util import set_attr, set_display, set_text
+from ...common.glow_dot import GlowDot
+from ...common.ui_util import set_attr, set_display, set_text
 
 
 def _hhmm(ts: datetime | None) -> str:

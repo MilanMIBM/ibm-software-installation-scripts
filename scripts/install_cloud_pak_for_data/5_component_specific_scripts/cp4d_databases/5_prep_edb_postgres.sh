@@ -15,6 +15,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
+# Credentials: saved to configs/cp4d_config/managed-service-instances/<type>/<instance>-instance_details.sh
+# and, while this is true, also as a secret in the Software Hub internal vault, shared with
+# SERVICE_INSTANCE_VAULT_MEMBERS (default cpadmin). Default: SERVICE_INSTANCE_VAULT_STORE from cpd_vars.sh, else true.
+STORE_CREDENTIALS_IN_VAULT="${SERVICE_INSTANCE_VAULT_STORE:-true}"
+
 eval "${OC_LOGIN}"
 
 # ---
@@ -84,17 +89,16 @@ else
 fi
 
 # ---
-# Extract credentials from each instance's -app secret and write to cpd_instance_details.sh
+# Extract credentials from each instance's -app secret and write one instance-details file per
+# instance: configs/cp4d_config/managed-service-instances/edb/<instance>-instance_details.sh
+# (sourced by every later script through env_bootstrap.sh; no longer cpd_instance_details.sh).
 
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
 CERTS_ROOT="${REPO_ROOT}/configs/cp4d_config/certs"
 
 echo "=== Extracting EDB Postgres credentials ==="
 echo ""
-
-EDB_BLOCK="
-# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 for INSTANCE in "${EDB_INSTANCES[@]}"; do
     [[ -z "${INSTANCE:-}" ]] && continue
@@ -180,27 +184,18 @@ for INSTANCE in "${EDB_INSTANCES[@]}"; do
     echo "  Route Host: ${ROUTE_HOST:-[not found]}"
     echo ""
 
-    EDB_BLOCK+="
-#--- EDB Postgres - ${INSTANCE}
-export ${VAR_PREFIX}_PASSWORD=\"${EDB_PASSWORD}\"
-export ${VAR_PREFIX}_USERNAME=\"${EDB_USERNAME}\"
-export ${VAR_PREFIX}_DBNAME=\"${EDB_DBNAME}\"
-export ${VAR_PREFIX}_LOCAL_PORT=\"${EDB_LOCAL_PORT}\"
-export ${VAR_PREFIX}_LOCAL_URI=\"${EDB_LOCAL_URI}\"
-export ${VAR_PREFIX}_ROUTE_PORT=\"443\"
-export ${VAR_PREFIX}_ROUTE_URI=\"${EDB_ROUTE_URI}\"
-export ${VAR_PREFIX}_SSLROOTCERT=\"${EDB_CERT_PATH}\"
-export ${VAR_PREFIX}_ROUTE_URI_TLS=\"${EDB_ROUTE_URI_TLS}\""
+    h_write_instance_details edb "${INSTANCE}" "${PROJECT_CPD_INST_OPERANDS}" \
+        "${VAR_PREFIX}_PASSWORD=${EDB_PASSWORD}" \
+        "${VAR_PREFIX}_USERNAME=${EDB_USERNAME}" \
+        "${VAR_PREFIX}_DBNAME=${EDB_DBNAME}" \
+        "${VAR_PREFIX}_LOCAL_PORT=${EDB_LOCAL_PORT}" \
+        "${VAR_PREFIX}_LOCAL_URI=${EDB_LOCAL_URI}" \
+        "${VAR_PREFIX}_ROUTE_PORT=443" \
+        "${VAR_PREFIX}_ROUTE_URI=${EDB_ROUTE_URI}" \
+        "${VAR_PREFIX}_SSLROOTCERT=${EDB_CERT_PATH}" \
+        "${VAR_PREFIX}_ROUTE_URI_TLS=${EDB_ROUTE_URI_TLS}"
+    echo "  [OK] Credentials saved to ${REPLY#${REPO_ROOT}/}"
 done
-
-if [[ -f "${VARS_FILE}" ]]; then
-    echo "${EDB_BLOCK}" >> "${VARS_FILE}"
-    echo "[INFO] EDB Postgres credentials appended to ${VARS_FILE##*/}"
-else
-    mkdir -p "$(dirname "${VARS_FILE}")"
-    echo "${EDB_BLOCK}" > "${VARS_FILE}"
-    echo "[INFO] EDB Postgres credentials written to ${VARS_FILE##*/}"
-fi
 
 echo ""
 echo "=== Done ==="

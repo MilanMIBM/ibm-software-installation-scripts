@@ -22,10 +22,10 @@ from ..model import State
 from .chain_view import ChainView, RowFocused
 from .cr_list import SORTS, CRList, sort_keys
 from .detail import Detail
-from .glow_dot import DOT_COLORS, GlowDot, as_content
-from .pulse import PulseClock
+from ...common.glow_dot import DOT_COLORS, GlowDot, as_content
+from ...common.pulse import PulseClock
 from .screens import LegendScreen, OpLogScreen
-from .util import set_attr, set_text
+from ...common.ui_util import set_attr, set_text
 
 TREE_MODES = ("live", "owns", "deps")
 

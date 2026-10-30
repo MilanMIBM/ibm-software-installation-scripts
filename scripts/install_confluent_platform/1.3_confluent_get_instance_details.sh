@@ -90,11 +90,24 @@ _broker_image="$(oc get statefulset broker -n "${NS}" \
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 CONFLUENT_DEPLOYED_VERSION="${_broker_image##*:}"
 
-# Basic-auth credentials for the web UIs, read back from the secret created by
-# 1.0_confluent_prep.sh. Empty when authentication is disabled.
+# Web UI auth mode and basic-auth credentials, read from the live secrets
+# created by 1.0_confluent_prep.sh. The -oauth secret is checked first: basic
+# mode deletes it, but openshift mode leaves an old basic secret behind.
+# Credentials only exist in basic mode; openshift mode uses the cluster login.
 : "${CONFLUENT_AUTH_SECRET:=confluent-auth}"
-CONFLUENT_AUTH_USER="$(oc get secret "${CONFLUENT_AUTH_SECRET}" -n "${NS}" -o jsonpath='{.data.username}' 2>/dev/null | base64 --decode || true)"
-CONFLUENT_AUTH_PASS="$(oc get secret "${CONFLUENT_AUTH_SECRET}" -n "${NS}" -o jsonpath='{.data.password}' 2>/dev/null | base64 --decode || true)"
+CONFLUENT_AUTH_USER=""
+CONFLUENT_AUTH_PASS=""
+if oc get secret "${CONFLUENT_AUTH_SECRET}-oauth" -n "${NS}" &>/dev/null; then
+    CONFLUENT_AUTH_MODE_LIVE="openshift"
+else
+    CONFLUENT_AUTH_USER="$(oc get secret "${CONFLUENT_AUTH_SECRET}" -n "${NS}" -o jsonpath='{.data.username}' 2>/dev/null | base64 --decode || true)"
+    CONFLUENT_AUTH_PASS="$(oc get secret "${CONFLUENT_AUTH_SECRET}" -n "${NS}" -o jsonpath='{.data.password}' 2>/dev/null | base64 --decode || true)"
+    if [[ -n "${CONFLUENT_AUTH_USER}" ]]; then
+        CONFLUENT_AUTH_MODE_LIVE="basic"
+    else
+        CONFLUENT_AUTH_MODE_LIVE="none"
+    fi
+fi
 
 # MDS super-user credentials, read back from whichever user store is deployed.
 # These are what "confluent login" uses. Empty until x.4_confluent_add_mds.sh
@@ -153,6 +166,84 @@ else
     CONFLUENT_KAFKA_EXTERNAL_MECHANISMS=""
 fi
 
+# What is reachable and how it is protected, written into the file as comments.
+# Probed live, so a component with no auth configured shows up as OPEN instead
+# of being assumed safe from the auth mode.
+echo "[INFO] Probing routes without credentials to record what is protected..."
+_exposure=""
+for _r in $(oc get routes -n "${NS}" -l app.kubernetes.io/part-of=confluent \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true); do
+    if [[ "$(oc get route "${_r}" -n "${NS}" -o jsonpath='{.spec.tls.termination}' 2>/dev/null)" == "passthrough" ]]; then
+        # Kafka wire protocol, not HTTP: protection is the EXTERNAL listener of
+        # the broker this route fronts (broker-N-kafka -> pod broker-N).
+        _bpod="${_r%-kafka}"
+        _ext_proto=""
+        _map="$(oc get pod "${_bpod}" -n "${NS}" \
+            -o jsonpath='{.spec.containers[0].env[?(@.name=="KAFKA_LISTENER_SECURITY_PROTOCOL_MAP")].value}' 2>/dev/null || true)"
+        for _e in ${(s:,:)_map}; do [[ "${_e}" == EXTERNAL:* ]] && _ext_proto="${_e#EXTERNAL:}"; done
+        _route_mechs="$(kafka_pod_listener_mechanisms "${NS}" "${_bpod}" external)"
+        if [[ "${_ext_proto}" == SASL_* && -n "${_route_mechs}" ]]; then
+            _label="protected - Kafka ${_ext_proto} (${_route_mechs})"
+        elif [[ -n "${_ext_proto}" ]]; then
+            _label="OPEN - Kafka ${_ext_proto}, no SASL client auth"
+        else
+            _label="unknown - EXTERNAL listener not found on ${_bpod}"
+        fi
+    else
+        _label="$(cf_route_protection "${NS}" "${_r}")"
+    fi
+    [[ "${_label}" == OPEN* ]] && echo "[WARN] Route '${_r}' is publicly reachable without credentials." >&2
+    _exposure+="$(printf '#   %-18s %s' "${_r}" "${_label}")"$'\n'
+done
+[[ -z "${_exposure}" ]] && _exposure="#   (no routes - nothing is exposed outside the cluster)"$'\n'
+
+# The pod network is open to every namespace unless a NetworkPolicy selects the
+# pod, so record which workloads one actually covers. Each policy's podSelector
+# is turned into a label selector and resolved against the running pods.
+typeset -A _np_by_app
+for _np in $(oc get networkpolicy -n "${NS}" -o name 2>/dev/null || true); do
+    _sel="$(oc get "${_np}" -n "${NS}" -o jsonpath='{.spec.podSelector}' 2>/dev/null | python3 -c '
+import sys, json
+s = json.loads(sys.stdin.read() or "{}")
+parts = [f"{k}={v}" for k, v in (s.get("matchLabels") or {}).items()]
+for e in s.get("matchExpressions") or []:
+    k, op, vals = e["key"], e["operator"], ",".join(e.get("values") or [])
+    parts.append({"In": f"{k} in ({vals})", "NotIn": f"{k} notin ({vals})",
+                  "Exists": k, "DoesNotExist": f"!{k}"}[op])
+print(",".join(parts))' 2>/dev/null)" || continue
+    # An empty podSelector selects every pod in the namespace.
+    _lsel=(); [[ -n "${_sel}" ]] && _lsel=(-l "${_sel}")
+    for _a in $(oc get pods -n "${NS}" "${_lsel[@]}" \
+            -o jsonpath='{range .items[*]}{.metadata.labels.app}{"\n"}{end}' 2>/dev/null | sort -u); do
+        _np_by_app[${_a}]+="${_np_by_app[${_a}]:+, }${_np#*/}"
+    done
+done
+
+_routed="$(oc get routes -n "${NS}" -o jsonpath='{range .items[*]}{.spec.to.name}{"\n"}{end}' 2>/dev/null || true)"
+_open_apps=""
+_exposure+="# In-cluster (pod network):"$'\n'
+for _a in $(oc get pods -n "${NS}" -o jsonpath='{range .items[*]}{.metadata.labels.app}{"\n"}{end}' 2>/dev/null | sort -u); do
+    if [[ -n "${_np_by_app[${_a}]:-}" ]]; then
+        _exposure+="$(printf '#   %-18s ingress limited by NetworkPolicy %s' "${_a}" "${_np_by_app[${_a}]}")"$'\n'
+    elif ! grep -qx "${_a}" <<< "${_routed}" && [[ "${_a}" == (prometheus|alertmanager) ]]; then
+        # Not routed and unauthenticated by design, so no policy is a real gap.
+        _exposure+="$(printf '#   %-18s no route, no auth, NO NetworkPolicy - any namespace can query it' "${_a}")"$'\n'
+    else
+        _open_apps+="${_open_apps:+, }${_a}"
+    fi
+done
+[[ -n "${_open_apps}" ]] && _exposure+="#   no NetworkPolicy, reachable from any namespace: ${_open_apps}"$'\n'
+_exposure="${_exposure%$'\n'}"
+
+case "${CONFLUENT_AUTH_MODE_LIVE}" in
+    openshift) _auth_comment="# openshift: Control Center is behind the OpenShift login (oauth-proxy). There
+# is no shared password, so USER/PASS are empty - grant access with:
+#   oc policy add-role-to-user view <user> -n ${NS}" ;;
+    basic)     _auth_comment="# basic: Control Center sits behind an nginx basic-auth gateway using USER/PASS." ;;
+    *)         _auth_comment="# none: Control Center is unauthenticated (CONFLUENT_AUTH_ENABLED=false or not yet
+# installed); USER/PASS are empty." ;;
+esac
+
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
 VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_instance_details.sh"
 mkdir -p "$(dirname "${VARS_FILE}")"
@@ -166,10 +257,15 @@ export CONFLUENT_NAMESPACE="${NS}"
 export CONFLUENT_DEPLOYED_VERSION="${CONFLUENT_DEPLOYED_VERSION}"
 export CONFLUENT_RUNNING_CLUSTER_ID="${CONFLUENT_RUNNING_CLUSTER_ID}"
 
-# --- Web UI basic auth (Control Center, Prometheus, Alertmanager) -------------
-# Empty when CONFLUENT_AUTH_ENABLED=false.
+# --- Control Center UI auth --------------------------------------------------
+${_auth_comment}
+export CONFLUENT_AUTH_MODE_DEPLOYED="${CONFLUENT_AUTH_MODE_LIVE}"
 export CONFLUENT_AUTH_USER="${CONFLUENT_AUTH_USER}"
 export CONFLUENT_AUTH_PASS="${CONFLUENT_AUTH_PASS}"
+
+# --- Exposure + protection ---------------------------------------------------
+# Every route, probed WITHOUT credentials when this file was written:
+${_exposure}
 
 # --- In-cluster (use these from workloads running on the cluster) -------------
 export CONFLUENT_BOOTSTRAP_INTERNAL="${CONFLUENT_BOOTSTRAP_INTERNAL}"

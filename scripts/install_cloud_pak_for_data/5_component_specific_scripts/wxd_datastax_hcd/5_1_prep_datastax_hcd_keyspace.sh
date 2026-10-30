@@ -19,8 +19,8 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   db     = client.get_database(endpoint, token=token, keyspace=<name>)
 #   db.get_database_admin().create_keyspace(<name>, update_db_keyspace=True)
 #
-# Connection details are read from configs/cp4d_config/cpd_instance_details.sh (written
-# by 5_prep_datastax_mc.sh):
+# Connection details come from configs/cp4d_config/managed-service-instances/datastax-hcd/
+# <datacenter>-instance_details.sh (written by 5_0_prep_datastax_mc.sh, loaded by env_bootstrap.sh):
 #   DATASTAX_HCD_ENDPOINT, DATASTAX_HCD_API_USER, DATASTAX_HCD_API_PASSWORD
 #
 # Which keyspaces get created:
@@ -54,17 +54,9 @@ _is_true() {
 
 # Locate the repo root (marker: pyproject.toml).
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
-
-# --- Source the HCD connection details if the instance details file exists.
-if [[ -f "${VARS_FILE}" ]]; then
-    echo "[INFO] Sourcing HCD connection details from ${VARS_FILE##*/}"
-    source "${VARS_FILE}"
-else
-    echo "[WARN] Instance details file not found: ${VARS_FILE}"
-    echo "[WARN] Expecting DATASTAX_HCD_ENDPOINT / DATASTAX_HCD_API_USER /"
-    echo "       DATASTAX_HCD_API_PASSWORD to be set in the environment instead."
-fi
+# --- The HCD connection details come from 5_0's instance-details file
+# (configs/cp4d_config/managed-service-instances/datastax-hcd/<datacenter>-instance_details.sh),
+# which env_bootstrap.sh has already sourced; exported values in the environment work too.
 
 # --- Verify the required connection variables are present.
 _MISSING=()
@@ -75,8 +67,8 @@ for var in DATASTAX_HCD_ENDPOINT DATASTAX_HCD_API_USER DATASTAX_HCD_API_PASSWORD
 done
 if (( ${#_MISSING[@]} > 0 )); then
     echo "[ERROR] Missing required HCD connection variable(s): ${_MISSING[*]}"
-    echo "[ERROR] Run 5_prep_datastax_mc.sh first (it writes these to"
-    echo "        ${VARS_FILE##*/}), or export them before running this script."
+    echo "[ERROR] Run 5_0_prep_datastax_mc.sh first (it writes these to"
+    echo "        configs/cp4d_config/managed-service-instances/datastax-hcd/), or export them before running this script."
     exit 1
 fi
 

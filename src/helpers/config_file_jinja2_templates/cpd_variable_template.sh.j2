@@ -64,6 +64,16 @@ export PROJECT_CPD_INST_OPERANDS="{{ cp4d_install_project_naming.get("PROJECT_CP
 export STG_CLASS_BLOCK="{{ block_storage_class_select.value }}"
 export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
 # ------------------------------------------------------------------------------
+# Service-instance credentials
+# ------------------------------------------------------------------------------
+# The service-instance scripts (4.5_*, 5_*) and the instance manager TUI save each
+# instance's credentials to managed-service-instances/<type>/<instance>-instance_details.sh
+# next to this file, and while SERVICE_INSTANCE_VAULT_STORE is true also as a secret
+# '<type>-<instance>' in the Software Hub internal vault, owned by CPD_USERNAME and shared
+# with SERVICE_INSTANCE_VAULT_MEMBERS (comma-separated usernames; group:<id|name> for groups).
+export SERVICE_INSTANCE_VAULT_STORE="true"
+export SERVICE_INSTANCE_VAULT_MEMBERS="cpadmin"
+# ------------------------------------------------------------------------------
 # IBM Entitled Registry Key
 # ------------------------------------------------------------------------------
 {% if image_pull_creds_select.selected_key != "IBM Entitled Registry" -%}

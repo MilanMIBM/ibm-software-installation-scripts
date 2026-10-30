@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
+from ..common.state import State
+
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
@@ -23,31 +25,6 @@ def parse_ts(value) -> datetime | None:
     except ValueError:
         return None
     return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
-
-
-class State(str, Enum):
-    """The six dot states. Order of the members = severity order (worst first)."""
-
-    FAILING = "failing"
-    STUCK = "stuck"
-    SCALING = "scaling"
-    PROGRESS = "progress"
-    HEALTHY = "healthy"
-    INACTIVE = "inactive"
-
-    @property
-    def severity(self) -> int:
-        return list(State).index(self)
-
-    @property
-    def word(self) -> str:
-        return {"progress": "in progress"}.get(self.value, self.value)
-
-    @property
-    def tag(self) -> str:
-        """Fixed-width tag for --no-color / --once output."""
-        return {"failing": "[ERR]", "stuck": "[STK]", "scaling": "[SCL]", "progress": "[RUN]",
-                "healthy": "[OK ]", "inactive": "[OFF]"}[self.value]
 
 
 class Phase(str, Enum):

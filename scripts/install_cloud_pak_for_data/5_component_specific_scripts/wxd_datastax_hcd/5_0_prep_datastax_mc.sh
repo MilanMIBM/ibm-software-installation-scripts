@@ -13,6 +13,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
+# Credentials: saved to configs/cp4d_config/managed-service-instances/<type>/<instance>-instance_details.sh
+# and, while this is true, also as a secret in the Software Hub internal vault, shared with
+# SERVICE_INSTANCE_VAULT_MEMBERS (default cpadmin). Default: SERVICE_INSTANCE_VAULT_STORE from cpd_vars.sh, else true.
+STORE_CREDENTIALS_IN_VAULT="${SERVICE_INSTANCE_VAULT_STORE:-true}"
+
 # ---
 
 for var in OC_LOGIN PROJECT_CPD_INST_OPERANDS PREP_DATASTAX; do
@@ -142,9 +147,11 @@ done
 
 oc get cassandradatacenters.cassandra.datastax.com -n "${PROJECT_CPD_INST_OPERANDS}"
 
-# --- write DataStax MC credentials to cpd_instance_details.sh ---
+# --- write DataStax MC / HCD credentials to the instance's details file ---
+# configs/cp4d_config/managed-service-instances/datastax-hcd/<datacenter>-instance_details.sh
+# (sourced by every later script through env_bootstrap.sh; no longer cpd_instance_details.sh).
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
 CERTS_ROOT="${REPO_ROOT}/configs/cp4d_config/certs"
 
 DATASTAX_URL="https://$(oc get route datastax-mc-ui -n ${PROJECT_CPD_INST_OPERATORS} -o jsonpath='{.spec.host}')"
@@ -287,34 +294,22 @@ if [[ "${PREPARE_TLS}" == "true" ]]; then
     fi
 fi
 
-DATASTAX_BLOCK="
-# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-#--- DataStax Mission Control - DataAPI
-export DATASTAX_MC_URL=\"${DATASTAX_URL}\"
-export DATASTAX_MC_USERNAME=\"${DATASTAX_USERNAME}\"
-export DATASTAX_MC_LOGIN_USERNAME=\"${DATASTAX_USERNAME}@local\"
-export DATASTAX_MC_PASSWORD=\"${DATASTAX_PASSWORD}\"
-#--- DataStax HyperConvergedDatabase (HCD) - DataAPI
-export DATASTAX_HCD_ENDPOINT=\"${DATASTAX_HCD_URL}\"
-export DATASTAX_HCD_API_USER=\"${DATASTAX_HCD_API_USER}\"
-export DATASTAX_HCD_API_PASSWORD=\"${DATASTAX_HCD_API_PASSWORD}\"
-export DATASTAX_HCD_KEYSPACE=\"default_keyspace\"
-export DATASTAX_HCD_ROUTE_CA=\"${DATASTAX_HCD_ROUTE_CA}\"
-export DATASTAX_HCD_CQL_CA=\"${DATASTAX_HCD_CQL_CA}\"
-#--- DataStax HyperConvergedDatabase (HCD) - local CQL (in-cluster service, or 127.0.0.1:9042 via oc port-forward)
-export DATASTAX_HCD_CQL_CONTACT_POINT=\"${DATASTAX_HCD_CQL_CONTACT_POINT}\"
-export DATASTAX_HCD_CQL_SVC=\"${DATASTAX_HCD_CQL_SVC}\"
-export DATASTAX_HCD_DC_ENDPOINT=\"${DATASTAX_HCD_DC_ENDPOINT}\"
-export DATASTAX_HCD_DC_SVC=\"${DATASTAX_HCD_DC_SVC}\"
-export DATASTAX_HCD_CQL_LOCAL_DC=\"${DATASTAX_HCD_CQL_LOCAL_DC}\"
-export DATASTAX_HCD_CQL_USER=\"${DATASTAX_HCD_CQL_USER}\"
-export DATASTAX_HCD_CQL_PASSWORD=\"${DATASTAX_HCD_CQL_PASSWORD}\""
-
-if [[ -f "${VARS_FILE}" ]]; then
-    echo "${DATASTAX_BLOCK}" >> "${VARS_FILE}"
-    echo "[INFO] DataStax MC credentials appended to ${VARS_FILE##*/}"
-else
-    mkdir -p "$(dirname "${VARS_FILE}")"
-    echo "${DATASTAX_BLOCK}" > "${VARS_FILE}"
-    echo "[INFO] DataStax MC credentials written to ${VARS_FILE##*/}"
-fi
+h_write_instance_details datastax-hcd "${_PRIMARY_DC:-${DC_NAMES[1]:-mission-control}}" "${PROJECT_CPD_INST_OPERANDS}" \
+    "DATASTAX_MC_URL=${DATASTAX_URL}" \
+    "DATASTAX_MC_USERNAME=${DATASTAX_USERNAME}" \
+    "DATASTAX_MC_LOGIN_USERNAME=${DATASTAX_USERNAME}@local" \
+    "DATASTAX_MC_PASSWORD=${DATASTAX_PASSWORD}" \
+    "DATASTAX_HCD_ENDPOINT=${DATASTAX_HCD_URL}" \
+    "DATASTAX_HCD_API_USER=${DATASTAX_HCD_API_USER}" \
+    "DATASTAX_HCD_API_PASSWORD=${DATASTAX_HCD_API_PASSWORD}" \
+    "DATASTAX_HCD_KEYSPACE=default_keyspace" \
+    "DATASTAX_HCD_ROUTE_CA=${DATASTAX_HCD_ROUTE_CA}" \
+    "DATASTAX_HCD_CQL_CA=${DATASTAX_HCD_CQL_CA}" \
+    "DATASTAX_HCD_CQL_CONTACT_POINT=${DATASTAX_HCD_CQL_CONTACT_POINT}" \
+    "DATASTAX_HCD_CQL_SVC=${DATASTAX_HCD_CQL_SVC}" \
+    "DATASTAX_HCD_DC_ENDPOINT=${DATASTAX_HCD_DC_ENDPOINT}" \
+    "DATASTAX_HCD_DC_SVC=${DATASTAX_HCD_DC_SVC}" \
+    "DATASTAX_HCD_CQL_LOCAL_DC=${DATASTAX_HCD_CQL_LOCAL_DC}" \
+    "DATASTAX_HCD_CQL_USER=${DATASTAX_HCD_CQL_USER}" \
+    "DATASTAX_HCD_CQL_PASSWORD=${DATASTAX_HCD_CQL_PASSWORD}"
+echo "[INFO] DataStax MC / HCD credentials written to ${REPLY#${_CP4D_REPO_ROOT}/}"

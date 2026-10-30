@@ -12,8 +12,8 @@ from textual.widgets import Label
 
 from ..model import State
 from .chain_view import RowFocused
-from .glow_dot import GlowDot
-from .util import reconcile, set_text
+from ...common.glow_dot import GlowDot
+from ...common.ui_util import reconcile, set_text
 
 SORTS = ("severity", "name", "kind", "progress", "changed")
 

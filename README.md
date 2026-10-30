@@ -148,11 +148,14 @@ ls scripts/install_cloud_pak_for_data/x_clean_or_debug_cp4d/
 After the base install is up:
 
 - `scripts/install_cloud_pak_for_data/4.5_service_instance_setups/` provisions service instances: Db2, EDB Postgres, Databand Postgres, Informix, DataStax HCD, OpenPages and Planning Analytics.
+  - `x_service_instance_manager.sh` lists the add-ons that can create service instances and every existing instance with its state (read-only; `--once`, `--explain <type>`, `--storage-report`, `--help`). It discovers each type's fields from the cluster rather than hardcoding them.
+  - `x_repair_cpd_cli_profile.sh` checks that the `cpd-cli` profile points at this cluster and authenticates, and repairs it only when it doesn't (`--check` to only report).
 - `scripts/install_cloud_pak_for_data/5_component_specific_scripts/` holds per-service follow-ups:
   - `cp4d_databases/`, `cp4d_informix/` - Db2 SCC prep, EDB Postgres and Informix prep
   - `cp4d_general/` - Software Hub admins on a project, CPD projects, service routes, watsonx.data premium UI features
   - `cp4d_streamsets/` - StreamSets project, environment and engine setup end to end
   - `wxd_opensearch/`, `wxd_datastax_hcd/` - watsonx.data OpenSearch and DataStax HCD prep and fixes
+  - `wxd_presto_engines/` - create or re-size a custom-sized watsonx.data Presto engine (registered through the lakehouse API so the console and catalogs know it, sized on its `WxdEngine` CR)
   - `wxo_adk_and_custom_model_import/` - watsonx Orchestrate ADK image support, environments and custom model import
   - `wxai_model_gateway_model_import/` - register providers/models with the watsonx.ai model gateway (model definitions under `models/`)
 
@@ -166,6 +169,15 @@ After the base install is up:
 `src/utilities/cpd-cli_utils/` covers `cpd-cli` upkeep: upgrading to a Software Hub version, refreshing/toggling the OLM utils image, cleaning the workspace, enabling premium features, and creating/deleting CR instances from `src/cr_yaml_examples/`.
 
 `src/utilities/oadp_backup_restore_cp4d_utils/` backs up a Software Hub instance to an off-cluster S3 bucket with `cpd-cli oadp tenant-backup` and restores it onto another cluster (bucket and restore target configs are generated into gitignored subfolders there; see its [README](src/utilities/oadp_backup_restore_cp4d_utils/README.md)).
+
+### Cluster fixes
+
+Scripts in `x_clean_or_debug_cp4d/` that repair known IBM / OpenShift faults. Each one detects the fault first and changes nothing when the fault isn't there. `--preview=true` (or `--dry-run`) only reports what it would change.
+
+- `x_fix_nginx_lua_block_config.sh` repairs nginx proxies that crash-loop on an empty Lua block their operator rendered (e.g. watsonx Orchestrate's `wo-uiproxy`). The operator puts the fault back on reconcile, so it also installs a watcher that re-applies the fix (namespace `cpd-cluster-fixes`; `--uninstall=true` removes it).
+- `x_fix_etcd_database_space.sh` compacts and defragments operator-embedded etcds that hit `database space exceeded` (e.g. the Milvus etcd behind watsonx Orchestrate / watsonx.data), restarts the pods that crashed on it, and installs a CronJob to repeat the check.
+- `x_fix_oauth_missing_idp_secret.sh` clears the `authentication` ClusterOperator's Degraded state when an htpasswd identity provider points at a missing secret. It creates the secret empty, or with `--remove` drops the provider instead.
+- `x_toggle_pane_autoheal.sh` turns on or off an automatic retry for the UI error **"Oops, the pane didn't load."** in connection and other property forms. That message is a client-side render crash in IBM's form library; its *Revert* button redraws the form with your values kept. A small script, injected into every CPD page by `ibm-nginx` (through a `ZenExtension`), presses Revert up to 3 times. It reports each occurrence, with the browser's error stack, to the `ibm-nginx` log. `--action=toggle|on|off|status|validate`: `on` first dry-runs `nginx -t` in `ibm-nginx-tester`, `status` shows the state and the reported errors. A user can opt out in their browser with `localStorage.setItem('cpdPaneAutoheal','off')`.
 
 ### Users, service IDs and API keys
 

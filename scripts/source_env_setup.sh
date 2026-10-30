@@ -41,6 +41,22 @@ unset _ENV_SETUP_DIR
 
 _sourced=()
 _env_loaded=()   # repo-relative paths, for the summary
+# Per-instance details: <config dir>/managed-service-instances/<type>/<instance>-instance_details.sh,
+# one file per service instance, written by the service-instance scripts (4.5_*, 5_*) and the
+# instance manager TUI (src/helpers/common_helpers.sh h_write_instance_details). Oldest first, so
+# the newest instance wins where two export the same name (as the old appended blocks did);
+# files of deleted instances (a "# deleted" line) are skipped.
+_source_managed_instances() {
+    local dir="$1/managed-service-instances" f
+    for f in "${dir}"/*/*-instance_details.sh(N.Om); do
+        if grep -q '^# deleted' "$f" 2>/dev/null; then
+            _env_log "deleted instance, skipping: ${f#${_env_repo}/}"
+            continue
+        fi
+        _source_if_exists "$f"
+    done
+}
+
 _source_if_exists() {
     local f="$1"
     if [[ ! -f "$f" ]]; then
@@ -115,12 +131,14 @@ if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
             _source_if_exists "${_target_details}"
         done
     fi
+    _source_managed_instances "${ENV_TARGET_FILE:h}"
 
     unset _target_file _target_details _d
 else
     _source_if_exists "${CONFIG_DIR}/cpd_vars.sh"
     _source_registry_overrides "${CONFIG_DIR}/cpd_vars.sh"
     _source_if_exists "${CONFIG_DIR}/cpd_instance_details.sh"
+    _source_managed_instances "${CONFIG_DIR}"
     for _f in "${CONFIG_DIR}"/*.sh(N) "${CONFIGS_ROOT}"/*/*.sh(N); do
         # Only config files - other scripts dropped into configs/ (e.g. the
         # Turbonomic onboarding script downloaded from Concert) must not run.

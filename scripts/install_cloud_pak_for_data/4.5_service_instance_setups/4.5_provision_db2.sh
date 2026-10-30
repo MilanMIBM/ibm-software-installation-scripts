@@ -14,6 +14,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 
+# Credentials: saved to configs/cp4d_config/managed-service-instances/<type>/<instance>-instance_details.sh
+# and, while this is true, also as a secret in the Software Hub internal vault, shared with
+# SERVICE_INSTANCE_VAULT_MEMBERS (default cpadmin). Default: SERVICE_INSTANCE_VAULT_STORE from cpd_vars.sh, else true.
+STORE_CREDENTIALS_IN_VAULT="${SERVICE_INSTANCE_VAULT_STORE:-true}"
+
 # ---
 
 for var in OC_LOGIN CPDM_OC_LOGIN PREP_DB2; do
@@ -34,29 +39,27 @@ DB2_4K_DEVICE_SUPPORT=ON # ON / OFF
 DB2_ID=$((RANDOM % 9000000 + 1000000)) # Random 7 digit id suffix
 export DB2_PAYLOAD_FILE="${SERVICE_INSTANCE_FILE_DIR}/db2oltp.json"
 export DB2_INSTANCE_NAME="db2oltp-1${DB2_ID}"
-DB2_CREDENTIALS_FILE="${SERVICE_INSTANCE_FILE_DIR}/${DB2_INSTANCE_NAME}-credentials.txt"
 
 # --- Instance password: DB2_PASSWORD as given (export it, or set it in
-# ./cpd_vars.sh), else a generated one. It is saved next to the payload
-# (service_instances/ is gitignored), readable by this user only, before the
-# instance is created, so it is never lost.
+# ./cpd_vars.sh), else a generated one. It is saved to this instance's details
+# file, configs/cp4d_config/managed-service-instances/db2oltp/<instance>-instance_details.sh
+# (gitignored, readable by this user only, the same file the instance manager TUI
+# writes), before the instance is created, so it is never lost. Its variables are
+# prefixed DB2OLTP_<INSTANCE>_ so a later run never picks them up as DB2_PASSWORD.
 if [[ -n "${DB2_PASSWORD:-}" ]]; then
     echo "[INFO] Using DB2_PASSWORD from the environment / config."
 else
     DB2_PASSWORD="$(h_random_password 24)"
     echo "[INFO] Generated a password for ${DB2_INSTANCE_NAME} (set DB2_PASSWORD to choose one)."
 fi
-(
-    umask 077
-    {
-        echo "# Db2 instance ${DB2_INSTANCE_NAME} in ${PROJECT_CPD_INST_OPERANDS}, created $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-        echo "DB2_INSTANCE_NAME=${DB2_INSTANCE_NAME}"
-        echo "DB2_USERNAME=${DB2_USERNAME}"
-        print -r -- "DB2_PASSWORD=${DB2_PASSWORD}"
-    } > "${DB2_CREDENTIALS_FILE}"
-)
-chmod 600 "${DB2_CREDENTIALS_FILE}"
-echo "[INFO] Credentials saved to ${DB2_CREDENTIALS_FILE}"
+h_instance_var_prefix db2oltp "${DB2_INSTANCE_NAME}"
+DB2_VAR_PREFIX="${REPLY}"
+h_write_instance_details db2oltp "${DB2_INSTANCE_NAME}" "${PROJECT_CPD_INST_OPERANDS}" \
+    "${DB2_VAR_PREFIX}_INSTANCE_NAME=${DB2_INSTANCE_NAME}" \
+    "${DB2_VAR_PREFIX}_USERNAME=${DB2_USERNAME}" \
+    "${DB2_VAR_PREFIX}_PASSWORD=${DB2_PASSWORD}"
+DB2_CREDENTIALS_FILE="${REPLY}"
+echo "[INFO] Credentials saved to ${DB2_CREDENTIALS_FILE#${_CP4D_REPO_ROOT}/} (${DB2_VAR_PREFIX}_*)"
 
 export CPD_PROFILE_NAME="${CPD_USERNAME}-profile"
 

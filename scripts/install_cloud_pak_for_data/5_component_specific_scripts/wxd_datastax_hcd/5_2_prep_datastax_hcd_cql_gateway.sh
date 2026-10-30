@@ -10,6 +10,11 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+
+# Credentials: saved to configs/cp4d_config/managed-service-instances/<type>/<instance>-instance_details.sh
+# and, while this is true, also as a secret in the Software Hub internal vault, shared with
+# SERVICE_INSTANCE_VAULT_MEMBERS (default cpadmin). Default: SERVICE_INSTANCE_VAULT_STORE from cpd_vars.sh, else true.
+STORE_CREDENTIALS_IN_VAULT="${SERVICE_INSTANCE_VAULT_STORE:-true}"
 # Shared Mission Control functions (datacenter lookup, CQL gateway); no MC config needed.
 source "${_CP4D_REPO_ROOT}/src/helpers/datastax_mc_helpers.sh"
 
@@ -47,8 +52,8 @@ Options:
   -h, --help          Show this help
 
 Writes the SCB path, gateway local DC and CQL credentials to
-configs/cp4d_config/cpd_instance_details.sh (replacing this gateway's earlier
-block). Apps inside OpenShift need no gateway: use DATASTAX_HCD_DC_ENDPOINT
+configs/cp4d_config/managed-service-instances/datastax-hcd/<name>-instance_details.sh
+(rewritten on each run; an older block in cpd_instance_details.sh is removed). Apps inside OpenShift need no gateway: use DATASTAX_HCD_DC_ENDPOINT
 from 5_0. Safe to re-run; each run rebuilds the SCB from the gateway's
 current certificates.
 EOF
@@ -84,11 +89,11 @@ DC="${DC:-$(oc get cassandradatacenters.cassandra.datastax.com -n "${NS}" -o jso
 mc_resolve_datacenter "${NS}" "${DC}"
 NAME="${NAME:-${MC_DB_DC}-cql}"
 SCB="${SCB:-${_CP4D_REPO_ROOT}/configs/cp4d_config/scb/${NS}-${NAME}-scb.zip}"
-VARS_FILE="${_CP4D_REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
+VARS_FILE="${_CP4D_REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"   # legacy location, only cleaned up
 _BLOCK_BEGIN="# >>> cql-gateway ${NS}/${NAME}"
 _BLOCK_END="# <<< cql-gateway ${NS}/${NAME}"
 
-# Drop this gateway's block from cpd_instance_details.sh (rewritten in place to keep its permissions).
+# Drop this gateway's legacy block from cpd_instance_details.sh (rewritten in place to keep its permissions).
 _strip_details_block() {
     [[ -f "${VARS_FILE}" ]] || return 0
     local tmp="${VARS_FILE}.tmp.$$"
@@ -157,6 +162,8 @@ if ${REMOVE}; then
     oc delete cqlconnectivities.missioncontrol.datastax.com "${NAME}" -n "${NS}" --ignore-not-found
     rm -f "${SCB}"
     _strip_details_block
+    h_mark_instance_details datastax-hcd "${NAME}" deleted     # the env loader skips it from now on
+    h_vault_delete_instance_details datastax-hcd "${NAME}"
     # The mirrored service account is shared by every gateway in the project.
     if [[ -z "$(oc get cqlconnectivities.missioncontrol.datastax.com -n "${NS}" -o name)" ]]; then
         for _crb in $(oc get clusterrolebinding -l "${_SA_MARKER}" -o json \
@@ -213,23 +220,16 @@ GW_LOCAL_DC="${REPLY}"
 CQL_USER="$(mc_secret_value "${NS}" "${MC_DB_SUPERUSER_SECRET}" username)"
 CQL_PASS="$(mc_secret_value "${NS}" "${MC_DB_SUPERUSER_SECRET}" password)"
 
-q() { print -r -- "${(qq)1}"; }
 _strip_details_block
-mkdir -p "${VARS_FILE:h}"
-(umask 077; cat >> "${VARS_FILE}" <<EOF
-${_BLOCK_BEGIN}
-# Written by $(basename $0) on $(date -u +%Y-%m-%dT%H:%M:%SZ)
-#--- DataStax HyperConvergedDatabase (HCD) - CQL gateway (cluster ${MC_DB_CLUSTER}, datacenter ${MC_DB_DC_NAME})
-# From outside the cluster: the gateway's Secure Connect Bundle + username/password.
-export DATASTAX_HCD_SCB=$(q "${SCB}")
-export DATASTAX_HCD_CQL_GATEWAY_LOCAL_DC=$(q "${GW_LOCAL_DC}")
-export DATASTAX_HCD_CQL_METADATA_URL=$(q "https://${METADATA_HOST}:443/metadata")
-export DATASTAX_HCD_CQL_USER=$(q "${CQL_USER}")
-export DATASTAX_HCD_CQL_PASSWORD=$(q "${CQL_PASS}")
-${_BLOCK_END}
-EOF
-)
-mc_info "CQL gateway details written to ${VARS_FILE##*/}"
+# Cluster ${MC_DB_CLUSTER}, datacenter ${MC_DB_DC_NAME}. From outside the cluster: the gateway's
+# Secure Connect Bundle + username/password.
+h_write_instance_details datastax-hcd "${NAME}" "${NS}" \
+    "DATASTAX_HCD_SCB=${SCB}" \
+    "DATASTAX_HCD_CQL_GATEWAY_LOCAL_DC=${GW_LOCAL_DC}" \
+    "DATASTAX_HCD_CQL_METADATA_URL=https://${METADATA_HOST}:443/metadata" \
+    "DATASTAX_HCD_CQL_USER=${CQL_USER}" \
+    "DATASTAX_HCD_CQL_PASSWORD=${CQL_PASS}"
+mc_info "CQL gateway details written to ${REPLY#${_CP4D_REPO_ROOT}/}"
 mc_cql_gateway_usage
 cat <<EOF
 The gateway presents its own datacenter '${GW_LOCAL_DC}'; inside OpenShift use

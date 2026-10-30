@@ -15,6 +15,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
+# Credentials: saved to configs/cp4d_config/managed-service-instances/<type>/<instance>-instance_details.sh
+# and, while this is true, also as a secret in the Software Hub internal vault, shared with
+# SERVICE_INSTANCE_VAULT_MEMBERS (default cpadmin). Default: SERVICE_INSTANCE_VAULT_STORE from cpd_vars.sh, else true.
+STORE_CREDENTIALS_IN_VAULT="${SERVICE_INSTANCE_VAULT_STORE:-true}"
+
 # ---
 
 for var in OC_LOGIN PREP_OPENSEARCH; do
@@ -319,9 +324,10 @@ else
     done
 fi
 
-# --- write OpenSearch credentials to cpd_instance_details.sh ---
-REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
+# --- write OpenSearch credentials to the instance's details file ---
+# configs/cp4d_config/managed-service-instances/opensearch/<cluster>-instance_details.sh
+# (sourced by every later script through env_bootstrap.sh; no longer cpd_instance_details.sh).
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 
 
 if [[ ${#SERVICE_IDS[@]} -gt 0 ]]; then
@@ -355,26 +361,17 @@ if [[ ${#SERVICE_IDS[@]} -gt 0 ]]; then
         echo "[WARN] Could not retrieve CP4D admin credentials from secret ${_CPD_OSEARCH_ADMIN_SECRET}. CPD_OSEARCH_ADMIN_* vars will be empty."
     fi
 
-    OSEARCH_BLOCK="
-# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-export OSEARCH_URL=\"${OSEARCH_URL}\"
-export OSEARCH_DASHBOARDS_URL=\"${OSEARCH_DASHBOARDS_URL}\"
-export OSEARCH_USERNAME=\"${OSEARCH_USERNAME}\"
-export OSEARCH_PASSWORD=\"${OSEARCH_PASSWORD}\"
-export OSEARCH_ADMIN_USERNAME=\"${OSEARCH_ADMIN_USERNAME}\"
-export OSEARCH_ADMIN_PASSWORD=\"${OSEARCH_ADMIN_PASSWORD}\"
-# CP4D IAM credentials - use these for requests over OSEARCH_URL / OSEARCH_DASHBOARDS_URL
-export CPD_OSEARCH_ADMIN_USER=\"${CPD_OSEARCH_ADMIN_USER}\"
-export CPD_OSEARCH_ADMIN_PASS=\"${CPD_OSEARCH_ADMIN_PASS}\""
-
-    if [[ -f "${VARS_FILE}" ]]; then
-        echo "${OSEARCH_BLOCK}" >> "${VARS_FILE}"
-        echo "[INFO] OpenSearch credentials appended to ${VARS_FILE##*/}"
-    else
-        mkdir -p "$(dirname "${VARS_FILE}")"
-        echo "${OSEARCH_BLOCK}" > "${VARS_FILE}"
-        echo "[INFO] OpenSearch credentials written to ${VARS_FILE##*/}"
-    fi
+    h_write_instance_details opensearch "${_PRIMARY_CLUSTER}" "${PROJECT_CPD_INST_OPERANDS}" \
+        "OSEARCH_URL=${OSEARCH_URL}" \
+        "OSEARCH_DASHBOARDS_URL=${OSEARCH_DASHBOARDS_URL}" \
+        "OSEARCH_USERNAME=${OSEARCH_USERNAME}" \
+        "OSEARCH_PASSWORD=${OSEARCH_PASSWORD}" \
+        "OSEARCH_ADMIN_USERNAME=${OSEARCH_ADMIN_USERNAME}" \
+        "OSEARCH_ADMIN_PASSWORD=${OSEARCH_ADMIN_PASSWORD}" \
+        "CPD_OSEARCH_ADMIN_USER=${CPD_OSEARCH_ADMIN_USER}" \
+        "CPD_OSEARCH_ADMIN_PASS=${CPD_OSEARCH_ADMIN_PASS}"
+    echo "[INFO] OpenSearch credentials written to ${REPLY#${_CP4D_REPO_ROOT}/}"
+    echo "       (CPD_OSEARCH_ADMIN_* are the CP4D IAM credentials for requests over OSEARCH_URL / OSEARCH_DASHBOARDS_URL)"
 else
-    echo "[WARN] No OpenSearch instances found - skipping credential write to ${VARS_FILE##*/}."
+    echo "[WARN] No OpenSearch instances found - skipping the credential write."
 fi

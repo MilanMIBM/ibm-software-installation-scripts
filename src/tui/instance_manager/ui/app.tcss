@@ -1,0 +1,61 @@
+/* instance-manager layout. Dot colours = $dot-*, storage kinds = $kind-* (InstanceManagerApp.get_css_variables). */
+
+Screen {
+    layout: vertical;
+}
+
+#status {
+    height: 1;
+    padding: 0 1;
+}
+#status .tag {
+    width: auto;
+    margin-right: 2;
+    color: $text-muted;
+}
+#status #profile-tag.-ok {
+    color: $success;
+}
+#status #profile-tag.-bad {
+    color: $error;
+    text-style: bold;
+}
+#status #auto-tag.-on {
+    color: $accent;
+}
+#status GlowDot {
+    margin-left: 1;
+}
+#status .count {
+    width: auto;
+    margin: 0 1 0 0;
+}
+#status #updated {
+    width: 1fr;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+#main {
+    height: 1fr;
+}
+#catalog {
+    width: 26;
+    border: round $panel-lighten-2;
+    border-title-color: $text-muted;
+}
+#instances {
+    width: 1fr;
+    border: round $panel-lighten-2;
+    border-title-color: $text-muted;
+}
+#detail {
+    width: 46%;
+}
+
+#events {
+    height: 6;
+    border: round $panel-lighten-2;
+    border-title-color: $text-muted;
+    padding: 0 1;
+}

@@ -13,8 +13,8 @@ from textual.widgets import Label, ProgressBar, Static
 
 from ..display import DRow
 from ..model import State
-from .glow_dot import GlowDot
-from .util import reconcile, set_display, set_text
+from ...common.glow_dot import GlowDot
+from ...common.ui_util import reconcile, set_display, set_text
 
 
 class RowFocused(Message):

@@ -54,6 +54,40 @@ cf_route_url() {   # <namespace> <route>
     return 0
 }
 
+# How an HTTP route answers a request WITHOUT credentials, as a short label.
+# This probes the route itself rather than reading config, so it reports what
+# is actually protected - including components that have no auth configured at
+# all. The path per component is one that returns data when open, because some
+# answer "/" with a redirect or a 404 whatever their auth.
+cf_route_protection() {   # <namespace> <route>
+    local host probe_path out code redirect
+    host="$(oc get route "$2" -n "$1" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+    [[ -z "${host}" ]] && return 0
+    case "$2" in
+        schema-registry) probe_path="/subjects" ;;
+        connect)         probe_path="/connectors" ;;
+        ksqldb-server)   probe_path="/info" ;;
+        rest-proxy)      probe_path="/v3/clusters" ;;
+        mds)             probe_path="/security/1.0/authenticate" ;;
+        *)               probe_path="/" ;;
+    esac
+    out="$(curl -sk -o /dev/null --max-time 8 -w '%{http_code} %{redirect_url}' "https://${host}${probe_path}" 2>/dev/null || true)"
+    code="${out%% *}"
+    redirect="${out#* }"
+    case "${code}" in
+        401|403) echo "protected - credentials required (HTTP ${code} on ${probe_path})" ;;
+        3??)     if [[ "${redirect}" == *oauth* ]]; then
+                     echo "protected - OpenShift login (oauth-proxy)"
+                 else
+                     echo "unverified - HTTP ${code} redirect on ${probe_path}"
+                 fi ;;
+        2??)     echo "OPEN - answered ${probe_path} without credentials" ;;
+        ""|000)  echo "unknown - route not reachable from this machine" ;;
+        *)       echo "unverified - HTTP ${code} on ${probe_path}" ;;
+    esac
+    return 0
+}
+
 # Runs the status script after a change, unless <run> is false. A non-zero
 # status means a component is not ready yet: information, not a failure.
 cf_closing_status() {   # <run: true|false> <status script>

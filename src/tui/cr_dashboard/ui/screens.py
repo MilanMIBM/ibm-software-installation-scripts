@@ -12,7 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, Log, Static
 
 from ..model import State
-from .glow_dot import GlowDot
+from ...common.glow_dot import GlowDot
 
 LEGEND = {
     State.HEALTHY: ("healthy", "Completed, every owned workload ready. Stays green after the install until something breaks."),

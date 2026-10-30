@@ -75,6 +75,88 @@ h_sha256() {   # <file>
 }
 
 # =============================================================================
+# Service-instance details (one file per instance)
+# =============================================================================
+# ${CONFIG_DIR}/managed-service-instances/<type>/<instance>-instance_details.sh
+# Written by the service-instance scripts and by the instance manager TUI
+# (src/tui/instance_manager/ops/credentials.py writes the same format), so both
+# paths leave identical files; source_env_setup.sh sources every one of them.
+# Directories 0700, files 0600, rewritten whole on each run (no appending).
+# Never written into cpd_instance_details.sh (that file keeps platform values).
+h_instance_details_file() {   # <type> <instance>  -> REPLY = path
+    [[ -n "${CONFIG_DIR:-}" ]] || { h_error "CONFIG_DIR is not set (source env_bootstrap.sh first)"; return 1; }
+    REPLY="${CONFIG_DIR}/managed-service-instances/${1//[^A-Za-z0-9_.-]/_}/${2//[^A-Za-z0-9_.-]/_}-instance_details.sh"
+}
+
+# Variable prefix for instance values that have no established name of their own (TUI-made
+# instances, Db2): <TYPE>_<INSTANCE>_, so sourcing many instance files never clobbers a shared
+# name or a script input (e.g. DB2_PASSWORD). Same rule as ops/credentials.py var_prefix().
+h_instance_var_prefix() {   # <type> <instance>  -> REPLY, e.g. DB2OLTP_DB2OLTP_1234567
+    local v="${1}_${2}"
+    REPLY="${${v//[^A-Za-z0-9]/_}:u}"
+}
+
+h_write_instance_details() {   # <type> <instance> <namespace> KEY=VALUE...  -> REPLY = path
+    local type="$1" inst="$2" ns="$3" kv f tmp server
+    shift 3
+    h_instance_details_file "${type}" "${inst}" || return 1
+    f="${REPLY}"
+    server="$(oc whoami --show-server 2>/dev/null || true)"
+    (umask 077; mkdir -p "${f:h}")
+    chmod 700 "${f:h:h}" "${f:h}"
+    tmp="${f}.tmp.$$"
+    (
+        umask 077
+        print -r -- "# ${type} instance ${inst} in ${ns}, cluster ${server:-?}, written by ${ZSH_ARGZERO:t} on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        for kv in "$@"; do
+            [[ "${kv}" == *=* ]] || continue
+            print -r -- "export ${kv%%=*}=${(qq)${kv#*=}}"
+        done
+    ) > "${tmp}"
+    chmod 600 "${tmp}"
+    mv -f "${tmp}" "${f}"
+    h_vault_store_instance_details "${f}"
+    REPLY="${f}"
+}
+
+# Also save the instance's credentials (every value of its details file) as a secret
+# '<type>-<instance>' in the Software Hub internal vault, shared with
+# SERVICE_INSTANCE_VAULT_MEMBERS (default cpadmin). On by default; off with
+# STORE_CREDENTIALS_IN_VAULT=false (the line at the top of each service-instance
+# script) or SERVICE_INSTANCE_VAULT_STORE=false (cpd_vars.sh / env). A vault
+# failure is a warning: the details file is saved either way.
+h_vault_enabled() {
+    h_is_true "${STORE_CREDENTIALS_IN_VAULT:-${SERVICE_INSTANCE_VAULT_STORE:-true}}"
+}
+
+_h_vault_python() {
+    [[ -n "${_CP4D_REPO_ROOT:-}" && -f "${_CP4D_REPO_ROOT}/src/helpers/instance_details_vault.py" ]] || return 1
+    REPLY="python3"
+    [[ -x "${_CP4D_REPO_ROOT}/.venv/bin/python" ]] && REPLY="${_CP4D_REPO_ROOT}/.venv/bin/python"
+}
+
+h_vault_store_instance_details() {   # <details file>
+    h_vault_enabled || { h_info "vault: not storing (STORE_CREDENTIALS_IN_VAULT / SERVICE_INSTANCE_VAULT_STORE is off)"; return 0; }
+    _h_vault_python || { h_warn "vault: src/helpers/instance_details_vault.py not found; not stored"; return 0; }
+    "${REPLY}" "${_CP4D_REPO_ROOT}/src/helpers/instance_details_vault.py" store "$1" \
+        || h_warn "vault: the credentials were not stored in the vault (still saved in ${1:t})"
+    return 0
+}
+
+h_vault_delete_instance_details() {   # <type> <instance>   (when the instance is removed)
+    h_vault_enabled || return 0
+    _h_vault_python || return 0
+    "${REPLY}" "${_CP4D_REPO_ROOT}/src/helpers/instance_details_vault.py" delete "$1" "$2" \
+        || h_warn "vault: could not delete the secret of $1/$2"
+    return 0
+}
+
+h_mark_instance_details() {   # <type> <instance> <text>   e.g. "deleted": the env loader then skips the file
+    h_instance_details_file "$1" "$2" || return 1
+    [[ -f "${REPLY}" ]] && print -r -- "# $3 $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${REPLY}"
+}
+
+# =============================================================================
 # Command-line helpers
 # =============================================================================
 # For "--opt value" parsing: exits when <value> is missing or is the next option.

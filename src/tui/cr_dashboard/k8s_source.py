@@ -7,111 +7,17 @@ trimmed objects into an in-memory Hub; quitting never waits on an open watch.
 
 from __future__ import annotations
 
-import json
 import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from kubernetes import client, config
-from kubernetes.watch.watch import iter_resp_lines
-
+from ..common.kube import Kube, KubeError
 from . import runner_events
 from .model import OperatorState
 
-WATCH_TIMEOUT = 25          # seconds per watch request (server side)
 RELIST_EVERY = 300          # full relist as a safety net
-
-
-class KubeError(Exception):
-    def __init__(self, status: int, msg: str):
-        super().__init__(f"HTTP {status}: {msg}")
-        self.status = status
-
-
-class Kube:
-    def __init__(self, context: str | None = None, kubeconfig: str | None = None):
-        config.load_kube_config(config_file=kubeconfig, context=context)
-        self.api = client.ApiClient()
-        self.host = self.api.configuration.host
-        try:
-            _, active = config.list_kube_config_contexts(config_file=kubeconfig)
-            self.context_user = ((active or {}).get("context") or {}).get("user", "")
-        except Exception:
-            self.context_user = ""
-
-    def _request(self, path: str, query: dict | None = None, timeout=None):
-        q = [(k, str(v).lower() if isinstance(v, bool) else str(v)) for k, v in (query or {}).items()
-             if v is not None]
-        method, url, headers, _body, _post = self.api.param_serialize(
-            "GET", path, query_params=q, header_params={"Accept": "application/json"},
-            auth_settings=["BearerToken"])
-        resp = self.api.call_api(method, url, header_params=headers, _request_timeout=timeout)
-        if resp.status >= 400:
-            resp.read()
-            try:
-                msg = json.loads(resp.data).get("message", "")
-            except Exception:
-                msg = (resp.data or b"")[:200].decode(errors="replace")
-            raise KubeError(resp.status, msg)
-        return resp
-
-    def get(self, path: str, timeout=(5, 60), **query) -> dict:
-        resp = self._request(path, query, timeout)
-        resp.read()
-        return json.loads(resp.data)
-
-    def get_text(self, path: str, timeout=(5, 60), **query) -> str:
-        resp = self._request(path, query, timeout)
-        resp.read()
-        return (resp.data or b"").decode(errors="replace")
-
-    def watch(self, path: str, resource_version: str, timeout: int = WATCH_TIMEOUT):
-        resp = self._request(path, {"watch": True, "resourceVersion": resource_version,
-                                    "timeoutSeconds": timeout, "allowWatchBookmarks": True},
-                             timeout=(5, timeout + 15))
-        try:
-            for line in iter_resp_lines(resp.response):
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-        finally:
-            resp.response.release_conn()
-
-    def whoami(self) -> str:
-        try:
-            return self.get("/apis/user.openshift.io/v1/users/~", timeout=(3, 10))["metadata"]["name"]
-        except Exception:
-            return self.context_user.split("/")[0] if self.context_user else "?"
-
-    def exec(self, namespace: str, pod: str, command: list[str], timeout: int = 15,
-             container: str | None = None) -> str:
-        from kubernetes.stream import stream
-        # stream() temporarily swaps the client's call_api for a WebSocket one; a dedicated client per
-        # exec keeps the informers' and log GETs on other threads off that swap
-        core = client.CoreV1Api(client.ApiClient(self.api.configuration))
-        kwargs = {"command": command, "stderr": True, "stdin": False, "stdout": True, "tty": False,
-                  "_preload_content": False}
-        if container:
-            kwargs["container"] = container
-        ws = stream(core.connect_get_namespaced_pod_exec, pod, namespace, **kwargs)
-        out, deadline = [], time.monotonic() + timeout
-        try:
-            while ws.is_open() and time.monotonic() < deadline:
-                ws.update(timeout=1)
-                if ws.peek_stdout():
-                    out.append(ws.read_stdout())
-            if ws.peek_stdout():
-                out.append(ws.read_stdout())
-        finally:
-            ws.close()
-        return "".join(out)
-
-    def logs(self, namespace: str, pod: str, tail: int = 300, container: str | None = None) -> str:
-        return self.get_text(f"/api/v1/namespaces/{namespace}/pods/{pod}/log", tailLines=tail,
-                             container=container)
 
 
 # ---------------------------------------------------------------------------

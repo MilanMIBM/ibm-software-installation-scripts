@@ -15,6 +15,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
+# Credentials: saved to configs/cp4d_config/managed-service-instances/<type>/<instance>-instance_details.sh
+# and, while this is true, also as a secret in the Software Hub internal vault, shared with
+# SERVICE_INSTANCE_VAULT_MEMBERS (default cpadmin). Default: SERVICE_INSTANCE_VAULT_STORE from cpd_vars.sh, else true.
+STORE_CREDENTIALS_IN_VAULT="${SERVICE_INSTANCE_VAULT_STORE:-true}"
+
 # ---
 
 for var in CPDM_OC_LOGIN PROJECT_CPD_INST_OPERANDS; do
@@ -28,7 +33,7 @@ eval "${CPDM_OC_LOGIN}"
 
 # ---
 # Expose the Informix Data Management Console (DMC) monitor service via an OCP passthrough route
-# and extract credentials into cpd_instance_details.sh.
+# and extract credentials into configs/cp4d_config/managed-service-instances/informix/<instance>-instance_details.sh.
 # Note: this bypasses CP4D's auth layer - DMC uses its own local credentials (not CP4D SSO).
 
 echo "[INFO] Discovering Informix monitor service in namespace ${PROJECT_CPD_INST_OPERANDS}..."
@@ -144,36 +149,23 @@ if [[ "${RETRIEVE_ALL_INFORMIX_PORTS}" == true ]]; then
 fi
 
 # ---
-# Write credentials to cpd_instance_details.sh
+# Write the credentials to this instance's details file:
+# configs/cp4d_config/managed-service-instances/informix/<instance>-instance_details.sh
+# (sourced by every later script through env_bootstrap.sh; no longer cpd_instance_details.sh).
 
-REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
-
-INFORMIX_BLOCK="
-# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-#--- Informix Data Management Console (DMC) - direct passthrough route (no CP4D SSO)
-export INFORMIX_INSTANCE=\"${INFORMIX_INSTANCE}\"
-export INFORMIX_DMC_URL=\"${INFORMIX_DMC_URL}\"
-export INFORMIX_DMC_USERNAME=\"admin\"
-export INFORMIX_DMC_PASSWORD=\"${INFORMIX_DMC_ADMINPWD}\"
-#--- Informix app-level DB user
-export INFORMIX_APP_USERNAME=\"${INFORMIX_APP_USER}\"
-export INFORMIX_APP_PASSWORD=\"${INFORMIX_APP_PASSWORD}\"
-#--- Informix connection host + ports (Connection Manager)
-export INFORMIX_HOST_CM=\"${INFORMIX_HOST_CM}\"
-export INFORMIX_PORT_CM_SQLI=\"${INFORMIX_PORT_CM_SQLI}\"
-export INFORMIX_PORT_CM_DRDA=\"${INFORMIX_PORT_CM_DRDA}\"
-#--- Informix connection host + ports (Wire Listener)
-export INFORMIX_HOST_WL=\"${INFORMIX_HOST_WL}\"
-export INFORMIX_PORT_WL_REST=\"${INFORMIX_PORT_WL_REST}\"
-export INFORMIX_PORT_WL_MONGO=\"${INFORMIX_PORT_WL_MONGO}\"
-export INFORMIX_PORT_WL_MQTT=\"${INFORMIX_PORT_WL_MQTT}\""
-
-if [[ -f "${VARS_FILE}" ]]; then
-    echo "${INFORMIX_BLOCK}" >> "${VARS_FILE}"
-    echo "[INFO] Informix DMC credentials appended to ${VARS_FILE##*/}"
-else
-    mkdir -p "$(dirname "${VARS_FILE}")"
-    echo "${INFORMIX_BLOCK}" > "${VARS_FILE}"
-    echo "[INFO] Informix DMC credentials written to ${VARS_FILE##*/}"
-fi
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+h_write_instance_details informix "${INFORMIX_INSTANCE}" "${PROJECT_CPD_INST_OPERANDS}" \
+    "INFORMIX_INSTANCE=${INFORMIX_INSTANCE}" \
+    "INFORMIX_DMC_URL=${INFORMIX_DMC_URL}" \
+    "INFORMIX_DMC_USERNAME=admin" \
+    "INFORMIX_DMC_PASSWORD=${INFORMIX_DMC_ADMINPWD}" \
+    "INFORMIX_APP_USERNAME=${INFORMIX_APP_USER}" \
+    "INFORMIX_APP_PASSWORD=${INFORMIX_APP_PASSWORD}" \
+    "INFORMIX_HOST_CM=${INFORMIX_HOST_CM}" \
+    "INFORMIX_PORT_CM_SQLI=${INFORMIX_PORT_CM_SQLI}" \
+    "INFORMIX_PORT_CM_DRDA=${INFORMIX_PORT_CM_DRDA}" \
+    "INFORMIX_HOST_WL=${INFORMIX_HOST_WL}" \
+    "INFORMIX_PORT_WL_REST=${INFORMIX_PORT_WL_REST}" \
+    "INFORMIX_PORT_WL_MONGO=${INFORMIX_PORT_WL_MONGO}" \
+    "INFORMIX_PORT_WL_MQTT=${INFORMIX_PORT_WL_MQTT}"
+echo "[INFO] Informix DMC credentials written to ${REPLY#${_CP4D_REPO_ROOT}/}"

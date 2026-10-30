@@ -145,10 +145,14 @@ echo ""
 echo "Endpoints:"
 echo "  in-cluster bootstrap: broker:${CONFLUENT_BROKER_INTERNAL_PORT}"
 
-# Basic-auth state for the web UIs.
+# Web UI auth state, read from the live secrets. The -oauth secret is checked
+# first: basic mode deletes it, but openshift mode leaves an old basic secret.
 : "${CONFLUENT_AUTH_SECRET:=confluent-auth}"
 _auth_user="$(oc get secret "${CONFLUENT_AUTH_SECRET}" -n "${NS}" -o jsonpath='{.data.username}' 2>/dev/null | base64 --decode || true)"
-if [[ -n "${_auth_user}" ]]; then
+if oc get secret "${CONFLUENT_AUTH_SECRET}-oauth" -n "${NS}" &>/dev/null; then
+    echo "  web UI auth: openshift (Control Center behind cluster login, no shared password)"
+    echo "    grant access: oc policy add-role-to-user view <user> -n ${NS}"
+elif [[ -n "${_auth_user}" ]]; then
     echo "  web UI auth: basic, user '${_auth_user}'"
     echo "    password: oc get secret ${CONFLUENT_AUTH_SECRET} -n ${NS} -o jsonpath='{.data.password}' | base64 --decode"
 else
