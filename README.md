@@ -188,6 +188,8 @@ Scripts in `src/utilities/redhat_openshift_utils/` and `src/utilities/softwarehu
 3. `generate_service_id_cpd_apikeys.sh` - a fresh Software Hub API key per service ID (this revokes any previous key).
 4. `store_cpd_apikeys_in_vault.sh` - stores those API keys (and optionally username/password) as secrets in the Software Hub internal vault; safe to re-run.
 
+`set_dynamic_user_group.sh` is the live alternative to `grant_softwarehub_admin_to_ocp_admins.sh`. It creates a Software Hub *dynamic* user group whose membership is re-evaluated at every login. The default creates `tzadmin`: users from the OpenShift identity provider who hold `cluster-admin` get Administrator. Flags select another IdP/realm (`--idp`, `--ocp-idp`), another permission (`--cluster-role`, `--namespace-role`, `--ocp-group`, `--rule`) and other roles (`--role`). It deploys a small OpenShift-RBAC attribute provider in the instance namespace for this. `--check-user=<name>` shows how a user would be evaluated, `--status` lists the provider and dynamic groups, and `--uninstall` removes the provider.
+
 Pull secrets: `set_default_pull_secret.sh` and `set_namespace_pull_secret.sh`. Software Hub checks: `get_instance_addon_list.sh` and `wxo-prereq-check.sh`.
 
 ---
