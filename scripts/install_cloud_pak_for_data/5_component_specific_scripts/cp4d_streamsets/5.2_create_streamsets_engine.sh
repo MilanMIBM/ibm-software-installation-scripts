@@ -407,6 +407,32 @@ if [[ "$(oc get pvc "${STAGELIBS_PVC}" -n "${NAMESPACE}" \
             claimName: ${STAGELIBS_PVC}
             readOnly: true"
 else
+  # Without the ImageVolume feature gate (off on OpenShift 4.19 and earlier) the
+  # API server silently drops an image volume, and the engines would start with
+  # only the image's 3 built-in libraries. A server-side dry run shows whether the
+  # volume survives.
+  _probe="$(oc create -n "${NAMESPACE}" --dry-run=server -o jsonpath='{.spec.volumes[0].image.reference}' -f - 2>/dev/null <<EOF || true
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sset-imagevolume-probe
+spec:
+  containers:
+    - name: probe
+      image: ${IMAGE}
+  volumes:
+    - name: libs
+      image:
+        reference: ${LIBS_IMAGE}
+EOF
+)"
+  if [[ "${_probe}" != "${LIBS_IMAGE}" ]]; then
+    echo "[ERROR] The stage libraries are not cached in PVC ${STAGELIBS_PVC}, and this cluster cannot mount" >&2
+    echo "        the libs image directly (no ImageVolume support). Run 5.1_cache_streamsets_stage_libs.sh" >&2
+    echo "        --image-tag ${IMAGE_TAG} first, then re-run this script." >&2
+    exit 1
+  fi
+  unset _probe
   echo "[INFO] Stage libs src : ${LIBS_IMAGE}, pulled by each node (5.1_cache_streamsets_stage_libs.sh caches it once)"
   STAGELIBS_VOLUME_YAML="image:
             reference: ${LIBS_IMAGE}
@@ -493,6 +519,12 @@ spec:
           args:
             - |
               set -e
+              # Empty when the source volume was dropped or the cache is empty:
+              # fail rather than start an engine with only the built-in libraries.
+              if ! ls -d /stagelibs/streamsets-datacollector-*/streamsets-libs/* >/dev/null 2>&1; then
+                echo "ERROR: no stage libraries under /stagelibs (volume not mounted, or the cache is empty)"
+                exit 1
+              fi
               cp -R ${SDC_HOME}/streamsets-libs/* /target/
               for lib in /stagelibs/streamsets-datacollector-*/streamsets-libs/*; do
                 name="\$(basename "\$lib")"
