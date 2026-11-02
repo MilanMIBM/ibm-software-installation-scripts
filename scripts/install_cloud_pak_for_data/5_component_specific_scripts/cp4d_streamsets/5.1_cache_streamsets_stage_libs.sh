@@ -21,9 +21,9 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # so each node that runs an engine pulls the whole image from cp.icr.io before
 # the engine can start (minutes on a fresh node). With it, a Job pulls the image
 # once, copies it into the PVC sset-stagelibs-<tag>, and marks the PVC as ready.
-# 5_create_streamsets_engine.sh then mounts that PVC read-only instead, on any
+# 5.2_create_streamsets_engine.sh then mounts that PVC read-only instead, on any
 # node, for current and new engines alike. Re-run the engine script (or
-# 5_setup_streamsets.sh) afterwards to move existing engines onto it.
+# 5.x_full_streamsets_setup.sh) afterwards to move existing engines onto it.
 #
 # The engine image itself (${IMAGE_REPO}) is still pulled by each node. The cache
 # holds every library; each engine links only its environment's ones from it.
@@ -44,13 +44,13 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 NAMESPACE="cpd-streamsets-engine"
 IMAGE_REPO="cp.icr.io/cp/cpd/ibm-streamsets-datacollector"
 LIBS_REPO="cp.icr.io/cp/cpd/ibm-streamsets-datacollector-libs"
-# Set on the PVC once the copy succeeded; 5_create_streamsets_engine.sh only uses
+# Set on the PVC once the copy succeeded; 5.2_create_streamsets_engine.sh only uses
 # a PVC whose value matches the libs image it would otherwise mount.
 READY_ANNOTATION="streamsets/stagelibs-image"
 
 IMAGE_TAG="${SSET_IMAGE_TAG:-JDK17_7.7.0}"
-# Empty: the first CephFS / NFS / file storage class on the cluster.
-STORAGE_CLASS="${SSET_STAGELIBS_STORAGE_CLASS:-}"
+# Empty: STG_CLASS_FILE from cpd_vars.sh, else the first CephFS / NFS / file storage class.
+STORAGE_CLASS="${SSET_STAGELIBS_STORAGE_CLASS:-${STG_CLASS_FILE:-}}"
 SIZE="${SSET_STAGELIBS_SIZE:-20Gi}"
 COPY_TIMEOUT_MIN=60
 
@@ -65,7 +65,7 @@ done
 
 IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
 LIBS_IMAGE="${LIBS_REPO}:${IMAGE_TAG}"
-# Same name 5_create_streamsets_engine.sh looks for.
+# Same name 5.2_create_streamsets_engine.sh looks for.
 PVC_NAME="sset-stagelibs-$(print -r -- "${IMAGE_TAG:l}" | tr -c 'a-z0-9-' '-' | sed 's/-*$//')"
 JOB_NAME="${PVC_NAME}-copy"
 
@@ -100,7 +100,7 @@ if ! oc get namespace "${NAMESPACE}" &>/dev/null; then
   oc create namespace "${NAMESPACE}"
 fi
 
-# Same pull secrets as 5_create_streamsets_engine.sh.
+# Same pull secrets as 5.2_create_streamsets_engine.sh.
 PULL_SECRETS_YAML=""
 if oc get secret pull-secret -n openshift-config &>/dev/null; then
   oc create secret generic pull-secret -n "${NAMESPACE}" \
@@ -287,4 +287,4 @@ oc logs "job/${JOB_NAME}" -n "${NAMESPACE}" --tail=50 | grep -v '_KB=' | sed 's/
 oc annotate pvc "${PVC_NAME}" -n "${NAMESPACE}" --overwrite "${READY_ANNOTATION}=${LIBS_IMAGE}" >/dev/null
 
 echo "[INFO] Stage libraries cached in ${NAMESPACE}/${PVC_NAME}."
-echo "[INFO] Re-run 5_create_streamsets_engine.sh (or 5_setup_streamsets.sh) to move engines onto it."
+echo "[INFO] Re-run 5.2_create_streamsets_engine.sh (or 5.x_full_streamsets_setup.sh) to move engines onto it."

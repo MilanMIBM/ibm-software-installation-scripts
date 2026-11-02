@@ -17,11 +17,11 @@ source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 # -----------------------------------------------------------------------------
 # Creates a StreamSets (Data Collector) environment in a project, or reuses the
 # one that already has this name. The last lines printed are PROJECT_ID=<id>
-# and ENVIRONMENT_ID=<id>, for 5_create_streamsets_engine.sh.
+# and ENVIRONMENT_ID=<id>, for 5.2_create_streamsets_engine.sh.
 #
 # A new environment gets every stage library its engine version offers and 4
 # CPUs per engine. The UI caps CPUs at 2, which is too few: engines stop
-# answering within minutes of flow-editor use (see 5_create_streamsets_engine.sh).
+# answering within minutes of flow-editor use (see 5.2_create_streamsets_engine.sh).
 # An existing environment is left as it is.
 #
 #   - Auth : CPD_URL + CPD_USERNAME + CPD_APIKEY (cpd_instance_details.sh),
@@ -36,7 +36,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 #   --engine-version <id>     e.g. JDK17_7.7.0 (default: newest released version)
 #   --cpus <n>                CPUs per engine (default: 4)
 #   --description <text>      environment description
-#   --cpd-url / --username / --api-key   as in 5_create_streamsets_engine.sh
+#   --cpd-url / --username / --api-key   as in 5.2_create_streamsets_engine.sh
 #
 # Env vars (flags win): SSET_PROJECT, SSET_ENGINE_VERSION, SSET_ENV_CPUS
 # =============================================================================

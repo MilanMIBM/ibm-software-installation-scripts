@@ -13,7 +13,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 
 # =============================================================================
-# 5_create_streamsets_engine.sh
+# 5.2_create_streamsets_engine.sh
 # -----------------------------------------------------------------------------
 # Creates a StreamSets Data Collector engine for an existing StreamSets
 # environment (looked up by name) on Cloud Pak for Data.
@@ -33,7 +33,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 # docker or podman instead.
 #
 # Usage:
-#   ./5_create_streamsets_engine.sh <environment_name> [options]
+#   ./5.2_create_streamsets_engine.sh <environment_name> [options]
 #
 # Options:
 #   --project <name|id>     project that owns the environment (default: search all)

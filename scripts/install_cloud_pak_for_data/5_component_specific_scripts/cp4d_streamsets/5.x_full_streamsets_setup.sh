@@ -15,7 +15,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 HERE="${0:A:h}"
 
 # =============================================================================
-# 5_setup_streamsets.sh
+# 5.x_full_streamsets_setup.sh
 # -----------------------------------------------------------------------------
 # Sets up StreamSets on Cloud Pak for Data end to end, so a fresh cluster needs
 # no clicking in the UI:
@@ -29,14 +29,14 @@ HERE="${0:A:h}"
 #      CPD_USERNAME, with the service ID as editor and PROJECT_ADMINS as admins.
 #   3. StreamSets environment in it (5.0_create_streamsets_environment.sh), by
 #      CPD_USERNAME: every stage library, ENGINE_CPUS per engine.
-#   4. Engines on OpenShift (5_create_streamsets_engine.sh), registered as the
+#   4. Engines on OpenShift (5.2_create_streamsets_engine.sh), registered as the
 #      service ID so they don't depend on CPD_USERNAME's API key.
 #
 # Each step reuses what already exists, so re-running is safe. If the service
 # ID's key was rotated, re-running moves the engines onto the new key.
 #
 # Usage:
-#   ./5_setup_streamsets.sh [--project <name>] [--environment <name>] [--service-id <user>]
+#   ./5.x_full_streamsets_setup.sh [--project <name>] [--environment <name>] [--service-id <user>]
 #                           [--admin <user>]... [--engine-version <id>] [--cpus <n>] [--replicas <n>]
 #   --service-id ''   run the engines as CPD_USERNAME instead of a service ID
 #
@@ -46,7 +46,7 @@ HERE="${0:A:h}"
 
 # --- Edit these ---------------------------------------------------------------
 PROJECT_NAME="${STREAMSETS_PROJECT_NAME:-data_platform}"
-PROJECT_DESCRIPTION="${STREAMSETS_PROJECT_DESCRIPTION:-Shared data platform project. Created by 5_setup_streamsets.sh.}"
+PROJECT_DESCRIPTION="${STREAMSETS_PROJECT_DESCRIPTION:-Shared data platform project. Created by 5.x_full_streamsets_setup.sh.}"
 # Software Hub usernames added to the project as admins (CPD_USERNAME owns it already).
 PROJECT_ADMINS=(${=STREAMSETS_PROJECT_ADMINS:-})
 ENVIRONMENT_NAME="${STREAMSETS_ENVIRONMENT_NAME:-streamsets_environment}"
@@ -187,7 +187,7 @@ _engine_args=(--project-id "${PROJECT_ID}" --environment-id "${ENVIRONMENT_ID}")
 [[ -n "${ENGINE_REPLICAS}" ]] && _engine_args+=(--replicas "${ENGINE_REPLICAS}")
 # Passed as env vars rather than flags so the key doesn't show up in ps.
 SSET_API_USER="${ENGINE_USER}" SSET_API_KEY="${ENGINE_KEY}" SSET_BASE_URL="${CPD_BASE}" \
-  "${HERE}/5_create_streamsets_engine.sh" "${ENVIRONMENT_NAME}" "${_engine_args[@]}"
+  "${HERE}/5.2_create_streamsets_engine.sh" "${ENVIRONMENT_NAME}" "${_engine_args[@]}"
 unset _engine_args
 
 echo
