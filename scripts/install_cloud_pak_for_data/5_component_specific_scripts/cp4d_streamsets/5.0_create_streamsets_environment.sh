@@ -20,9 +20,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/cpd_api_helpers.sh"
 # and ENVIRONMENT_ID=<id>, for 5.2_create_streamsets_engine.sh.
 #
 # A new environment gets every stage library its engine version offers and 4
-# CPUs per engine. The UI caps CPUs at 2, which is too few: engines stop
-# answering within minutes of flow-editor use (see 5.2_create_streamsets_engine.sh).
-# An existing environment is left as it is.
+# CPUs per engine. An existing environment is left as it is.
 #
 #   - Auth : CPD_URL + CPD_USERNAME + CPD_APIKEY (cpd_instance_details.sh),
 #            unless --cpd-url / --username / --api-key are passed. That user

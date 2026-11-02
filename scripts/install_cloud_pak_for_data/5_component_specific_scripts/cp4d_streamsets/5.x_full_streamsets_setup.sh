@@ -20,11 +20,10 @@ HERE="${0:A:h}"
 # Sets up StreamSets on Cloud Pak for Data end to end, so a fresh cluster needs
 # no clicking in the UI:
 #
-#   1. Service ID the engines run as (SERVICE_ID). Created with
-#      set_service_id_user_proxies.sh and given an API key with
-#      generate_service_id_cpd_apikeys.sh, but only when
-#      configs/openshift_config/service_id_credentials.txt has no working key for
-#      it. A working key is never rotated, and other service IDs are not touched.
+#   1. Service ID the engines run as (SERVICE_ID), via
+#      5.3_ensure_streamsets_service_id.sh: created and given an API key only
+#      when configs/openshift_config/service_id_credentials.txt has no working
+#      key for it. A working key is never rotated, and other service IDs are not touched.
 #   2. Project (cp4d_general/5_create_cpd_project.sh), created and owned by
 #      CPD_USERNAME, with the service ID as editor and PROJECT_ADMINS as admins.
 #   3. StreamSets environment in it (5.0_create_streamsets_environment.sh), by
@@ -80,9 +79,6 @@ for var in CPD_URL CPD_USERNAME CPD_APIKEY; do
 done
 CPD_BASE="${CPD_URL%/}"
 
-UTILS="${REPO_ROOT}/src/utilities/redhat_openshift_utils"
-CREDENTIALS_FILE="${SERVICE_ID_CREDENTIALS_FILE:-${REPO_ROOT}/configs/openshift_config/service_id_credentials.txt}"
-
 step() { echo; echo "[INFO] ===== $* ====="; }
 # Runs a script with its output shown (on stderr), and prints the value of its last <key>=<value> line.
 run_and_capture() {
@@ -92,25 +88,6 @@ run_and_capture() {
   print -r -- "$(sed -n "s/^${_key}=//p" <<< "${_out}" | tail -n 1)"
 }
 
-# The API key saved under a user in the credentials file (the last one, if several).
-saved_key() {
-  [[ -f "${CREDENTIALS_FILE}" ]] || return 0
-  awk -v u="$1" '
-    /^apikey=/   { if (mine) key = substr($0, 8); next }
-    /^#/ || /^$/ { next }
-    /:/          { mine = (substr($0, 1, index($0, ":") - 1) == u) }
-    END          { if (key != "") print key }
-  ' "${CREDENTIALS_FILE}"
-}
-
-# 0: the key signs in. 1: Software Hub rejected it. 2: couldn't tell (Software Hub unreachable or erroring).
-key_works() {
-  cpdapi_authorize "${CPD_BASE}" "$1" api_key "$2"
-  [[ "${API_CODE}" == 200 ]] && return 0
-  [[ "${API_CODE}" == 4* ]] && return 1
-  return 2
-}
-
 # =============================================================================
 # 1. Service ID
 # =============================================================================
@@ -118,40 +95,9 @@ ENGINE_USER="${CPD_USERNAME}"
 ENGINE_KEY="${CPD_APIKEY}"
 if [[ -n "${SERVICE_ID}" ]]; then
   step "1/4 Service ID '${SERVICE_ID}'"
-  ENGINE_KEY="$(saved_key "${SERVICE_ID}")"
-  _status=1
-  [[ -n "${ENGINE_KEY}" ]] && { key_works "${SERVICE_ID}" "${ENGINE_KEY}" && _status=0 || _status=$?; }
-
-  if (( _status == 2 )); then
-    echo "[ERROR] Could not check ${SERVICE_ID}'s key: ${CPD_BASE} is not answering sign-ins. Nothing was changed." >&2
-    exit 1
-  elif (( _status == 0 )); then
-    echo "[INFO] Using the saved API key for ${SERVICE_ID} (it signs in; not rotated)."
-  else
-    if [[ -n "${ENGINE_KEY}" ]]; then
-      echo "[WARN] The saved API key for ${SERVICE_ID} no longer signs in; generating a new one."
-    fi
-    if ! grep -q "^${SERVICE_ID}:" "${CREDENTIALS_FILE}" 2>/dev/null; then
-      echo "[INFO] ${SERVICE_ID} has no saved password; creating it (or issuing a new password if it exists)."
-      "${UTILS}/set_service_id_user_proxies.sh" "${SERVICE_ID}"
-    fi
-    # Named, so only this service ID's key is (re)generated. --cpd-url, so a URL
-    # recorded in the file by a run against another cluster isn't used.
-    if ! "${UTILS}/generate_service_id_cpd_apikeys.sh" -q --cpd-url "${CPD_BASE}" "${SERVICE_ID}"; then
-      # Usually a 401: the saved password is from another cluster, or the user is
-      # missing here. This creates the user or issues a new password if so.
-      echo "[WARN] ${SERVICE_ID} could not sign in with its saved password; repairing the account and retrying."
-      "${UTILS}/set_service_id_user_proxies.sh" "${SERVICE_ID}"
-      "${UTILS}/generate_service_id_cpd_apikeys.sh" -q --cpd-url "${CPD_BASE}" "${SERVICE_ID}"
-    fi
-    ENGINE_KEY="$(saved_key "${SERVICE_ID}")"
-    if [[ -z "${ENGINE_KEY}" ]] || ! key_works "${SERVICE_ID}" "${ENGINE_KEY}"; then
-      echo "[ERROR] ${SERVICE_ID} still has no working API key in ${CREDENTIALS_FILE}." >&2
-      exit 1
-    fi
-  fi
+  ENGINE_KEY="$("${HERE}/5.3_ensure_streamsets_service_id.sh" "${SERVICE_ID}" --cpd-url "${CPD_BASE}" --print-key)"
+  [[ -n "${ENGINE_KEY}" ]] || { echo "[ERROR] The service ID script printed no API key." >&2; exit 1; }
   ENGINE_USER="${SERVICE_ID}"
-  unset _status
 else
   step "1/4 Service ID: none, engines run as ${CPD_USERNAME}"
 fi

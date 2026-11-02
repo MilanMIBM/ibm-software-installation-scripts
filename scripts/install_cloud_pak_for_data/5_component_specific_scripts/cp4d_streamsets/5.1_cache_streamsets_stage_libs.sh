@@ -17,20 +17,24 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 # Copies the StreamSets stage libraries image (several GB) once into a shared
 # ReadWriteMany volume in the engine namespace, so engines don't each pull it.
 #
-# Without this, every engine pod mounts ${LIBS_REPO}:<tag> as an image volume,
-# so each node that runs an engine pulls the whole image from cp.icr.io before
-# the engine can start (minutes on a fresh node). With it, a Job pulls the image
-# once, copies it into the PVC sset-stagelibs-<tag>, and marks the PVC as ready.
-# 5.2_create_streamsets_engine.sh then mounts that PVC read-only instead, on any
-# node, for current and new engines alike. Re-run the engine script (or
-# 5.x_full_streamsets_setup.sh) afterwards to move existing engines onto it.
+# A Job (running the cluster's own oc image, imagestream openshift/cli, for its
+# python3 and tar) streams each layer of ${LIBS_REPO}:<tag> from the registry
+# into the PVC sset-stagelibs-<tag>, then the PVC is marked as ready. 5.2_create_streamsets_engine.sh mounts that
+# PVC read-only, on any node, for current and new engines alike. Re-run the
+# engine script (or 5.x_full_streamsets_setup.sh) afterwards to move existing
+# engines onto it.
+#
+# Required on clusters without the ImageVolume feature gate (OpenShift 4.19 and
+# earlier): there the API server silently drops image volumes, so engines have
+# no other way to get the libraries. Where image volumes work, engines can mount
+# the libs image directly instead, but then every node running an engine pulls
+# the whole image (several GB) before it can start.
 #
 # The engine image itself (${IMAGE_REPO}) is still pulled by each node. The cache
 # holds every library; each engine links only its environment's ones from it.
 #
-# Progress is shown on one status line: elapsed time while the node pulls the
-# image (OpenShift reports no byte counts for a pull), then a progress bar for
-# the copy into the PVC.
+# Progress is shown on one status line: elapsed time while the pod starts, then
+# a progress bar of the download (compressed bytes) into the PVC.
 #
 # One PVC per tag. A PVC already marked ready for the tag is left alone, so
 # re-running is safe; a copy that failed halfway is redone.
@@ -140,7 +144,119 @@ fi
 
 oc delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait=true >/dev/null
 
-# The engine image provides the shell; the libs image is only data.
+# The libs image has no shell, and mounting it as an image volume needs the
+# ImageVolume feature gate (off on OpenShift 4.19 and earlier, where the API
+# server silently drops the volume and the copy finds nothing). 'oc image
+# extract' can't be used either: the image ships directories read-only, and a
+# non-root pod can't write the rest of a layer into them. So the Job streams each
+# layer blob from the registry into GNU tar (which keeps directories writable
+# until a layer is done), using the cluster's own oc image for python3 and tar.
+CLI_IMAGE="$(oc get istag cli:latest -n openshift -o jsonpath='{.image.dockerImageReference}' 2>/dev/null || true)"
+CLI_IMAGE="${CLI_IMAGE:-image-registry.openshift-image-registry.svc:5000/openshift/cli:latest}"
+# Registry auth for the download: the entitlement key if set, else the cluster pull secret.
+if [[ "${PULL_SECRETS_YAML}" == *ibm-entitlement-key* ]]; then
+  AUTH_SECRET="ibm-entitlement-key"
+else
+  AUTH_SECRET="pull-secret"
+fi
+ARCH="$(oc get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || true)"
+ARCH="${ARCH:-amd64}"
+
+oc create configmap "${JOB_NAME}-script" -n "${NAMESPACE}" --dry-run=client -o yaml \
+  --from-file=extract.py=/dev/stdin <<'PY' | oc apply -f - >/dev/null
+# Unpacks LIBS_IMAGE (registry/repo:tag) into /cache, layer by layer.
+# Prints TOTAL_KB / COPIED_KB (compressed bytes downloaded) for the progress bar.
+import base64, json, os, re, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+
+image, arch, dest = os.environ["LIBS_IMAGE"], os.environ.get("ARCH", "amd64"), "/cache"
+registry, rest = image.split("/", 1)
+repo, tag = rest.rsplit(":", 1)
+auths = json.load(open("/auth/config.json")).get("auths", {})
+entry = auths.get(registry) or auths.get("https://" + registry) or {}
+basic = entry.get("auth") or base64.b64encode(
+    ("%s:%s" % (entry.get("username", ""), entry.get("password", ""))).encode()).decode()
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+opener = urllib.request.build_opener(NoRedirect)
+token = None
+
+def get(path, accept=None):
+    """GET https://<registry>/v2/<path>, signing in on a Bearer challenge and
+    following redirects (to blob storage) without the registry credentials."""
+    global token
+    url = "https://%s/v2/%s" % (registry, path)
+    for _ in range(2):
+        req = urllib.request.Request(url)
+        if accept:
+            req.add_header("Accept", accept)
+        if token:
+            req.add_header("Authorization", "Bearer " + token)
+        try:
+            return opener.open(req, timeout=300)
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308):
+                return urllib.request.urlopen(e.headers["Location"], timeout=300)
+            if e.code != 401 or token:
+                raise
+            ch = dict(re.findall(r'(\w+)="([^"]*)"', e.headers.get("WWW-Authenticate", "")))
+            q = urllib.parse.urlencode({k: ch[k] for k in ("service", "scope") if k in ch})
+            treq = urllib.request.Request(ch["realm"] + "?" + q)
+            treq.add_header("Authorization", "Basic " + basic)
+            body = json.load(urllib.request.urlopen(treq, timeout=60))
+            token = body.get("token") or body.get("access_token")
+    raise SystemExit("could not sign in to " + registry)
+
+MANIFESTS = ",".join([
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+    "application/vnd.oci.image.manifest.v1+json"])
+manifest = json.load(get("%s/manifests/%s" % (repo, tag), MANIFESTS))
+if "manifests" in manifest:
+    pick = [m for m in manifest["manifests"]
+            if m.get("platform", {}).get("os") == "linux" and m.get("platform", {}).get("architecture") == arch]
+    if not pick:
+        raise SystemExit("no linux/%s image in %s" % (arch, image))
+    manifest = json.load(get("%s/manifests/%s" % (repo, pick[0]["digest"]), MANIFESTS))
+layers = manifest["layers"]
+total = sum(l["size"] for l in layers)
+print("TOTAL_KB=%d" % (total // 1024), flush=True)
+print("%d layers, %.2f GB compressed" % (len(layers), total / 1e9), flush=True)
+
+done, last = 0, 0.0
+for i, layer in enumerate(layers, 1):
+    if "zstd" in layer["mediaType"]:
+        raise SystemExit("zstd layers are not supported: " + layer["digest"])
+    flags = ["-xzf" if "gzip" in layer["mediaType"] else "-xf", "-", "-C", dest,
+             "--no-same-owner", "--no-same-permissions", "--delay-directory-restore"]
+    tar = subprocess.Popen(["tar"] + flags, stdin=subprocess.PIPE)
+    resp = get("%s/blobs/%s" % (repo, layer["digest"]))
+    while True:
+        chunk = resp.read(1 << 20)
+        if not chunk:
+            break
+        tar.stdin.write(chunk)
+        done += len(chunk)
+        if time.time() - last >= 5:
+            print("COPIED_KB=%d" % (done // 1024), flush=True)
+            last = time.time()
+    tar.stdin.close()
+    if tar.wait() != 0:
+        raise SystemExit("tar failed on layer %d (%s)" % (i, layer["digest"]))
+    # Whiteouts: '.wh.<name>' deletes <name> from earlier layers.
+    for root, dirs, files in os.walk(dest):
+        for f in files:
+            if f.startswith(".wh."):
+                if f != ".wh..wh..opq":
+                    subprocess.run(["rm", "-rf", os.path.join(root, f[4:])])
+                os.remove(os.path.join(root, f))
+    # Read-only directories would block the next layer.
+    subprocess.run(["find", dest, "-type", "d", "!", "-perm", "-u+w", "-exec", "chmod", "u+w", "{}", "+"])
+print("COPIED_KB=%d" % (done // 1024), flush=True)
+PY
+
 oc apply -f - <<EOF
 apiVersion: batch/v1
 kind: Job
@@ -155,40 +271,45 @@ spec:
       restartPolicy: Never
       imagePullSecrets:${PULL_SECRETS_YAML}
       volumes:
-        - name: libs-image
-          image:
-            reference: ${LIBS_IMAGE}
-            pullPolicy: IfNotPresent
+        - name: registry-auth
+          secret:
+            secretName: ${AUTH_SECRET}
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+        - name: script
+          configMap:
+            name: ${JOB_NAME}-script
         - name: cache
           persistentVolumeClaim:
             claimName: ${PVC_NAME}
       containers:
         - name: copy
-          image: ${IMAGE}
+          image: ${CLI_IMAGE}
           imagePullPolicy: IfNotPresent
+          env:
+            - name: HOME
+              value: /tmp
+            - name: LIBS_IMAGE
+              value: ${LIBS_IMAGE}
+            - name: ARCH
+              value: ${ARCH}
           command: ["sh", "-c"]
           args:
             - |
               set -e
-              # Apparent sizes, so the copy's total matches the source's on any filesystem.
-              size_kb() { s=\$(du -sk --apparent-size "\$1" 2>/dev/null) || s=\$(du -sk "\$1" 2>/dev/null) || true; echo "\${s%%[[:space:]]*}"; }
-              rm -rf /cache/streamsets-datacollector-*
-              # TOTAL_KB / COPIED_KB lines drive the progress bar on the workstation.
-              echo "TOTAL_KB=\$(size_kb /libs)"
-              cp -R /libs/. /cache/ &
-              cp_pid=\$!
-              while kill -0 "\$cp_pid" 2>/dev/null; do
-                echo "COPIED_KB=\$(size_kb /cache)"
-                sleep 5
-              done
-              wait "\$cp_pid"
-              echo "COPIED_KB=\$(size_kb /cache)"
-              n=\$(ls /cache/streamsets-datacollector-*/streamsets-libs | wc -l)
-              [ "\$n" -gt 0 ] || { echo "no stage libraries found in the image"; exit 1; }
-              echo "copied \$n stage libraries (\$(du -sh /cache | cut -f1))"
+              chmod -R u+w /cache 2>/dev/null || true
+              rm -rf /cache/* /cache/.[!.]* 2>/dev/null || true
+              python3 -u /script/extract.py
+              n=\$(ls -d /cache/streamsets-datacollector-*/streamsets-libs/* 2>/dev/null | wc -l)
+              [ "\$n" -gt 0 ] || { echo "no stage libraries found in the image:"; ls -la /cache; exit 1; }
+              echo "copied \$n stage libraries (\$(du -sh /cache | cut -f1)); volume: \$(df -h /cache | awk 'NR==2 { print \$3 " used, " \$4 " free" }')"
           volumeMounts:
-            - name: libs-image
-              mountPath: /libs
+            - name: registry-auth
+              mountPath: /auth
+              readOnly: true
+            - name: script
+              mountPath: /script
               readOnly: true
             - name: cache
               mountPath: /cache
@@ -215,15 +336,16 @@ status_line() {
 end_status_line() { [[ "${TTY}" == true ]] && echo || true; }
 fmt_time() { (( $1 >= 60 )) && print -r -- "$(( $1 / 60 ))m$(( $1 % 60 ))s" || print -r -- "$1s"; }
 progress_bar() {
-  local done_kb=$1 total_kb=$2 width=30 pct filled
+  local done_kb=$1 total_kb=$2 width=30 pct filled pad=""
   (( done_kb > total_kb )) && done_kb=${total_kb}
   pct=$(( done_kb * 100 / total_kb ))
   filled=$(( pct * width / 100 ))
-  printf '[%s%s] %3d%%  %.1f / %.1f GB' "${(l:filled::#:)}" "${(l:width-filled::.:)}" \
+  # Padding a named empty parameter: an unnamed one fails under set -u.
+  printf '[%s%s] %3d%%  %.1f / %.1f GB' "${(l:filled::#:)pad}" "${(l:width-filled::.:)pad}" \
     "${pct}" "$(( done_kb / 1048576.0 ))" "$(( total_kb / 1048576.0 ))"
 }
 
-echo "[INFO] Pulling ${LIBS_IMAGE} once and copying it into the PVC (up to ${COPY_TIMEOUT_MIN} min)..."
+echo "[INFO] Extracting ${LIBS_IMAGE} into the PVC (up to ${COPY_TIMEOUT_MIN} min)..."
 _t0=${SECONDS}
 _total_kb=""
 _warned=""
@@ -257,9 +379,13 @@ while true; do
     else
       status_line "[INFO] Measuring the stage libraries... ${_elapsed}"
     fi
+  elif [[ "${_phase}" == (Succeeded|Failed) ]]; then
+    # The pod is done; the Job's condition follows within seconds.
+    status_line "[INFO] Finishing... ${_elapsed}"
   else
-    # Pending: the node is pulling. Warn (once per message) about pull or mount
-    # errors; the Job keeps retrying them until COPY_TIMEOUT_MIN.
+    # Pending: the node is pulling the oc image or mounting the PVC. Warn (once
+    # per message) about pull or mount errors; the Job keeps retrying them until
+    # COPY_TIMEOUT_MIN.
     _event="$(oc get events -n "${NAMESPACE}" --field-selector "involvedObject.name=${_pod}" \
       --sort-by=.lastTimestamp -o jsonpath='{range .items[*]}{.reason}{"\t"}{.message}{"\n"}{end}' 2>/dev/null \
       | tail -n 1 || true)"
@@ -268,21 +394,14 @@ while true; do
       echo "[WARN] ${_event%%$'\t'*}: ${_event#*$'\t'}" >&2
       _warned="${_event}"
     fi
-    status_line "[INFO] Pulling the image on ${_node:-(not scheduled yet)}... ${_elapsed}"
+    status_line "[INFO] Starting the extract pod on ${_node:-(not scheduled yet)}... ${_elapsed}"
   fi
   sleep 3
 done
 end_status_line
 unset _status _elapsed _pod _node _phase _logs _copied_kb _event _warned
 
-# The pull's duration and image size, from the kubelet's 'Pulled' event.
-_pod="$(oc get pods -n "${NAMESPACE}" -l job-name="${JOB_NAME}" --sort-by=.metadata.creationTimestamp \
-  -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)"
-if [[ -n "${_pod}" ]]; then
-  oc get events -n "${NAMESPACE}" --field-selector "involvedObject.name=${_pod},reason=Pulled" \
-    -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' 2>/dev/null | grep -F "${LIBS_REPO}" | sed 's/^/[INFO] /' || true
-fi
-unset _pod _total_kb
+unset _total_kb
 oc logs "job/${JOB_NAME}" -n "${NAMESPACE}" --tail=50 | grep -v '_KB=' | sed 's/^/[INFO]   /' || true
 oc annotate pvc "${PVC_NAME}" -n "${NAMESPACE}" --overwrite "${READY_ANNOTATION}=${LIBS_IMAGE}" >/dev/null
 
