@@ -441,6 +441,44 @@ class Manager(unittest.TestCase):
         self.assertEqual((st.need_build, st.dropped), (False, []))
         self.assertFalse(any("add-on registry" in ln for ln in st.lines), st.lines)
 
+    def _with_instance_cm(self, data: dict):
+        orig = FakeKube.get
+
+        def get(kube, path, **kw):
+            out = orig(kube, path, **kw)
+            if path == "/api/v1/namespaces/ns/configmaps":
+                out["items"].append({"metadata": {"name": "ifx-1-aux-monitoring-cm", "resourceVersion": "7"},
+                                     "data": data})
+            return out
+        with patch.object(FakeKube, "get", get):
+            prov, c = self.cache()
+            with patch("tui.instance_manager.cache.probe.addon_rvs",
+                       return_value={"db-addon": "100", "ifx-1-aux-monitoring-cm": "7"}):
+                return c.check()
+
+    def test_an_instance_configmap_with_other_extensions_changes_nothing(self):
+        # Informix <instance>-aux-monitoring-cm: icpdata_addon=true + a zen_alert_monitor extension
+        self.cold()
+        st = self._with_instance_cm({"extensions": json.dumps(
+            [{"extension_point_id": "zen_alert_monitor", "extension_name": "zen_alert_monitor_ifx-1",
+              "details": {"image": "preprod.icr.io/cp/cpd/informix-eng@sha256:1"}}])})
+        self.assertEqual((st.need_build, st.dropped), (False, []))
+        self.assertFalse(any("add-on registry" in ln for ln in st.lines), st.lines)
+
+    def test_an_instance_configmap_with_add_ons_json_still_rebuilds(self):
+        # mdm's zen-addon-cm-mdm carries a serviceInstanceId label and real add-ons.json
+        self.cold()
+        st = self._with_instance_cm({"add-ons.json": json.dumps({"mdm": {"details": {}}})})
+        self.assertTrue(st.need_build)
+        self.assertIn("catalog", st.dropped)
+
+    def test_an_instance_configmap_with_a_provisioning_form_still_rebuilds(self):
+        self.cold()
+        st = self._with_instance_cm({"extensions": json.dumps(
+            [{"extension_point_id": "service_provisioning", "extension_name": "ifx-form", "details": {}}])})
+        self.assertTrue(st.need_build)
+        self.assertIn("add-on registry changed: ifx-1-aux-monitoring-cm", "\n".join(st.lines))
+
 
 class _Lines:
     def __init__(self, out):

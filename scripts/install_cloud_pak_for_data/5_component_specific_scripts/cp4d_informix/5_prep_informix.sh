@@ -60,3 +60,6 @@ patch_informix_fsgroup() {
 }
 
 patch_informix_fsgroup
+
+# --- Informix 10.2.2's operator writes preprod.icr.io image refs: send them to the registry cpd_vars.sh selects ---
+"${SCRIPT_DIR}/5_redirect_informix_preprod_images.sh" --no-restart

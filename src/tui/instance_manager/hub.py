@@ -30,6 +30,7 @@ from .subservices import TabState, tab_state
 from .timings import span
 
 POLL = 30.0
+FAST_POLL = 10.0                 # while an instance is in progress / scaling / stuck
 
 
 def instance_key(i: Instance) -> str:
@@ -217,7 +218,7 @@ class DataHub:
             with self.lock:
                 self.loading = False
             self._bump("catalog")
-        next_poll = time.monotonic() + self.poll
+        next_poll = time.monotonic() + self._interval()
         while not self._stop.is_set():
             wait = 0.2 if self._idle_pending() else max(0.1, min(1.0, next_poll - time.monotonic()))
             try:
@@ -227,11 +228,17 @@ class DataHub:
                     continue
                 if time.monotonic() >= next_poll:
                     self._poll_instances()
-                    next_poll = time.monotonic() + self.poll
+                    next_poll = time.monotonic() + self._interval()
                 continue
             if job is None:
                 return
             self._run_job(job)
+
+    def _interval(self) -> float:
+        """POLL, or FAST_POLL while an instance rolls out and no plan's watch loop is polling it."""
+        with self.lock:
+            busy = any(s in (State.PROGRESS, State.SCALING, State.STUCK) for s in self._states.values())
+        return min(self.poll, FAST_POLL) if busy and not self.running else self.poll
 
     # -- start-up ------------------------------------------------------------------------
     def _paint_from_cache(self) -> None:

@@ -20,7 +20,7 @@ from ..model import Field, FormModel, Instance, InstanceType, Mutability, Path, 
 from . import credentials, payload as pl
 from .plan import ActionPlan, Log, Step
 
-WATCH_EVERY = 15
+WATCH_EVERY = 10
 WATCH_LOG_EVERY = 60
 MERGE_PATCH = "application/merge-patch+json"
 _NUM = re.compile(r"^([0-9]+(?:\.[0-9]+)?)([A-Za-z]*)$")
@@ -106,11 +106,26 @@ def plan_create(provider, itype: InstanceType, fm: FormModel, values: dict[Path,
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     def wait(log: Log) -> None:
+        quiet_ok = 0
+
         def done(insts):
+            # healthy = the rollout says so (rollout.py: CR + labelled workloads + zen), never zen alone
+            nonlocal quiet_ok
             i = _find(insts, name)
             if i is None:
-                return False, "waiting for the instance to appear"
-            return i.state == State.HEALTHY, f"{i.state.word}: {i.reason}"
+                return False, "submitted: waiting for zen to list the instance"
+            ro = i.meta.get("rollout")
+            line = f"{i.state.word}: {i.reason}"
+            if ro is not None and ro.problems and i.state != State.FAILING:
+                p = ro.problems[0]
+                line += f" | {p.name}: {p.reason}" + (f" ({p.message[:120]})" if p.message else "")
+            if i.state != State.HEALTHY:
+                quiet_ok = 0
+                return False, line
+            if ro is not None and not ro.evidence:
+                quiet_ok += 1                  # zen says provisioned, nothing on the cluster to check yet
+                return quiet_ok >= 3, line + ("" if quiet_ok >= 3 else " (confirming)")
+            return True, line
         watch(provider, itype, done, 45 * 60, log, on_update)
 
     vmod = credentials.vault()

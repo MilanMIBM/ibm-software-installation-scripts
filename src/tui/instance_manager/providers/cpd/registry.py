@@ -8,6 +8,7 @@ that still doesn't parse becomes a notice, never a crash.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -97,6 +98,26 @@ def parse_addon_cms(cms: list[dict]) -> tuple[dict[str, AddonEntry], list[str]]:
             if prev is None or (entry.instance_capable and not prev.instance_capable):
                 entries[addon_type] = entry
     return entries, notices
+
+
+def registry_digest(data: dict) -> str | None:
+    """A hash of what discovery reads from one add-on configmap: the add-ons.json text and its
+    service_provisioning extensions. None when it holds neither: per-instance configmaps (Informix
+    <instance>-aux-monitoring-cm: zen_alert_monitor only) come and go without touching the catalog.
+    Keep in step with parse_addon_cms / the service_provisioning branch of parse_extensions."""
+    addons = data.get("add-ons.json") or ""
+    text = data.get("extensions") or ""
+    prov: object = []
+    if text:
+        try:
+            items = lenient_json(text)
+            prov = [e for e in items if isinstance(e, dict) and e.get("extension_point_id") == "service_provisioning"] \
+                if isinstance(items, list) else []
+        except json.JSONDecodeError:
+            prov = text                      # unreadable: any change to it counts
+    if not addons and not prov:
+        return None
+    return hashlib.sha256(json.dumps([addons, prov], sort_keys=True).encode()).hexdigest()[:16]
 
 
 def parse_extensions(cms: list[dict]) -> tuple[dict[str, dict], dict[str, dict], list[str]]:

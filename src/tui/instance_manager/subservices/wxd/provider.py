@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 from ....common.state import State
@@ -68,6 +69,65 @@ def component_values(scale: dict, comps: list[str]) -> dict[str, str]:
         if req.get("memory") is not None:
             out[f"{c}_memory"] = str(req["memory"])
     return out
+
+
+_UNIT_GB = {"": 1.0, "g": 1.0, "gi": 1.0, "m": 1 / 1024, "mi": 1 / 1024, "t": 1024.0, "ti": 1024.0}
+
+
+def gigabytes(q) -> float | None:
+    """'8G' / '16Gi' / '500Mi' / 4 -> GB (the API's memory fields are plain numbers)."""
+    m = re.match(r"^\s*([0-9.]+)\s*([A-Za-z]*)\s*$", str(q)) if q is not None else None
+    if not m or m.group(2).lower() not in _UNIT_GB:
+        return None
+    return float(m.group(1)) * _UNIT_GB[m.group(2).lower()]
+
+
+def cores(q) -> float | None:
+    s = str(q).strip() if q is not None else ""
+    try:
+        return float(s[:-1]) / 1000 if s.endswith("m") else float(s)
+    except ValueError:
+        return None
+
+
+def num(v: float) -> str:
+    return f"{v:g}"
+
+
+def api_component(key: str, description: str, kind: str, preset_keys: set[str]) -> str | None:
+    """The operator preset component an API sizing field belongs to, read from its description:
+    milvus qw_cpu "query worker cpu" -> milvus_querynode, dc_memory "data coordinator memory" ->
+    milvus_datacoord, proxy_cpu -> milvus_proxy, etcd_cpu -> etcd."""
+    words = description.lower().replace("coodinator", "coordinator").split()
+    if not words or not key.endswith(("_cpu", "_memory", "_replicas")):
+        return None
+    head = words[0]
+    if "worker" in words or "node" in words:
+        cand = f"{kind}_{head}node"
+    elif any(w.startswith("coord") for w in words):
+        cand = f"{kind}_{head}coord"
+    else:
+        cand = f"{kind}_{head}"
+    return next((c for c in (cand, head) if c in preset_keys), None)
+
+
+def api_preset_values(node: dict, what: str) -> str | None:
+    """A preset component -> the API's value: replicas, the request's cores, the request's GB."""
+    req = ((node.get("resources") or {}).get("requests") or {})
+    if what == "replicas":
+        return None if node.get("replicas") is None else str(node["replicas"])
+    v = cores(req.get("cpu")) if what == "cpu" else gigabytes(req.get("memory"))
+    return None if v is None else num(v)
+
+
+def sizes_in_text(text: str, known: set[str]) -> list[str]:
+    """Size names a description lists, when the schema has no enum (prestissimo size_config:
+    "CPD supported sizes are: custom, starter, small, ..."): the CPD sentence first, else every
+    known size the text names; only names the operator has presets for, in the text's order."""
+    m = re.search(r"CPD supported sizes are:([^.]*)", text or "", re.IGNORECASE)
+    part = m.group(1) if m else (text or "")
+    words = re.findall(r"[A-Za-z_]+", part)
+    return list(dict.fromkeys(w for w in words if w in known))
 
 
 def preset_values(scale: dict) -> dict[str, str]:
@@ -281,21 +341,57 @@ class WxdEngines(SubServiceProvider):
         size = next((f for f in fields.values() if f.role == Role.SIZE_PRESET), None)
         comps = [] if api_sizes else self.components(kind)
         presets = self.facts.presets() if self.facts else {}
+        # API sizing fields of their own (milvus qw_cpu, dw_memory, ...): each maps to an operator component
+        preset_keys = {c for p in presets.values() for c in p}
+        api_map: dict[str, tuple[str, str]] = {}
+        for p, f in fields.items():
+            c = api_component(p[-1], f.description or "", kind, preset_keys) if len(p) == 2 else None
+            if c:
+                what = p[-1].rsplit("_", 1)[1]
+                api_map[p[-1]] = (c, what)
+                # "dc_cpu" -> "Data coordinator CPU (cores)", from the description's own words
+                head = (f.description or "").split(",")[0].replace("coodinator", "coordinator").split()
+                words = [w for w in head if w.lower().rstrip("s") not in ("cpu", "memory", "replica")]
+                unit = {"cpu": "CPU (cores)", "memory": "memory (GB)", "replicas": "replicas"}[what]
+                if words:
+                    f.label = " ".join(words).capitalize() + f" {unit}"
+                f.description = (f.description + " - " if f.description else "") + \
+                    f"the size fills this from the operator's {c} request"
+        if size is not None and not size.enum and presets:
+            named = sizes_in_text(size.description or "", set(presets))
+            if named:
+                size.enum = named                       # the description's list, as a dropdown
         if size is not None and size.enum:
             size.presets = []
             for v in size.enum:
                 meta = component_values(presets[v], comps) if v in presets else {}
+                total_cpu = total_gb = 0.0
+                for key, (c, what) in api_map.items():
+                    node = presets.get(v, {}).get(c) or {}
+                    val = api_preset_values(node, what)
+                    if val is not None:
+                        meta[key] = val
+                for c in {c for c, _ in api_map.values()}:
+                    node = presets.get(v, {}).get(c) or {}
+                    n = int(node.get("replicas") or 1)
+                    req = (node.get("resources") or {}).get("requests") or {}
+                    total_cpu += n * (cores(req.get("cpu")) or 0)
+                    total_gb += n * (gigabytes(req.get("memory")) or 0)
                 for p in fields:                               # API quantities follow the preset too
                     seg = p[-2] if len(p) > 2 else ""
                     if p[-1] == "quantity" and f"{kind}_{seg}" in presets.get(v, {}):
                         meta[".".join(p[1:])] = str(presets[v][f"{kind}_{seg}"].get("replicas", ""))
                 worker = presets.get(v, {}).get(f"{kind}_worker") or {}
                 req = (worker.get("resources") or {}).get("requests") or {}
-                size.presets.append({"value": v, "label": v, "metadata": meta, "cpu": req.get("cpu"),
-                                     "memory": req.get("memory")})
+                cpu, mem = req.get("cpu"), req.get("memory")
+                if api_map and total_cpu:                     # no single worker: the whole service's requests
+                    cpu, mem = num(round(total_cpu, 2)), f"{num(round(total_gb, 1))} GB requested in total"
+                size.presets.append({"value": v, "label": v, "metadata": meta, "cpu": cpu, "memory": mem})
             size.description = (size.description + " - " if size.description else "") + \
                 "the starter template: choosing one fills in the sizes, which stay editable"
         start_name = str(size.default) if size and size.default is not None else "small"
+        if size is not None and size.default is None and start_name in map(str, size.enum or []):
+            size.default = start_name                         # the web console starts on a named size too
         start_meta = next((p["metadata"] for p in (size.presets or []) if p["value"] == start_name), {}) if size else {}
         for p, f in fields.items():                           # the default template fills the API sizes too
             if ".".join(p[1:]) in start_meta and not f.observed:
@@ -382,11 +478,17 @@ class WxdEngines(SubServiceProvider):
                       ) -> tuple[dict, dict[str, str], str, list[str]]:
         """(API request body, WxdEngine CR keys changed from the chosen template, the template, summary
         lines): what plan_create sends, also the inline form's live preview."""
-        body = body_from(fm.fields, values, pl.coerce, exclude_steps=(RESIZE_STEP,))
-        body["display_name"] = name
         size = next((f for f in fm.fields.values() if f.role == Role.SIZE_PRESET), None)
         chosen = str(values.get(size.path)) if size else ""
         preset = next((p["metadata"] for p in (size.presets or []) if p["value"] == chosen), {}) if size else {}
+        if size is not None and "custom" in map(str, size.enum or []) and chosen != "custom":
+            # a named size, like the web console: only the size is sent; its sizes apply server-side
+            bound = {k for p in size.presets or [] for k in p.get("metadata") or {}}
+            values = {p: v for p, v in values.items() if not (len(p) == 2 and p[-1] in bound
+                                                               and fm.fields.get(p) is not None
+                                                               and fm.fields[p].step != RESIZE_STEP)}
+        body = body_from(fm.fields, values, pl.coerce, exclude_steps=(RESIZE_STEP,))
+        body["display_name"] = name
         custom: dict[str, str] = {}
         lines: list[str] = []
         for f in fm.fields.values():

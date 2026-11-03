@@ -50,6 +50,7 @@ from ...common import tls
 from ...common.glow_dot import DOT_COLORS, GlowDot, as_content
 from ...common.pulse import PulseClock
 from ...common.state import State
+from ...common.splitter import Divider, LayoutLock
 from ...common.ui_util import reconcile, set_attr, set_display, set_text
 from ..hub import DataHub, instance_key
 from ..model import FormModel, Instance, InstanceType
@@ -93,7 +94,7 @@ def _short(text: str, n: int = 34) -> str:
     return text if len(text) <= n else text[:n - 1] + "…"
 
 
-class InstanceManagerApp(App):
+class InstanceManagerApp(LayoutLock, App):
     CSS_PATH = "app.tcss"
     TITLE = "instance-manager"
     ENABLE_COMMAND_PALETTE = False
@@ -112,6 +113,7 @@ class InstanceManagerApp(App):
         Binding("P", "profile", "profile"),
         Binding("question_mark", "legend", "legend"),
         Binding("l", "events", "events", show=False),
+        Binding("L", "toggle_layout_lock", "layout lock"),
         Binding("escape", "back", "back", show=False),
         Binding("1", "tab('tab-config')", show=False),
         Binding("2", "tab('tab-storage')", show=False),
@@ -171,6 +173,7 @@ class InstanceManagerApp(App):
             LegendStrip,
             PlanPanel,
             ProfileStrip,
+            RolloutView,
         )
         from .sub_view import SubDetail
         yield Header(show_clock=False)
@@ -185,7 +188,9 @@ class InstanceManagerApp(App):
         if self.classic:
             with Horizontal(id="main"):
                 yield VerticalScroll(id="catalog")
+                yield Divider("#catalog", "x", "before")
                 yield VerticalScroll(id="instances")
+                yield Divider("#detail", "x", "after")
                 yield Detail(id="detail")
         else:
             yield ProfileStrip(id="profile-strip")
@@ -199,8 +204,10 @@ class InstanceManagerApp(App):
                     with Horizontal(id="lists"):
                         with VerticalScroll(id="inst-panel"):
                             yield Button("+ New instance", id="new-inst", compact=True, classes="new-btn")
+                        yield Divider("#inst-panel", "x", "before", id="div-lists")
                         with VerticalScroll(id="sub-panel"):
                             yield Button("+ New", id="new-sub", compact=True, classes="new-btn")
+                yield Divider("#left", "x", "before")
                 with Vertical(id="right"):
                     with Vertical(id="work"):
                         yield Label("", id="crumb")
@@ -216,11 +223,14 @@ class InstanceManagerApp(App):
                                 yield Detail(id="detail", with_fields=True)
                             yield SubDetail(id="sub-detail")
                             yield PlanPanel(id="plan")
+                    yield Divider("#state", "y", "after", minimum=4)
                     with ContentSwitcher(id="state", initial="st-info"):
                         with VerticalScroll(id="st-info"):
                             yield Static("", id="st-text")
+                            yield RolloutView(id="st-rollout")
                         yield FormContext(id="ctx-form")
             yield LegendStrip(id="legend-strip")
+        yield Divider("#events", "y", "after", minimum=3)
         yield RichLog(id="events", max_lines=500, wrap=False, markup=False)
         yield Footer()
 
@@ -632,6 +642,13 @@ class InstanceManagerApp(App):
         show_list = bool(subs and subs.loaded and not subs.error and subs.kind_sel)
         left.set_class(show_list, "-sub")
         set_display(panel, show_list)
+        div = self.base.query_one("#div-lists")       # with no sub list there is nothing to divide
+        if not show_list:
+            if div.styles.inline.get_rule("display") != "none":
+                div.styles.display = "none"
+        elif div.styles.inline.has_rule("display"):
+            div.styles.inline.clear_rule("display")      # the layout lock decides again
+            div.refresh(layout=True)
         if not show_list:
             if self._sub_rows:
                 for r in self._sub_rows:
@@ -763,7 +780,7 @@ class InstanceManagerApp(App):
     def _draw_state(self) -> None:
         if self.classic:
             return
-        from .context import state_text
+        from .context import RolloutView, state_text
         cur = self._stack[-1]
         if cur.startswith(FORM_VIEWS):
             return                                       # the FormContext follows the form itself
@@ -771,6 +788,7 @@ class InstanceManagerApp(App):
             subs = self._subs
             text = state_text(subs.selected(), subs.itype(), plain=self.plain,
                               what=subs.kind_sel.replace("_", " ") if subs.kind_sel else "item")
+            rollout = None
         else:
             inst = self._selected()
             t = self.hub.type_by_key(inst.type_key) if inst else (
@@ -784,7 +802,9 @@ class InstanceManagerApp(App):
                     mism = list(dict.fromkeys(mism))
             text = state_text(inst, t, self.hub.tabs.get(instance_key(inst)) if inst else None, mism,
                               plain=self.plain)
+            rollout = inst.meta.get("rollout") if inst is not None else None
         set_text(self.base.query_one("#st-text", Static), text)
+        self.base.query_one("#st-rollout", RolloutView).show(rollout)
 
     def _draw_build(self) -> None:
         hub = self.hub
@@ -1341,7 +1361,7 @@ class InstanceManagerApp(App):
         """A terminal's reply to a start-up query (e.g. its colours, "rgb:1f1f/...") can arrive as typed
         keys: in the first seconds no key binding runs (they used to toggle the problems filter)."""
         if action != "quit" and time.monotonic() - getattr(self, "_mounted_at", 0.0) < STARTUP_KEY_GRACE:
-            return False
+            return None                    # disabled, still listed (dimmed) in the footer
         return super().check_action(action, parameters)
 
     def action_problems(self) -> None:
@@ -1349,7 +1369,9 @@ class InstanceManagerApp(App):
         self._redraw(force=True)
 
     def action_events(self) -> None:
-        self.base.query_one("#events").toggle_class("-collapsed")
+        events = self.base.query_one("#events")
+        events.styles.height = None                 # a dragged height gives way to collapse / expand
+        events.toggle_class("-collapsed")
 
     def action_tab(self, tab: str) -> None:
         tabs = self.base.query_one("#tabs", TabbedContent)

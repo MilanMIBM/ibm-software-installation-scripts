@@ -16,15 +16,25 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click
 from textual.message import Message
-from textual.widgets import Button, Checkbox, Input, Label, Select, Static
+from textual.widgets import Button, Input, Label, Select, Static
 
+from ...common.toggle import ToggleSetting
 from ...common.ui_util import set_text
 from ..discovery.observed import flatten
-from ..model import Field, FormModel, Instance, InstanceType, Path, Role, StorageClassInfo
+from ..model import (
+    Field,
+    FormModel,
+    Instance,
+    InstanceType,
+    Path,
+    Role,
+    StorageClassInfo,
+)
 from ..ops import payload as pl
 from .forms import FieldRow, FormLogic
 
 STEP_FOR_ROLE = {Role.STORAGE_CLASS: "storage", Role.SECRET: "security"}
+ADVANCED_STEP = "advanced_sizing"
 
 
 def step_of(f: Field) -> str:
@@ -47,6 +57,8 @@ class FormSpec:
     inst: Instance | None = None
     current: dict = field(default_factory=dict)  # edit: the instance's flattened spec
     offers_vault: bool = True
+    size: Path | None = None                    # the size-preset field (t-shirt size, scale_size, size_config)
+    advanced: set[Path] = field(default_factory=set)   # fields a size fills in: shown on "advanced settings"
 
     @property
     def title(self) -> str:
@@ -63,12 +75,38 @@ def _dependents(fields: list[Field]) -> dict[Path, list[Path]]:
     return deps
 
 
+def _same(a, b) -> bool:
+    """'2' == '2.0' == 2; anything else compares as text."""
+    try:
+        return float(str(a)) == float(str(b))
+    except ValueError:
+        return str(a) == str(b)
+
+
+def preset_bound(fields: list[Field]) -> tuple[Path | None, set[Path]]:
+    """The size-preset field and the fields its presets fill in (what the web console hides
+    behind a size picker: they become the form's advanced settings)."""
+    size = next((f for f in fields if f.role == Role.SIZE_PRESET and f.presets), None)
+    if size is None:
+        return None, set()
+    keys = {k for p in size.presets for k in (p.get("metadata") or {})}
+    return size.path, {f.path for f in fields if f is not size
+                       and (".".join(f.path[1:]) in keys or f.path[-1] in keys)}
+
+
 def create_spec(itype: InstanceType, fm: FormModel, sc: dict[str, StorageClassInfo],
                 offers_vault: bool = True) -> FormSpec:
     fields = sorted(pl.payload_fields(fm), key=lambda f: (f.order, f.path))
-    rows = [(step_of(f), f) for f in fields]
+    size, bound = preset_bound(fields)
+    if bound:
+        # the web console's layout: the basics, then the size with its advanced sizes right under it
+        size_f = next(f for f in fields if f.path == size)
+        fields = [f for f in fields if f.path not in bound and f is not size_f] + [size_f] + \
+            [f for f in fields if f.path in bound]
+    rows = [(ADVANCED_STEP if f.path in bound else step_of(f), f) for f in fields]
     return FormSpec("create", itype, fm, rows, pl.initial_values(fm, sc), _dependents(fields),
-                    list(dict.fromkeys(s for s, _ in rows)), offers_vault=offers_vault)
+                    list(dict.fromkeys(s for s, _ in rows)), offers_vault=offers_vault,
+                    size=size if bound else None, advanced=bound)
 
 
 def editable_fields(fm: FormModel, flat: dict) -> list[Field]:
@@ -128,7 +166,7 @@ class FormView(FormLogic, Vertical):
                  vault_default: bool | None = None, vault_label: str = "", **kw):
         super().__init__(**kw)
         self.spec, self.sc, self.owner = spec, sc, owner
-        self.existing = existing or (lambda: [])
+        self.existing = existing or (list)
         self.name_regex = name_regex
         self.vault_default, self.vault_label = vault_default, vault_label
         self.errors: list[str] = []
@@ -136,6 +174,9 @@ class FormView(FormLogic, Vertical):
         self._err: dict[Path | str, Label] = {}
         self._timer = None
         self._step_anchor: dict[str, Label] = {}
+        self._blocks: list[tuple[Label, list[Path]]] = []   # each step heading and the rows under it
+        self.show_advanced = False
+        self._keep_values: str | None = None     # a fine-tune switched the size to custom: don't refill
 
     # -- layout -----------------------------------------------------------------------------
     def _row(self, label: str, widget, hint: str = "") -> Horizontal:
@@ -163,18 +204,25 @@ class FormView(FormLogic, Vertical):
                     step = s
                     anchor = Label(step_title(s), classes="step")
                     self._step_anchor.setdefault(s, anchor)
+                    self._blocks.append((anchor, []))
                     yield anchor
+                self._blocks[-1][1].append(f.path)
                 yield FieldRow(f, spec.initial.get(f.path), self.sc)
                 self._err[f.path] = Label("", classes="ferr")
                 yield self._err[f.path]
+                if f.path == spec.size:
+                    n = len(spec.advanced)
+                    yield ToggleSetting(f"Show advanced settings ({n} sizing field{'s' if n != 1 else ''} the size "
+                                        "fills in; changing one switches the size to custom where offered)",
+                                        id="advanced", on_word="SHOW", off_word="HIDE")
             if not spec.rows:
                 yield Static("no payload fields were discovered for this type (see the Fields tab; D6 samples)"
                              if spec.mode == "create" else
                              "no editable scale/capacity fields were discovered for this instance", classes="fhint")
             if spec.mode == "create" and spec.offers_vault:
                 yield Label("Credentials", classes="step")
-                yield Checkbox(self.vault_label or "Also save the credentials in the Software Hub vault",
-                               value=bool(self.vault_default), id="vault")
+                yield ToggleSetting(self.vault_label or "Also save the credentials in the Software Hub vault",
+                                    value=bool(self.vault_default), id="vault")
             if spec.mode == "edit":
                 yield Static("aliases (copies of the same value elsewhere in the CR) change together; "
                              "the plan lists every one", classes="fhint")
@@ -185,6 +233,17 @@ class FormView(FormLogic, Vertical):
 
     def on_mount(self) -> None:
         self.refresh_visibility()
+
+    def hidden_extra(self, row: FieldRow) -> bool:
+        return row.f.path in self.spec.advanced and not self.show_advanced
+
+    def refresh_visibility(self, only: list[Path] | None = None) -> None:
+        super().refresh_visibility(only)
+        shown = {r.f.path for r in self.rows() if r.display}
+        for anchor, paths in self._blocks:           # a heading whose rows are all hidden goes too
+            vis = any(p in shown for p in paths)
+            if anchor.display != vis:
+                anchor.display = vis
 
     # -- values --------------------------------------------------------------------------------
     def _input(self, wid: str) -> str:
@@ -246,12 +305,34 @@ class FormView(FormLogic, Vertical):
     def _after_change(self, control, value=None, preset: bool = False) -> None:
         row = self._row_of(control)
         if row is not None:
-            if preset:
+            if preset and row.f.path == self.spec.size and value == self._keep_values:
+                self._keep_values = None                # switched to custom by a fine-tune: keep the values
+            elif preset:
                 self.apply_preset(row, value)
+            self._maybe_custom(row)
             deps = self.spec.dependents.get(row.f.path)
             if deps:
                 self.refresh_visibility(deps)
         self._schedule()
+
+    def _size_row(self) -> FieldRow | None:
+        return next((r for r in self.rows() if r.f.path == self.spec.size), None) if self.spec.size else None
+
+    def _maybe_custom(self, row: FieldRow) -> None:
+        """A sizing field now differs from what the chosen size sets: the size becomes custom (when the
+        size offers one), keeping every value, so the fine-tune is what gets sent."""
+        if row.f.path not in self.spec.advanced or "after create" in (row.f.step or ""):
+            return                                      # resized after create (wxd): the chosen size stays the base
+        size = self._size_row()
+        if size is None or "custom" not in map(str, size.f.enum or []) or str(size.value) == "custom":
+            return
+        meta = next((p.get("metadata") or {} for p in size.f.presets or [] if p.get("value") == size.value), {})
+        key = ".".join(row.f.path[1:])
+        want = meta.get(key, meta.get(row.f.path[-1]))
+        if want is None or _same(row.value, want):
+            return
+        self._keep_values = "custom"
+        size.set_value("custom")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         event.stop()
@@ -265,8 +346,11 @@ class FormView(FormLogic, Vertical):
         event.stop()
         self._after_change(event.control)
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+    def on_toggle_setting_changed(self, event: ToggleSetting.Changed) -> None:
         event.stop()
+        if event.toggle.id == "advanced":
+            self.show_advanced = event.value
+            self.refresh_visibility()
         self._schedule()
 
     def on_descendant_focus(self, event) -> None:
@@ -306,9 +390,12 @@ class FormView(FormLogic, Vertical):
             self._show(self._err.get("name"), name_errs, [])
             errors += name_errs
         changed = self.changes() if spec.mode == "edit" else {}
+        vals = self.values()
         for r in self.rows():
             label = self._err.get(r.f.path)
-            if not r.display or (spec.mode == "edit" and r.f.path not in changed):
+            # closed advanced settings are still sent, so still checked (their errors list in the checks panel)
+            sent = r.display or (r.f.path in spec.advanced and pl.shown(r.f, vals))
+            if not sent or (spec.mode == "edit" and r.f.path not in changed):
                 self._show(label, [], [])
                 if spec.mode == "edit":
                     r.set_class(False, "-changed")

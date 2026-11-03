@@ -26,6 +26,7 @@ from ...common import tls
 from ...common.glow_dot import DOT_COLORS, GlowDot, as_content
 from ...common.pulse import PulseClock
 from .screens import LegendScreen, OpLogScreen
+from ...common.splitter import Divider, LayoutLock
 from ...common.ui_util import set_attr, set_text
 
 TREE_MODES = ("live", "owns", "deps")
@@ -40,7 +41,7 @@ def _truecolor() -> bool:
 STARTUP_KEY_GRACE = 2.0      # s after mount in which no key binding runs (stray terminal replies)
 
 
-class DashboardApp(App):
+class DashboardApp(LayoutLock, App):
     AUTO_FOCUS = ""          # nothing focused at start: stray terminal replies must not type into the search
     CSS_PATH = "app.tcss"
     TITLE = "cr-dashboard"
@@ -55,6 +56,7 @@ class DashboardApp(App):
         Binding("slash", "search", "search"),
         Binding("a", "animation", "animation"),
         Binding("question_mark", "legend", "legend"),
+        Binding("L", "toggle_layout_lock", "layout lock"),
         Binding("escape", "close_search", show=False),
     ]
 
@@ -100,8 +102,11 @@ class DashboardApp(App):
         yield Static("loading…", id="root-problem")
         with Horizontal(id="main"):
             yield ChainView(id="chains")
+            yield Divider("#chains", "x", "before")
             yield CRList(id="crlist")
+        yield Divider("#detail", "y", "after", minimum=3)
         yield Detail(id="detail")
+        yield Divider("#events", "y", "after", minimum=3)
         yield RichLog(id="events", max_lines=500, wrap=False, markup=False)
         yield Input(placeholder="filter by name (esc to close)", id="search")
         yield Footer()
@@ -270,7 +275,7 @@ class DashboardApp(App):
         """A terminal's reply to a start-up query (e.g. its colours, "rgb:1f1f/...") can arrive as typed
         keys: in the first seconds no key binding runs (they used to toggle the problems filter)."""
         if action != "quit" and time.monotonic() - getattr(self, "_mounted_at", 0.0) < STARTUP_KEY_GRACE:
-            return False
+            return None                    # disabled, still listed (dimmed) in the footer
         return super().check_action(action, parameters)
 
     def action_problems(self) -> None:

@@ -333,7 +333,39 @@ class CpdProvider(CrdProvider):
                                 uid="", obj={}, state=st, reason=f"zen: {rec.get('provision_status')}",
                                 badges=["zen-only"] if itype.crd else [], display_name=rec.get("display_name"),
                                 meta={"zen": rec}))
+        self._attach_rollouts(out)
         return out
+
+    def _attach_rollouts(self, insts: list[Instance]) -> None:
+        """The dot follows the instance's rollout (rollout.py: its CR, its labelled workloads, zen),
+        never zen's provision_status alone. The lists are cached until the next instance refresh."""
+        from ... import rollout
+        snaps: dict[str, rollout.Snapshot | None] = {}
+        for inst in insts:
+            rec = inst.meta.get("zen") or {}
+            ns = inst.namespace or self.namespace
+            if rec.get("id") is None or not ns:
+                continue
+            if ns not in snaps:
+                try:
+                    snaps[ns] = rollout.collect(self.cluster, ns)
+                except Exception:               # no rights / API trouble: the zen + CR state stays
+                    snaps[ns] = None
+            if snaps[ns] is None:
+                continue
+            try:
+                ro = rollout.assess(str(rec["id"]), rec.get("provision_status"), inst.obj or None, snaps[ns],
+                                    lambda api, kind, name, ns=ns: self._owner_cr(api, kind, name, ns))
+            except Exception:  # noqa: BLE001, S112 - one instance's odd objects never break the list
+                continue
+            inst.meta["rollout"] = ro
+            inst.state, inst.reason = ro.state, ro.reason
+
+    def _owner_cr(self, api: str, kind: str, name: str, namespace: str) -> dict | None:
+        path = self.cluster.resource_path(api, kind, namespace)
+        if not path:
+            return None
+        return next((o for o in self.cluster.try_list(path) if (o.get("metadata") or {}).get("name") == name), None)
 
     # -- form ------------------------------------------------------------------------------
     def zen_params(self, rec: dict, addon_type: str, name: str) -> dict | None:

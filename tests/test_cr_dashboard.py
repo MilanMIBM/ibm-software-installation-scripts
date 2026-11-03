@@ -55,6 +55,15 @@ class NormalizeTests(unittest.TestCase):
         st = normalize(obj("Scheduling", "s", status={"cpd-schedulingStatus": "Completed"}), "Scheduling")
         self.assertEqual(st.phase, Phase.COMPLETED)
 
+    def test_feature_switch_status_never_speaks_for_the_cr(self):
+        # Wxd: no wxdStatus; aclv2_status DISABLED is a feature switch, wxdInstanceStatus the instance
+        st = normalize(obj("Wxd", "lakehouse", status={
+            "aclv2_status": "DISABLED", "activeStage": "blue", "wxdHMSRestartStatus": "Completed",
+            "upgradeStatus": "7/7 - Upgrade complete", "wxdInstanceStatus": "InProgress"}), "Wxd")
+        self.assertEqual((st.phase, st.raw_status), (Phase.IN_PROGRESS, "InProgress"))
+        st = normalize(obj("X", "x", status={"feature_status": "Disabled", "deployStatus": "Completed"}), "X")
+        self.assertEqual(st.phase, Phase.COMPLETED)
+
     def test_phase_state_and_plain_status(self):
         self.assertEqual(normalize(obj("CommonService", "c", status={"phase": "Succeeded"}), "CommonService").phase,
                          Phase.COMPLETED)

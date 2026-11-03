@@ -3,7 +3,7 @@
 Forms are built from a FormModel: steps (S1 custom_steps, else role groups), labels, bounds,
 enums, show_if dependencies, secrets with a Generate button. Every storage-class field gets a
 StoragePicker: a dropdown of only the classes the field accepts (object classes never), with an
-override checkbox that turns it into a free-text field; a StorageKindTag beside it follows
+override switch that turns it into a free-text field; a StorageKindTag beside it follows
 every change.
 Nothing changes the cluster here: Preview builds an ActionPlan; the plan screen runs it.
 """
@@ -18,8 +18,9 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
-from textual.widgets import Button, Checkbox, Input, Label, Select, Static, Switch
+from textual.widgets import Button, Input, Label, Select, Static, Switch
 
+from ...common.toggle import ToggleSetting
 from ..model import (
     Field,
     FormModel,
@@ -63,7 +64,7 @@ def _hint(f: Field) -> str:
 class StoragePicker(Horizontal):
     """A dropdown of the StorageClasses the field accepts, prefiltered by its need (file, block, or both
     when either is valid; object classes never): form-offered and declared classes first. The
-    [ ] override checkbox swaps the dropdown for a free-text input (it suggests every class on the
+    override switch swaps the dropdown for a free-text input (it suggests every class on the
     cluster), for a class the filter leaves out or one that doesn't exist yet. The StorageKindTag
     beside it follows every change. Value = the StorageClass name."""
 
@@ -73,7 +74,7 @@ class StoragePicker(Horizontal):
     StoragePicker #sc-input { width: 2fr; min-width: 24; display: none; }
     StoragePicker.-override #sc-select { display: none; }
     StoragePicker.-override #sc-input { display: block; }
-    StoragePicker #override { width: auto; border: none; padding: 1 1 0 1; background: transparent; }
+    StoragePicker #override { width: auto; }
     StoragePicker StorageKindTag { width: 1fr; min-width: 18; max-width: 40; padding-top: 1; height: 3;
         text-wrap: nowrap; text-overflow: ellipsis; }
     """
@@ -94,8 +95,8 @@ class StoragePicker(Horizontal):
         every = sorted(n for n, i in self.sc.items() if i.kind != Kind.OBJECT)
         yield Input(value=self._value or "", placeholder="any StorageClass name", id="sc-input",
                     suggester=SuggestFromList(every, case_sensitive=True) if every else None)
-        yield Checkbox("override", value=self.override, id="override",
-                       tooltip="type any StorageClass name instead of picking a compatible one")
+        yield ToggleSetting("override", value=self.override, id="override", compact=True,
+                            tooltip="type any StorageClass name instead of picking a compatible one")
         yield StorageKindTag(self.sc.get(self._value) if self._value else None, self.f.storage,
                              unknown=self._value if self._value and self._value not in self.sc else None)
 
@@ -157,8 +158,8 @@ class StoragePicker(Horizontal):
             sel.value = cur if cur in self._names() else (self._names()[0] if self._names() else Select.NULL)
         self._tag()
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id == "override":
+    def on_toggle_setting_changed(self, event: ToggleSetting.Changed) -> None:
+        if event.toggle.id == "override":
             self._set_override(event.value)          # bubbles on: the form re-checks the value
 
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -169,17 +170,13 @@ class StoragePicker(Horizontal):
 
     def set_value(self, value: str | None) -> None:
         if value is not None and value not in self._names():
-            box = self.query_one("#override", Checkbox)
-            with box.prevent(Checkbox.Changed):
-                box.value = True
+            self.query_one("#override", ToggleSetting).value = True          # the setter posts nothing
             self.override = True
             self.set_class(True, "-override")
             self.query_one("#sc-input", Input).value = value
         else:
             if self.override:
-                box = self.query_one("#override", Checkbox)
-                with box.prevent(Checkbox.Changed):
-                    box.value = False
+                self.query_one("#override", ToggleSetting).value = False
                 self.override = False
                 self.set_class(False, "-override")
             self.query_one("#sc-select", Select).value = value if value is not None else Select.NULL
@@ -275,9 +272,13 @@ class FormLogic:
         for r in self.rows():
             if only is not None and r.f.path not in only:
                 continue
-            vis = pl.shown(r.f, vals)
+            vis = pl.shown(r.f, vals) and not self.hidden_extra(r)
             if r.display != vis:
                 r.display = vis
+
+    def hidden_extra(self, row: FieldRow) -> bool:
+        """Hidden for a reason of the form's own (FormView: advanced settings closed)."""
+        return False
 
     def apply_preset(self, row: FieldRow, value) -> None:
         """A size preset was chosen: the template fills the sizes it names; they stay editable."""
@@ -349,8 +350,8 @@ class CreateScreen(_FormBase):
                     vmod = credentials.vault()
                     who = ", ".join(vmod.member_names()) or "nobody else"
                     yield Label("Credentials", classes="step")
-                    yield Checkbox(f"Also save the credentials in the Software Hub vault (shared with {who})",
-                                   value=vmod.enabled(None), id="vault")
+                    yield ToggleSetting(f"Also save the credentials in the Software Hub vault (shared with {who})",
+                                        value=vmod.enabled(None), id="vault")
             yield Static("", id="errors")
             with Horizontal(id="buttons"):
                 yield Button("Preview plan", id="preview", variant="primary")
@@ -457,7 +458,7 @@ class PlanScreen(ModalScreen):
             with VerticalScroll():
                 yield Static(t)
             if p.warnings:
-                yield Checkbox("I have read the warnings above", id="ack")
+                yield ToggleSetting("I have read the warnings above", id="ack", on_word="YES", off_word="NO")
             if p.confirm_name:
                 yield Input(placeholder=f"type {p.confirm_name} to confirm", id="confirm")
             with Horizontal(id="buttons"):
@@ -471,12 +472,12 @@ class PlanScreen(ModalScreen):
         p = self.plan
         ok = p.runnable
         if p.warnings:
-            ok = ok and self.query_one("#ack", Checkbox).value
+            ok = ok and self.query_one("#ack", ToggleSetting).value
         if p.confirm_name:
             ok = ok and self.query_one("#confirm", Input).value.strip() == p.confirm_name
         self.query_one("#run", Button).disabled = not ok
 
-    def on_checkbox_changed(self, event) -> None:
+    def on_toggle_setting_changed(self, event) -> None:
         self._update()
 
     def on_input_changed(self, event) -> None:

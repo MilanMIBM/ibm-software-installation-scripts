@@ -18,10 +18,11 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Button, Checkbox, Input, Label, ProgressBar, Static
+from textual.widgets import Button, Input, Label, ProgressBar, Static
 
 from ...common.glow_dot import GlowDot
 from ...common.state import State
+from ...common.toggle import ToggleSetting
 from ...common.ui_util import reconcile, set_attr, set_text
 from ..model import Field, Kind, Role, path_str
 from ..ops import payload as pl
@@ -216,7 +217,7 @@ class PlanPanel(Vertical):
         with VerticalScroll():
             yield Static("", id="pp-body")
         with Vertical(id="pp-gates"):
-            yield Checkbox("I have read the warnings above", id="ack")
+            yield ToggleSetting("I have read the warnings above", id="ack", on_word="YES", off_word="NO")
             yield Input(id="confirm")
         with Horizontal(id="pp-buttons"):
             yield Button("Run", id="run", variant="primary", disabled=True)
@@ -226,7 +227,7 @@ class PlanPanel(Vertical):
         self.plan, self.on_run = plan, on_run
         set_text(self.query_one("#pp-title", Label), f"plan · {plan.op} {plan.target}  (esc: back)")
         self.query_one("#pp-body", Static).update(plan_text(plan))
-        ack = self.query_one("#ack", Checkbox)
+        ack = self.query_one("#ack", ToggleSetting)
         ack.value = False
         ack.display = bool(plan.warnings)
         conf = self.query_one("#confirm", Input)
@@ -243,12 +244,12 @@ class PlanPanel(Vertical):
         p = self.plan
         ok = bool(p and p.runnable)
         if p and p.warnings:
-            ok = ok and self.query_one("#ack", Checkbox).value
+            ok = ok and self.query_one("#ack", ToggleSetting).value
         if p and p.confirm_name:
             ok = ok and self.query_one("#confirm", Input).value.strip() == p.confirm_name
         self.query_one("#run", Button).disabled = not ok
 
-    def on_checkbox_changed(self, event) -> None:
+    def on_toggle_setting_changed(self, event) -> None:
         event.stop()
         self._update()
 
@@ -395,3 +396,109 @@ class BuildView(Vertical):
                 self.call_after_refresh(row.fill, parts[row.key])
             else:
                 row.fill(parts[row.key])
+
+
+# -- instance rollout ---------------------------------------------------------------------------------------
+PHASE_STATE = {"Completed": State.HEALTHY, "InProgress": State.PROGRESS, "Failed": State.FAILING}
+
+
+class RolloutRow(Horizontal):
+    DEFAULT_CSS = """
+    RolloutRow { height: auto; }
+    RolloutRow Label { margin-left: 1; }
+    RolloutRow .ro-label { width: 1fr; }
+    RolloutRow .ro-count { width: 12; color: $text-muted; content-align: right top; }
+    """
+
+    def __init__(self, key: str):
+        super().__init__()
+        self.key = key
+        self._args: tuple | None = None
+
+    def compose(self) -> ComposeResult:
+        yield GlowDot(State.INACTIVE, "ring", size="mini")
+        yield Label("", classes="ro-label")
+        yield Label("", classes="ro-count")
+
+    def on_mount(self) -> None:
+        if self._args:
+            self.fill(*self._args)
+
+    def fill(self, state: State, text: Text | str, count: str = "") -> None:
+        self._args = (state, text, count)
+        if not self.is_mounted or not self.query(".ro-label"):
+            return                                   # on_mount applies the latest args
+        self.query_one(GlowDot).set_state(state, "filled")
+        set_text(self.query_one(".ro-label", Label), text)
+        set_text(self.query_one(".ro-count", Label), count)
+
+
+class RolloutView(Vertical):
+    """State panel, under the instance's facts: is it really done? (rollout.py) The stage, a
+    progress bar over its replicas, problems first with the cluster's message, then the
+    workloads still coming up and the CRs; ready workloads fold into one row."""
+
+    DEFAULT_CSS = """
+    RolloutView { height: auto; display: none; margin-top: 1; }
+    RolloutView.-open { display: block; }
+    RolloutView #ro-title { height: 1; text-style: bold; }
+    RolloutView ProgressBar { width: 100%; }
+    RolloutView ProgressBar #bar { width: 1fr; }
+    RolloutView.-done ProgressBar { display: none; }
+    RolloutView #ro-rows { height: auto; }
+    """
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self._rows: list[RolloutRow] = []
+
+    def compose(self) -> ComposeResult:
+        yield Label("", id="ro-title")
+        yield ProgressBar(total=100, show_eta=False, id="ro-bar")
+        yield Vertical(id="ro-rows")
+
+    def show(self, ro) -> None:
+        open_ = ro is not None and ro.evidence
+        self.set_class(open_, "-open")
+        if not open_:
+            return
+        done = ro.state == State.HEALTHY
+        self.set_class(done, "-done")
+        pct = int(ro.fraction * 100)
+        title = (f"ready · {ro.total} replica(s)" if done else
+                 f"{ro.stage} · {ro.ready}/{ro.total} replicas ready · {pct}%")
+        set_text(self.query_one("#ro-title", Label), title)
+        bar = self.query_one("#ro-bar", ProgressBar)
+        if bar.progress != pct:
+            bar.update(progress=pct)
+        rows: dict[str, tuple] = {}
+        for p in ro.problems:
+            t = Text(f"{p.name}  ", style="bold")
+            t.append(p.reason, style="red")
+            if p.message:
+                t.append(f"\n{p.message[:400]}", style="dim")
+            rows[f"p:{p.name}"] = (State.FAILING, t, "")
+        bad = {p.name for p in ro.problems}
+        pending = [u for u in ro.units if not u.done]
+        for u in pending:
+            hit = any(n.startswith(u.name) for n in bad)
+            rows[f"u:{u.kind}/{u.name}"] = (State.FAILING if hit else State.PROGRESS, f"{u.kind} {u.name}",
+                                            f"{u.ready}/{u.desired} ready")
+        ok = [u for u in ro.units if u.done]
+        if len(ok) == 1:
+            u = ok[0]
+            rows[f"u:{u.kind}/{u.name}"] = (State.HEALTHY, f"{u.kind} {u.name}", f"{u.ready}/{u.desired} ready")
+        elif ok:
+            kinds = sorted({u.kind for u in ok})
+            rows["u:+ok"] = (State.HEALTHY, f"+{len(ok)} ready workloads ({', '.join(kinds)})",
+                             f"{sum(u.ready for u in ok)} replicas")
+        for line, phase in ro.crs:
+            rows[f"c:{line.split(':', 1)[0]}"] = (PHASE_STATE.get(phase, State.INACTIVE), line, "")
+        if ro.zen_status:
+            zen_state = State.HEALTHY if ro.zen_status == "PROVISIONED" else (
+                State.FAILING if "FAIL" in ro.zen_status else State.PROGRESS)
+            rows["z"] = (zen_state, f"zen: {ro.zen_status}", "")
+        box = self.query_one("#ro-rows", Vertical)
+        self._rows, _fresh = reconcile(box, self._rows, list(rows), lambda w: w.key, RolloutRow)
+        for row in self._rows:
+            row.fill(*rows[row.key])

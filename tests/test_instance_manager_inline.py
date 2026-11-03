@@ -55,7 +55,9 @@ class EditProvider(FakeProvider):
 
 @pytest.mark.asyncio
 async def test_service_dropdown_new_button_form_with_filtered_picker_override_and_plan():
-    from textual.widgets import Button, Checkbox, Input, Select
+    from textual.widgets import Button, Input, Select
+
+    from tui.common.toggle import ToggleSetting
 
     from tui.instance_manager.ui.app import InstanceManagerApp
     from tui.instance_manager.ui.context import FormContext, PlanPanel
@@ -87,7 +89,7 @@ async def test_service_dropdown_new_button_form_with_filtered_picker_override_an
         assert [v for _, v in picker._options()] == ["rbd"]          # prefiltered: only compatible classes
         assert not picker.override and not picker.query_one("#sc-input").display
         # [x] override: the dropdown turns into a free-text field, the tag follows what is typed
-        picker.query_one("#override", Checkbox).value = True
+        picker.query_one("#override", ToggleSetting).toggle()
         assert await settle(pilot, lambda: picker.override and picker.query_one("#sc-input").display
                             and not picker.query_one("#sc-select").display)
         assert picker.value == "rbd"                                 # carried over into the text field
@@ -127,12 +129,12 @@ async def test_service_dropdown_new_button_form_with_filtered_picker_override_an
         assert panel.plan.runnable and panel.plan.warnings
         run = panel.query_one("#run", Button)
         assert run.disabled
-        panel.query_one("#ack", Checkbox).value = True
+        panel.query_one("#ack", ToggleSetting).toggle()
         assert await settle(pilot, lambda: not run.disabled)
         await pilot.press("escape")
         assert await settle(pilot, lambda: work(app) == "form-cpd_db")
         # untick override: back to the dropdown, on a compatible class
-        picker.query_one("#override", Checkbox).value = False
+        picker.query_one("#override", ToggleSetting).toggle()
         assert await settle(pilot, lambda: not picker.override and picker.value == "rbd")
         await pilot.press("escape")
         assert await settle(pilot, lambda: work(app) == "overview")

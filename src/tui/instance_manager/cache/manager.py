@@ -204,15 +204,16 @@ class DiscoveryCache:
             return
         cms = [trim_cm(c) for c in self.provider.cluster.try_list(
             f"/api/v1/namespaces/{self.namespace}/configmaps", labelSelector="icpdata_addon=true", cache=False)]
-        # instances add labelled configmaps of their own (edb: <name>-details) without registry data:
-        # those never change the catalog
-        old = {c["name"]: c["sha"] for c in part.get("cms") or [] if c.get("data")}
-        new = {c["name"]: c["sha"] for c in cms if c.get("data")}
+        # only what discovery reads counts: instances add labelled configmaps of their own (edb
+        # <name>-details, informix <name>-aux-monitoring-cm) whose extensions never change the catalog
+        from ..providers.cpd.registry import registry_digest
+        old = {c["name"]: d for c in part.get("cms") or [] if (d := registry_digest(c.get("data") or {}))}
+        new = {c["name"]: d for c in cms if (d := registry_digest(c.get("data") or {}))}
         moved = sorted(n for n in set(old) | set(new) if old.get(n) != new.get(n))
         if not self.dry:
             self.sources.put("sources/addons", {"cms": cms})
         if not moved:
-            n = sum(1 for c in cms if c.get("data") and cached.get(c["name"]) != self.probe.addon_rvs.get(c["name"]))
+            n = sum(1 for k in new if cached.get(k) != self.probe.addon_rvs.get(k))
             if n:
                 st.lines.append(f"add-on registry: {n} configmap(s) re-saved with the same content")
             return

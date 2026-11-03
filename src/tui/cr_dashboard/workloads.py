@@ -3,6 +3,8 @@
 Workloads whose owner chain doesn't reach a tracked CR can be attributed by a label
 (cpd: icpdsupport/addOnId). The label -> CR map is learned from workloads that are
 owned by a tracked CR and carry the same label, so no component table is needed.
+label_only=True groups by the label value itself instead (instance_manager: one group
+per icpdsupport/serviceInstanceId, the zen instance id).
 """
 
 from __future__ import annotations
@@ -45,8 +47,9 @@ class WorkloadIndex:
 
     def __init__(self, *, deployments, statefulsets, replicasets, jobs, pods, hpas,
                  tracked_uids: set[str], parent_of_uid: dict[str, str] | None = None,
-                 label_key: str | None = None):
+                 label_key: str | None = None, label_only: bool = False):
         self.tracked = tracked_uids
+        self.label_only = label_only
         self.parent_of_uid = parent_of_uid or {}  # uid -> owner uid, for any known object
         self.label_key = label_key
         self.by_uid: dict[str, dict] = {}
@@ -77,6 +80,8 @@ class WorkloadIndex:
         return None
 
     def owner_cr(self, obj: dict) -> str | None:
+        if self.label_only:
+            return _labels(obj).get(self.label_key) or None
         hit = self._walk(_owners(obj))
         if hit or not self.label_key:
             return hit
@@ -84,7 +89,7 @@ class WorkloadIndex:
         return self._label_map.get(lab) if lab else None
 
     def _learn_labels(self) -> None:
-        if not self.label_key:
+        if not self.label_key or self.label_only:
             return
         votes: dict[str, Counter] = defaultdict(Counter)
         for o in list(self.deployments) + list(self.statefulsets):

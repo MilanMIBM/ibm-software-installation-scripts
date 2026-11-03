@@ -191,7 +191,9 @@ class FormProvider(FakeProvider):
 
 @pytest.mark.asyncio
 async def test_create_form_storage_picker_and_plan_gates():
-    from textual.widgets import Button, Checkbox, Input, Select
+    from textual.widgets import Button, Input, Select
+
+    from tui.common.toggle import ToggleSetting
     from tui.instance_manager.ui.app import InstanceManagerApp
     from tui.instance_manager.ui.forms import CreateScreen, FieldRow, PlanScreen, StoragePicker
     from tui.instance_manager.ui.storage_kind_tag import StorageKindTag
@@ -211,7 +213,7 @@ async def test_create_form_storage_picker_and_plan_gates():
         assert picker.value == "rbd"                                 # observed "fs" is file; the field needs block
         assert picker.query_one(StorageKindTag).kind == Kind.BLOCK
         assert [v for _, v in picker._options()] == ["rbd"]          # filtered: only what the field accepts
-        picker.query_one("#override", Checkbox).value = True         # override: free text
+        picker.query_one("#override", ToggleSetting).toggle()         # override: free text
         assert await settle(pilot, lambda: picker.override and picker.query_one("#sc-input").display)
         picker.query_one("#sc-input", Input).value = "fs"
         tag = picker.query_one(StorageKindTag)
@@ -228,7 +230,7 @@ async def test_create_form_storage_picker_and_plan_gates():
         assert plan.runnable and plan.warnings                      # wrong-kind class -> a warning to acknowledge
         run = app.screen.query_one("#run", Button)
         assert run.disabled
-        app.screen.query_one("#ack", Checkbox).value = True
+        app.screen.query_one("#ack", ToggleSetting).toggle()
         assert await settle(pilot, lambda: not run.disabled)
         await pilot.press("escape")
 

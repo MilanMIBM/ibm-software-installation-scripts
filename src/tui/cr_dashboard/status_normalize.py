@@ -85,10 +85,24 @@ def _status_key_value(status: dict, kind: str):
     for k, v in cands:
         if k.lower() == want:
             return v
-    for k, v in cands:
-        if map_status(v) != Phase.UNKNOWN:
-            return v
+    known = [(k, v) for k, v in cands if map_status(v) != Phase.UNKNOWN]
+    if known:
+        return min(known, key=lambda kv: _status_key_rank(*kv))[1]
     return cands[0][1] if cands else None
+
+
+def _status_key_rank(key: str, value: str) -> int:
+    """Which '<x>Status' speaks for the CR (Wxd has no wxdStatus, but aclv2_status: DISABLED,
+    wxdHMSRestartStatus and wxdInstanceStatus): the instance / install status first, feature
+    switches (snake_case keys, bare enabled/disabled values) last."""
+    k = key.lower()
+    if "_" in key or value.strip().lower() in ("enabled", "disabled"):
+        return 3
+    if "instance" in k or "install" in k:
+        return 0
+    if k.startswith("upgrade") or "restart" in k:
+        return 2
+    return 1
 
 
 def _printer_paths(columns: list[dict]) -> dict[str, str]:

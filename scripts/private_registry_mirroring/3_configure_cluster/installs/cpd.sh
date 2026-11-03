@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Segment 3 hook: cpd (contract: _template.sh)
 #   cluster         cpd-cli manage apply-icsp --registry=<pull root>/cpd (IBM's
-#                   cloud-pak-for-data-mirror IDMS + ITMS); --preview=true on dry runs
+#                   cloud-pak-for-data-mirror IDMS + ITMS); --preview=true on dry runs;
+#                   with informix selected also the cpd-informix-preprod-redirect IDMS
 #   tap             configs/cp4d_config/registry_overrides.sh; podman login to the
 #                   push host and cpd-cli manage restart-container (OLM_UTILS_IMAGE)
 #   verify-cluster  nothing extra (3.6 probes cp.icr.io names through IBM's IDMS)
@@ -27,6 +28,12 @@ cluster)
     else
         preg_info "cpd: cpd-cli manage apply-icsp --registry=${PULL_PREFIX}"
         cpd-cli manage apply-icsp --registry="${PULL_PREFIX}"
+    fi
+    # Informix 10.2.2's operator writes preprod.icr.io refs that apply-icsp doesn't cover
+    if preg_has_component cpd informix_cp4d || preg_has_component cpd informix; then
+        ifx="${_CP4D_REPO_ROOT}/scripts/install_cloud_pak_for_data/5_component_specific_scripts/cp4d_informix/5_redirect_informix_preprod_images.sh"
+        preg_is_true "${MIRROR_CLUSTER_DRY_RUN:-false}" && ifx_dry=(--dry-run) || ifx_dry=()
+        "${ifx}" --registry="${PULL_PREFIX}" --no-restart "${ifx_dry[@]}"
     fi
     ;;
 tap)
