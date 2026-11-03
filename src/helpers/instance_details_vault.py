@@ -71,13 +71,14 @@ def read_details(path: Path) -> tuple[dict[str, str], dict[str, str]]:
     return header, dict(zip(names, out.split("\0")))
 
 
-def sign_in() -> SoftwareHubVault:
+def sign_in(verify: bool | str = False) -> SoftwareHubVault:
+    """verify: False (like curl -k in the shell scripts), True, or a CA bundle path."""
     url, user = os.environ.get("CPD_URL", ""), os.environ.get("CPD_USERNAME", "")
     key, pwd = os.environ.get("CPD_APIKEY"), os.environ.get("CPD_PASSWORD")
     if not (url and user and (key or pwd)):
         raise VaultError("CPD_URL / CPD_USERNAME / CPD_APIKEY (or CPD_PASSWORD) are not set "
                          "(configs/cp4d_config/cpd_instance_details.sh)")
-    return SoftwareHubVault.sign_in(url, user, **({"api_key": key} if key else {"password": pwd}))
+    return SoftwareHubVault.sign_in(url, user, verify=verify, **({"api_key": key} if key else {"password": pwd}))
 
 
 def _members(vault: SoftwareHubVault, names: list[str], log) -> dict:

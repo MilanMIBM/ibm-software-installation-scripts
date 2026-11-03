@@ -36,7 +36,7 @@ def _best_upstream(conf: str, base_path: str) -> str | None:
     return host
 
 
-def _pods_for_service(kube: Kube, ns: str, host: str) -> list[str]:
+def _service_pods(kube: Kube, ns: str, host: str) -> list[dict]:
     svc = host.split(".")[0]
     try:
         sel = (kube.get(f"/api/v1/namespaces/{ns}/services/{svc}").get("spec") or {}).get("selector") or {}
@@ -46,7 +46,11 @@ def _pods_for_service(kube: Kube, ns: str, host: str) -> list[str]:
         return []
     label = ",".join(f"{k}={v}" for k, v in sel.items())
     pods = kube.get(f"/api/v1/namespaces/{ns}/pods", labelSelector=label).get("items") or []
-    return [p["metadata"]["name"] for p in pods if (p.get("status") or {}).get("phase") == "Running"]
+    return [p for p in pods if (p.get("status") or {}).get("phase") == "Running"]
+
+
+def _pods_for_service(kube: Kube, ns: str, host: str) -> list[str]:
+    return [p["metadata"]["name"] for p in _service_pods(kube, ns, host)]
 
 
 def _exec(kube: Kube, ns: str, pod: str, cmd: str, timeout: int = 60) -> str:
@@ -77,12 +81,50 @@ def _embedded_docs(kube: Kube, ns: str, pod: str) -> list[dict]:
     return docs
 
 
-def find_spec(kube: Kube, namespace: str, base_path: str) -> dict | None:
+def trim_spec(doc: dict) -> dict:
+    """What the sub-service providers read: basePath, the top-level collections (and their item
+    paths) and every definition (requests reference them)."""
+    keep = {}
+    for path, ops in (doc.get("paths") or {}).items():
+        first = path.strip("/").split("/", 1)[0]
+        if first.endswith(("_engines", "_services")):
+            keep[path] = ops
+    return {"basePath": doc.get("basePath"), "paths": keep, "definitions": doc.get("definitions") or {}}
+
+
+def _cached_spec(kube: Kube, namespace: str, base_path: str, sources) -> dict | None:
+    """The cached spec, when a pod of the service it came from still runs the same image."""
+    from .wxd.operator import image_id
+    c = sources.get(SPEC_PART) if sources is not None else None
+    if not isinstance(c, dict) or c.get("base") != base_path or c.get("namespace") != namespace:
+        return None
+    if any(image_id(p) == c.get("image") for p in _service_pods(kube, namespace, c.get("service") or "")):
+        return c.get("spec")
+    return None
+
+
+SPEC_PART = "subservices/wxd/spec"
+
+
+def find_spec(kube: Kube, namespace: str, base_path: str, sources=None) -> dict | None:
     key = (namespace, base_path)
     with _lock:
         if key in _cache:
             return _cache[key]
-    spec = None
+    spec = _cached_spec(kube, namespace, base_path, sources)
+    if spec is None:
+        spec, origin = _discover(kube, namespace, base_path)
+        if spec is not None and sources is not None and origin:
+            sources.put(SPEC_PART, {"base": base_path, "namespace": namespace, **origin, "spec": spec},
+                        fp=origin.get("image", "")[:24])
+    with _lock:
+        _cache[key] = spec
+    return spec
+
+
+def _discover(kube: Kube, namespace: str, base_path: str) -> tuple[dict | None, dict]:
+    from .wxd.operator import image_id
+    spec, origin = None, {}
     try:
         zx = kube.get(f"/apis/zen.cpd.ibm.com/v1/namespaces/{namespace}/zenextensions").get("items") or []
     except KubeError:
@@ -94,10 +136,10 @@ def find_spec(kube: Kube, namespace: str, base_path: str) -> dict | None:
         if not host or host in seen:
             break
         seen.add(host)
-        pods = _pods_for_service(kube, namespace, host)
+        pods = _service_pods(kube, namespace, host)
         if not pods:
             break
-        pod = pods[0]
+        pod = pods[0]["metadata"]["name"]
         nginx = _exec(kube, namespace, pod, "cat /etc/nginx/conf.d/*.conf /etc/nginx/nginx.conf 2>/dev/null")
         nxt = _best_upstream(nginx, base_path) if nginx else None
         if nxt and nxt not in seen:
@@ -105,9 +147,8 @@ def find_spec(kube: Kube, namespace: str, base_path: str) -> dict | None:
             continue
         for doc in _embedded_docs(kube, namespace, pod):
             if (doc.get("basePath") or "").rstrip("/") == base_path.rstrip("/"):
-                spec = doc
+                spec = trim_spec(doc)
+                origin = {"service": host, "pod": pod, "image": image_id(pods[0])}
                 break
         break
-    with _lock:
-        _cache[key] = spec
-    return spec
+    return spec, origin

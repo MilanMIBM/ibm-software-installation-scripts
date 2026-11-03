@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -31,6 +31,7 @@ class ProfileStatus:
     url: str = ""
     live_url: str = ""
     detail: str = ""
+    records: list | None = field(default=None, repr=False)   # the zen records the check listed
 
     @property
     def ok(self) -> bool:
@@ -79,9 +80,15 @@ def check(kube: Kube, namespace: str, cli: CpdCli) -> ProfileStatus:
         st.state, st.detail = "stale", f"points at {st.url}"
     else:
         try:
-            cli.run("service-instance", "list", "--exclude-user-count", "-o", "json", timeout=90)
+            # the same call as the provider's zen records: they are handed on (provider.seed_zen)
+            st.records = cli.list_instances(timeout=90)
         except (CpdCliError, subprocess.TimeoutExpired) as e:
-            st.state, st.detail = "auth-failed", str(e)[:200]
+            if isinstance(e, CpdCliError) and e.code == 0:    # it ran, but printed no JSON list
+                st.records = None
+            else:
+                st.state, st.detail = "auth-failed", str(e)[:200]
+        except ValueError:                  # authenticated, but no parsable list: the provider retries
+            st.records = None
     return st
 
 
@@ -97,7 +104,7 @@ def repair_script() -> Path:
 
 def repair(profile: str) -> tuple[bool, list[str]]:
     """Run the repair script; (success, output lines without the [ENV] banner)."""
-    proc = subprocess.run(["zsh", str(repair_script()), "--profile", profile], capture_output=True, text=True,
+    proc = subprocess.run(["zsh", str(repair_script()), "--profile", profile], capture_output=True, text=True, start_new_session=True,
                           timeout=300, stdin=subprocess.DEVNULL)
     lines = [ln for ln in ((proc.stdout or "") + (proc.stderr or "")).splitlines()
              if ln.strip() and not ln.startswith("[ENV]")]

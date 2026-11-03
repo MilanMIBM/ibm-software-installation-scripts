@@ -24,14 +24,18 @@ class APIError(RuntimeError):
 
 
 def request_json(url, *, method="GET", body=None, headers=None, verify=True):
-    """Send JSON with a bounded timeout; authentication stays in headers/body."""
+    """Send JSON with a bounded timeout; authentication stays in headers/body.
+    verify: True (the default trust store), a CA bundle path (PEM), or False (no verification)."""
     request_headers = {"Accept": "application/json", **(headers or {})}
     payload = None
     if body is not None:
         request_headers["Content-Type"] = "application/json"
         payload = json.dumps(body).encode()
     request = urllib.request.Request(url, data=payload, headers=request_headers, method=method)
-    context = None if verify else ssl._create_unverified_context()
+    if isinstance(verify, str):
+        context = ssl.create_default_context(cafile=verify)
+    else:
+        context = None if verify else ssl._create_unverified_context()
     try:
         with urllib.request.urlopen(request, context=context, timeout=30) as response:
             raw = response.read()

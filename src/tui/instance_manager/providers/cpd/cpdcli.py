@@ -50,7 +50,7 @@ class CpdCli:
             raise CpdCliError(list(args), 127, "cpd-cli not found (PATH, $CPD_CLI or ~/cpd-cli/cpd-cli)")
         argv = [self.binary, *args] + ([f"--profile={self.profile}"] if profile else [])
         with self._lock:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+            proc = subprocess.run(argv, capture_output=True, text=True, start_new_session=True, timeout=timeout,
                                   stdin=subprocess.DEVNULL)
         if proc.returncode != 0:
             raise CpdCliError(list(args), proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
@@ -64,8 +64,8 @@ class CpdCli:
         return json.loads(out[start:])
 
     # -- service-instance ------------------------------------------------------
-    def list_instances(self) -> list[dict]:
-        data = self.json("service-instance", "list", "--exclude-user-count")
+    def list_instances(self, timeout: int = 180) -> list[dict]:
+        data = self.json("service-instance", "list", "--exclude-user-count", timeout=timeout)
         return data.get("service_instances", []) if isinstance(data, dict) else list(data or [])
 
     def get_instance(self, name: str, service_type: str) -> dict:

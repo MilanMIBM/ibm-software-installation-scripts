@@ -15,7 +15,7 @@ from ..model import Kind, Need, StorageClassInfo, StorageNeed
 
 KIND_COLORS = {Kind.FILE: "#22d3ee", Kind.BLOCK: "#c084fc", Kind.OBJECT: "#facc15", Kind.UNKNOWN: "#9ca3af"}
 NEED_WORDS = {Need.FILE: "needs: file", Need.BLOCK: "needs: block", Need.EITHER: "accepts: file or block",
-              Need.UNKNOWN: "need: unknown"}
+              Need.UNKNOWN: "any file or block class (no evidence)"}
 
 
 def need_line(need: StorageNeed | None) -> str:
@@ -35,30 +35,33 @@ class StorageKindTag(Static):
     StorageKindTag.-mismatch { background: $error 15%; }
     """
 
-    def __init__(self, info: StorageClassInfo | None = None, need: StorageNeed | None = None, **kw):
+    def __init__(self, info: StorageClassInfo | None = None, need: StorageNeed | None = None,
+                 unknown: str | None = None, **kw):
         super().__init__("", **kw)
         self.kind: Kind | None = None
         self.mismatch = False
-        self._args = (info, need)
+        self._args = (info, need, unknown)
 
     def on_mount(self) -> None:
         self._paint()
 
-    def show(self, info: StorageClassInfo | None, need: StorageNeed | None) -> None:
-        """Remember the latest selection; paint now if mounted, else on mount (never an older one)."""
-        self._args = (info, need)
+    def show(self, info: StorageClassInfo | None, need: StorageNeed | None, unknown: str | None = None) -> None:
+        """Remember the latest selection; paint now if mounted, else on mount (never an older one).
+        unknown: a typed (override) name that isn't a StorageClass on this cluster."""
+        self._args = (info, need, unknown)
         self.kind = info.kind if info else None
         if self.is_mounted:
             self._paint()
 
     def _paint(self) -> None:
-        info, need = self._args
+        info, need, unknown = self._args
         self.kind = info.kind if info else None
         self.mismatch = bool(info and need and not need.accepts(info.kind))
         for k in Kind:
             self.set_class(self.kind == k, f"-{k.value}")
-        self.set_class(self.mismatch, "-mismatch")
-        head = info.kind.label if info else "no class selected"
+        self.set_class(self.mismatch or bool(unknown), "-mismatch")
+        head = info.kind.label if info else (f"{unknown}: not a StorageClass here" if unknown
+                                             else "no class selected")
         if self.mismatch:
             head += "  - does not match"
         text = Text(head, style="bold")
@@ -66,3 +69,6 @@ class StorageKindTag(Static):
         if sub:
             text.append("\n" + sub, style="dim")
         set_text(self, text)
+        tip = "\n".join([head, *(f"- {e}" for e in (need.evidence if need else [])[:6])]) if need else head
+        if self.tooltip != tip:
+            self.tooltip = tip                     # the line may be cut off: the whole evidence on hover

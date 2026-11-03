@@ -1,9 +1,10 @@
 """Generated forms (create, edit), the StoragePicker and the plan screen (plan §5.3, §6).
 
 Forms are built from a FormModel: steps (S1 custom_steps, else role groups), labels, bounds,
-enums, show_if dependencies, secrets with a Generate button. Storage-class fields get a
-StoragePicker: classes the field accepts first; "show all" adds the rest dimmed with the
-reason (object classes never); a StorageKindTag beside it follows every selection.
+enums, show_if dependencies, secrets with a Generate button. Every storage-class field gets a
+StoragePicker: a dropdown of only the classes the field accepts (object classes never), with an
+override checkbox that turns it into a free-text field; a StorageKindTag beside it follows
+every change.
 Nothing changes the cluster here: Preview builds an ActionPlan; the plan screen runs it.
 """
 
@@ -16,9 +17,20 @@ from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.suggester import SuggestFromList
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, Switch
 
-from ..model import Field, FormModel, Instance, InstanceType, Kind, Path, Role, StorageClassInfo, path_str
+from ..model import (
+    Field,
+    FormModel,
+    Instance,
+    InstanceType,
+    Kind,
+    Path,
+    Role,
+    StorageClassInfo,
+    path_str,
+)
 from ..ops import payload as pl
 from ..ops.plan import ActionPlan
 from .storage_kind_tag import StorageKindTag
@@ -49,66 +61,129 @@ def _hint(f: Field) -> str:
 
 
 class StoragePicker(Horizontal):
-    """Select + 'show all' + StorageKindTag. Value = the StorageClass name."""
+    """A dropdown of the StorageClasses the field accepts, prefiltered by its need (file, block, or both
+    when either is valid; object classes never): form-offered and declared classes first. The
+    [ ] override checkbox swaps the dropdown for a free-text input (it suggests every class on the
+    cluster), for a class the filter leaves out or one that doesn't exist yet. The StorageKindTag
+    beside it follows every change. Value = the StorageClass name."""
 
     DEFAULT_CSS = """
     StoragePicker { height: auto; }
-    StoragePicker Select { width: 1fr; }
-    StoragePicker .all { width: auto; padding: 1 1 0 1; color: $text-muted; }
-    StoragePicker StorageKindTag { width: 36; }
+    StoragePicker #sc-select { width: 2fr; min-width: 24; }
+    StoragePicker #sc-input { width: 2fr; min-width: 24; display: none; }
+    StoragePicker.-override #sc-select { display: none; }
+    StoragePicker.-override #sc-input { display: block; }
+    StoragePicker #override { width: auto; border: none; padding: 1 1 0 1; background: transparent; }
+    StoragePicker StorageKindTag { width: 1fr; min-width: 18; max-width: 40; padding-top: 1; height: 3;
+        text-wrap: nowrap; text-overflow: ellipsis; }
     """
 
     def __init__(self, f: Field, sc: dict[str, StorageClassInfo], value: str | None, **kw):
         super().__init__(**kw)
-        self.f, self.sc, self.show_all = f, sc, False
+        self.f, self.sc = f, sc
         self._value = value
+        # a starting value the filter doesn't offer (an edit's current class, a preset) opens in override
+        self.override = bool(value) and value not in self._names()
+        self.set_class(self.override, "-override")
 
     def compose(self) -> ComposeResult:
-        yield Select(self._options(), value=self._value if self._value in self._names() else Select.BLANK,
-                     allow_blank=True, prompt="StorageClass")
-        yield Label("all", classes="all")
-        yield Switch(value=False, id="all")
-        yield StorageKindTag(self.sc.get(self._value), self.f.storage)
+        opts = self._options()
+        names = self._names()
+        yield Select(opts, value=self._value if self._value in names else Select.NULL, allow_blank=True,
+                     prompt=self._prompt(), id="sc-select")
+        every = sorted(n for n, i in self.sc.items() if i.kind != Kind.OBJECT)
+        yield Input(value=self._value or "", placeholder="any StorageClass name", id="sc-input",
+                    suggester=SuggestFromList(every, case_sensitive=True) if every else None)
+        yield Checkbox("override", value=self.override, id="override",
+                       tooltip="type any StorageClass name instead of picking a compatible one")
+        yield StorageKindTag(self.sc.get(self._value) if self._value else None, self.f.storage,
+                             unknown=self._value if self._value and self._value not in self.sc else None)
 
     def _ok(self, info: StorageClassInfo) -> bool:
         return self.f.storage.accepts(info.kind) if self.f.storage else info.kind != Kind.OBJECT
 
     def _names(self) -> list[str]:
-        return [n for n, i in self.sc.items() if i.kind != Kind.OBJECT and (self.show_all or self._ok(i))]
+        return [v for _, v in self._options()]
+
+    def _prompt(self) -> str:
+        if self._names():
+            return "StorageClass"
+        need = self.f.storage.need.value if self.f.storage else "compatible"
+        return f"no {need} class on this cluster: tick override"
 
     def _options(self):
-        infos = sorted((i for i in self.sc.values() if i.kind != Kind.OBJECT),
-                       key=lambda i: (not self._ok(i), not any(e.source == "config" for e in i.evidence),
-                                      not i.default, i.name))
+        offered = {str(v) for v in self.f.enum or []}
+        infos = sorted((i for i in self.sc.values() if self._ok(i)),
+                       key=lambda i: (i.name not in offered, not any(e.source == "config" for e in i.evidence),
+                                      not i.default, -i.pvc_count, i.name))
         out = []
         for i in infos:
-            if self._ok(i):
-                label = Text(f"{i.name}  ", style="bold")
-                label.append(i.kind.label + ("  default" if i.default else ""), style="dim")
-            elif self.show_all:
-                label = Text(f"{i.name}  {i.kind.label}  - not {self.f.storage.need.value}", style="dim strike")
-            else:
-                continue
+            label = Text(f"{i.name}  ", style="bold")
+            notes = [i.kind.label] + (["default"] if i.default else []) + (
+                ["declared"] if any(e.source == "config" for e in i.evidence) else [])
+            label.append("  ".join(notes), style="dim")
             out.append((label, i.name))
         return out
 
     @property
     def value(self) -> str | None:
-        v = self.query_one(Select).value
-        return None if v is Select.BLANK else str(v)
+        if self.override:
+            found = self.query("#sc-input")
+            v = found.first().value.strip() if found else (self._value or "")
+            return v or None
+        found = self.query("#sc-select")
+        if not found:                       # not composed yet: the starting value
+            return self._value
+        v = found.first().value
+        return None if v is Select.NULL else str(v)
 
-    def on_switch_changed(self, event: Switch.Changed) -> None:
-        event.stop()
-        self.show_all = event.value
+    def _tag(self) -> None:
+        v = self.value
+        found = self.query(StorageKindTag)
+        if found:
+            found.first().show(self.sc.get(v) if v else None, self.f.storage,
+                               unknown=v if v and v not in self.sc else None)
+
+    def _set_override(self, on: bool) -> None:
+        if on == self.override:
+            return
         cur = self.value
-        sel = self.query_one(Select)
-        sel.set_options(self._options())
-        if cur in self._names():
-            sel.value = cur
+        self.override = on
+        self.set_class(on, "-override")
+        if on:
+            self.query_one("#sc-input", Input).value = cur or ""
+        else:
+            sel = self.query_one("#sc-select", Select)
+            sel.value = cur if cur in self._names() else (self._names()[0] if self._names() else Select.NULL)
+        self._tag()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "override":
+            self._set_override(event.value)          # bubbles on: the form re-checks the value
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        v = None if event.value is Select.BLANK else str(event.value)
-        self.query_one(StorageKindTag).show(self.sc.get(v) if v else None, self.f.storage)
+        self._tag()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._tag()
+
+    def set_value(self, value: str | None) -> None:
+        if value is not None and value not in self._names():
+            box = self.query_one("#override", Checkbox)
+            with box.prevent(Checkbox.Changed):
+                box.value = True
+            self.override = True
+            self.set_class(True, "-override")
+            self.query_one("#sc-input", Input).value = value
+        else:
+            if self.override:
+                box = self.query_one("#override", Checkbox)
+                with box.prevent(Checkbox.Changed):
+                    box.value = False
+                self.override = False
+                self.set_class(False, "-override")
+            self.query_one("#sc-select", Select).value = value if value is not None else Select.NULL
+        self._tag()
 
 
 class FieldRow(Horizontal):
@@ -134,7 +209,7 @@ class FieldRow(Horizontal):
                     text += f"  ({preset.get('cpu')} vCPU, {preset.get('memory')})"
                 opts.append((text, v))
             cur = self.value0 if self.value0 in f.enum else (str(self.value0) if str(self.value0) in map(str, f.enum)
-                                                            else Select.BLANK)
+                                                            else Select.NULL)
             yield Select(opts, value=cur, allow_blank=not f.required, classes="fwidget")
         elif f.role == Role.SECRET:
             with Horizontal(classes="fwidget"):
@@ -148,23 +223,34 @@ class FieldRow(Horizontal):
 
     @property
     def value(self):
-        w = self.query(".fwidget").first()
+        found = self.query(".fwidget")
+        if not found:                       # not composed yet: the starting value
+            return self.value0
+        w = found.first()
         if isinstance(w, StoragePicker):
             return w.value
         if isinstance(w, Switch):
             return w.value
         if isinstance(w, Select):
-            return None if w.value is Select.BLANK else w.value
+            return None if w.value is Select.NULL else w.value
         inp = self.query(Input).first()
         return inp.value if inp.value != "" else None
+
+    @property
+    def override(self) -> bool:
+        """A storage field typed by hand (the picker's override box)."""
+        found = self.query(StoragePicker)
+        return bool(found) and found.first().override
 
     def set_value(self, value) -> None:
         w = self.query(".fwidget").first()
         if isinstance(w, Select):
-            w.value = value if value in (self.f.enum or []) else Select.BLANK
+            w.value = value if value in (self.f.enum or []) else Select.NULL
         elif isinstance(w, Switch):
             w.value = bool(value)
-        elif not isinstance(w, StoragePicker):
+        elif isinstance(w, StoragePicker):
+            w.set_value(None if value is None else str(value))
+        else:
             self.query(Input).first().value = "" if value is None else str(value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -173,8 +259,9 @@ class FieldRow(Horizontal):
             self.query(Input).first().value = pl.random_password()
 
 
-class _FormBase(ModalScreen):
-    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss", "cancel")]
+class FormLogic:
+    """Rows, values, show_if visibility and size-preset filling, shared by the modal screens
+    (--classic-ui) and the inline FormView."""
 
     def rows(self) -> list[FieldRow]:
         return list(self.query(FieldRow))
@@ -182,24 +269,37 @@ class _FormBase(ModalScreen):
     def values(self) -> dict[Path, object]:
         return {r.f.path: r.value for r in self.rows()}
 
-    def refresh_visibility(self) -> None:
+    def refresh_visibility(self, only: list[Path] | None = None) -> None:
+        """only = the rows that depend on the field that changed (None: every row)."""
         vals = self.values()
         for r in self.rows():
+            if only is not None and r.f.path not in only:
+                continue
             vis = pl.shown(r.f, vals)
             if r.display != vis:
                 r.display = vis
+
+    def apply_preset(self, row: FieldRow, value) -> None:
+        """A size preset was chosen: the template fills the sizes it names; they stay editable."""
+        if row.f.role != Role.SIZE_PRESET or not row.f.presets:
+            return
+        meta = next((p.get("metadata") or {} for p in row.f.presets if p.get("value") == value), {})
+        for r in self.rows():
+            key = ".".join(r.f.path[1:])
+            if r is not row and (key in meta or r.f.path[-1] in meta):
+                r.set_value(meta.get(key, meta.get(r.f.path[-1])))
+
+
+class _FormBase(FormLogic, ModalScreen):
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss", "cancel")]
 
     def on_input_changed(self, event) -> None:
         self.refresh_visibility()
 
     def on_select_changed(self, event) -> None:
         row = next((a for a in event.control.ancestors if isinstance(a, FieldRow)), None)
-        if row is not None and row.f.role == Role.SIZE_PRESET and row.f.presets:
-            meta = next((p.get("metadata") or {} for p in row.f.presets if p.get("value") == event.value), {})
-            for r in self.rows():
-                key = ".".join(r.f.path[1:])
-                if r is not row and (key in meta or r.f.path[-1] in meta):
-                    r.set_value(meta.get(key, meta.get(r.f.path[-1])))   # the template fills sizes; still editable
+        if row is not None:
+            self.apply_preset(row, event.value)
         self.refresh_visibility()
 
     def on_switch_changed(self, event) -> None:
@@ -315,6 +415,30 @@ class EditScreen(_FormBase):
             (self.owner or self.app).plan_edit(self.itype, self.inst, self.fm, changes)
 
 
+def plan_text(p: ActionPlan) -> Text:
+    """An ActionPlan for the screen: summary, changes, steps with dry-run results, warnings, errors."""
+    t = Text()
+    for s in p.summary:
+        t.append(f"{s}\n")
+    if p.diff:
+        t.append("\nchanges\n", style="bold underline")
+        for k, o, n in p.diff:
+            t.append(f"  {k}: ", style="dim")
+            t.append(f"{o} -> {n}\n", style="bold")
+    t.append("\nsteps\n", style="bold underline")
+    for i, s in enumerate(p.steps, 1):
+        t.append(f"  {i}. {s.title}\n", style="bold")
+        if s.preview:
+            t.append("\n".join(f"       {ln}" for ln in s.preview.splitlines()) + "\n", style="dim")
+        if s.dry_run:
+            t.append(f"       dry-run: {s.dry_run}\n", style="cyan")
+    for w in p.warnings:
+        t.append(f"\n! {w}", style="yellow")
+    for e in p.errors:
+        t.append(f"\nx {e}", style="red")
+    return t
+
+
 class PlanScreen(ModalScreen):
     """The ActionPlan before it runs: summary, changes, steps with dry-run results, warnings, errors."""
 
@@ -327,25 +451,7 @@ class PlanScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         p = self.plan
-        t = Text()
-        for s in p.summary:
-            t.append(f"{s}\n")
-        if p.diff:
-            t.append("\nchanges\n", style="bold underline")
-            for k, o, n in p.diff:
-                t.append(f"  {k}: ", style="dim")
-                t.append(f"{o} -> {n}\n", style="bold")
-        t.append("\nsteps\n", style="bold underline")
-        for i, s in enumerate(p.steps, 1):
-            t.append(f"  {i}. {s.title}\n", style="bold")
-            if s.preview:
-                t.append("\n".join(f"       {ln}" for ln in s.preview.splitlines()) + "\n", style="dim")
-            if s.dry_run:
-                t.append(f"       dry-run: {s.dry_run}\n", style="cyan")
-        for w in p.warnings:
-            t.append(f"\n! {w}", style="yellow")
-        for e in p.errors:
-            t.append(f"\nx {e}", style="red")
+        t = plan_text(p)
         with Vertical():
             yield Label(f"plan · {p.op} {p.target}  (esc to cancel)", classes="title")
             with VerticalScroll():

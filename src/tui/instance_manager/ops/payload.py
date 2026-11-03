@@ -115,19 +115,63 @@ def masked(payload: dict, fm: FormModel) -> dict:
     return walk(payload)
 
 
-def validate(itype: InstanceType, fm: FormModel, values: dict[Path, object], name: str,
-             existing: list[str], sc: dict[str, StorageClassInfo],
-             name_regex: str | None) -> tuple[list[str], list[str]]:
-    """-> (errors, warnings)"""
-    errors, warnings = [], []
+def pattern_ok(pattern: str, value: str) -> bool | None:
+    """None when Python can't compile the pattern (API specs carry JavaScript/ECMA regexes such as
+    \\p{L}): the server checks it then."""
+    try:
+        return re.search(pattern, value) is not None
+    except re.error:
+        return None
+
+
+def check_name(itype: InstanceType, name: str, existing: list[str], name_regex: str | None) -> list[str]:
+    errors = []
     if not name:
         errors.append("name is required")
-    elif name_regex and not re.fullmatch(name_regex, name):
+    elif name_regex and pattern_ok(f"^(?:{name_regex})$", name) is False:
         errors.append(f"name must match {name_regex}")
     if name and itype.crd and not DNS1123.match(name):
         errors.append("name becomes a Kubernetes resource name: lowercase letters, digits and '-' only")
     if name and name in existing:
         errors.append(f"an instance named {name} already exists")
+    return errors
+
+
+def check_field(f: Field, raw, sc: dict[str, StorageClassInfo]) -> tuple[list[str], list[str]]:
+    """(errors, warnings) of one shown payload field, each prefixed with the field's label."""
+    errors, warnings = [], []
+    label = f.label or f.key
+    try:
+        v = coerce(f, raw)
+    except (TypeError, ValueError):
+        return [f"{label}: not a valid {f.type}"], []
+    if v is None:
+        return ([f"{label} is required"] if f.required else []), []
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if f.minimum is not None and v < f.minimum:
+            errors.append(f"{label}: {v} is below the minimum {f.minimum}")
+        if f.maximum is not None and v > f.maximum:
+            errors.append(f"{label}: {v} is above the maximum {f.maximum}")
+    if f.enum and not f.enum_soft and v not in f.enum and str(v) not in map(str, f.enum):
+        errors.append(f"{label}: {v} is not one of {', '.join(map(str, f.enum))}")
+    if f.pattern and isinstance(v, str) and pattern_ok(f.pattern, v) is False:
+        errors.append(f"{label}: does not match {f.pattern}")
+    if f.role == Role.STORAGE_CLASS and isinstance(v, str):
+        info = sc.get(v)
+        if info is None:
+            errors.append(f"{label}: no StorageClass {v}")
+        elif f.storage and not f.storage.accepts(info.kind):
+            warnings.append(f"{label}: {v} is {info.kind.label}, but the field needs {f.storage.need.value}")
+        elif f.enum_soft and f.enum and v not in f.enum:
+            warnings.append(f"{label}: {v} is outside the classes the form offers ({', '.join(f.enum)})")
+    return errors, warnings
+
+
+def validate(itype: InstanceType, fm: FormModel, values: dict[Path, object], name: str,
+             existing: list[str], sc: dict[str, StorageClassInfo],
+             name_regex: str | None) -> tuple[list[str], list[str]]:
+    """-> (errors, warnings)"""
+    errors, warnings = check_name(itype, name, existing, name_regex), []
     if itype.max_instances and len(existing) >= itype.max_instances:
         errors.append(f"{itype.display} allows at most {itype.max_instances} instance(s)")
     if not itype.creatable:
@@ -135,31 +179,7 @@ def validate(itype: InstanceType, fm: FormModel, values: dict[Path, object], nam
     for f in payload_fields(fm):
         if not shown(f, values):
             continue
-        label = f.label or f.key
-        try:
-            v = coerce(f, values.get(f.path))
-        except (TypeError, ValueError):
-            errors.append(f"{label}: not a valid {f.type}")
-            continue
-        if v is None:
-            if f.required:
-                errors.append(f"{label} is required")
-            continue
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            if f.minimum is not None and v < f.minimum:
-                errors.append(f"{label}: {v} is below the minimum {f.minimum}")
-            if f.maximum is not None and v > f.maximum:
-                errors.append(f"{label}: {v} is above the maximum {f.maximum}")
-        if f.enum and not f.enum_soft and v not in f.enum and str(v) not in map(str, f.enum):
-            errors.append(f"{label}: {v} is not one of {', '.join(map(str, f.enum))}")
-        if f.pattern and isinstance(v, str) and not re.search(f.pattern, v):
-            errors.append(f"{label}: does not match {f.pattern}")
-        if f.role == Role.STORAGE_CLASS and isinstance(v, str):
-            info = sc.get(v)
-            if info is None:
-                errors.append(f"{label}: no StorageClass {v}")
-            elif f.storage and not f.storage.accepts(info.kind):
-                warnings.append(f"{label}: {v} is {info.kind.label}, but the field needs {f.storage.need.value}")
-            elif f.enum_soft and f.enum and v not in f.enum:
-                warnings.append(f"{label}: {v} is outside the classes the form offers ({', '.join(f.enum)})")
+        e, w = check_field(f, values.get(f.path), sc)
+        errors += e
+        warnings += w
     return errors, warnings

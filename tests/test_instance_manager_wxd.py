@@ -162,3 +162,119 @@ class Facts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# -- cache plan C3: operator facts + embedded spec cached by image digest ---------------------------
+class _Src:
+    """A minimal SourceCache stand-in (get / put)."""
+
+    def __init__(self):
+        self.parts = {}
+
+    def get(self, part):
+        return self.parts.get(part)
+
+    def put(self, part, obj, fp="", took=None):
+        self.parts[part] = obj
+
+
+def _pod(name, image, phase="Running"):
+    return {"metadata": {"name": name}, "status": {"phase": phase, "containerStatuses": [
+        {"image": "icr.io/op:1", "imageID": f"icr.io/op@sha256:{image}"}]}}
+
+
+class FakeOpKube:
+    WATCHES = "- kind: WxdEngine\n  group: watsonxdata.ibm.com\n"
+
+    def __init__(self, pods, operator="op-b"):
+        self.pods, self.operator = pods, operator
+        self.execs = []
+
+    def get(self, path, **kw):
+        from tui.common.kube import KubeError
+        if path.endswith("/pods"):
+            return {"items": self.pods}
+        name = path.rsplit("/", 1)[-1]
+        hit = next((p for p in self.pods if p["metadata"]["name"] == name), None)
+        if hit is None:
+            raise KubeError(404, name)
+        return hit
+
+    def exec(self, ns, pod, cmd, timeout=15):
+        self.execs.append((pod, cmd[-1]))
+        if cmd[-1] == "/opt/ansible/watches.yaml":
+            return self.WATCHES if pod == self.operator else "- kind: Other\n"
+        if "scale" in cmd[-1]:
+            return "#@@FILE /opt/ansible/config/scale/small.yaml\nscale:\n  presto_worker:\n    replicas: 10\n"
+        return "# - presto_worker_replicas\n"
+
+
+class FactsCache(unittest.TestCase):
+    def _warm(self):
+        src = _Src()
+        kube = FakeOpKube([_pod(f"op-{c}", "aaa" if c == "b" else c * 3) for c in "abcdefghij"])
+        f = OperatorFacts(kube, ["ops"], "WxdEngine", sources=src)
+        self.assertEqual(f.pod(), ("ops", "op-b"))                        # found by the parallel scan
+        self.assertEqual(list(f.presets()), ["small"])
+        self.assertEqual(f.documented_fields("t.yaml"), {"presto_worker_replicas"})
+        self.assertEqual(src.parts["subservices/wxd/facts"]["image"], "sha256:aaa")
+        return src, kube
+
+    def test_cached_pod_and_facts_need_no_exec(self):
+        src, _ = self._warm()
+        kube = FakeOpKube([_pod("op-a", "zzz"), _pod("op-b", "aaa")])
+        f = OperatorFacts(kube, ["ops"], "WxdEngine", sources=src)
+        self.assertEqual(f.pod(), ("ops", "op-b"))
+        self.assertEqual(list(f.presets()), ["small"])
+        self.assertEqual(f.documented_fields("t.yaml"), {"presto_worker_replicas"})
+        self.assertEqual(kube.execs, [])                                   # all from the cache
+        self.assertTrue(f.from_cache)
+
+    def test_restarted_operator_is_found_by_its_image(self):              # V-C7
+        src, _ = self._warm()
+        kube = FakeOpKube([_pod("op-a", "zzz"), _pod("op-b-new", "aaa")], operator="op-b-new")
+        f = OperatorFacts(kube, ["ops"], "WxdEngine", sources=src)
+        self.assertEqual(f.pod(), ("ops", "op-b-new"))
+        self.assertEqual(list(f.presets()), ["small"])
+        self.assertEqual(kube.execs, [])
+
+    def test_a_new_operator_image_rereads_the_facts(self):
+        src, _ = self._warm()
+        kube = FakeOpKube([_pod("op-a", "zzz"), _pod("op-b", "bbb")])
+        f = OperatorFacts(kube, ["ops"], "WxdEngine", sources=src)
+        self.assertEqual(f.pod(), ("ops", "op-b"))
+        self.assertFalse(f.from_cache)
+        f.presets()
+        self.assertTrue(any("scale" in c for _, c in kube.execs))           # re-read from the new operator
+        self.assertEqual(src.parts["subservices/wxd/facts"]["image"], "sha256:bbb")
+
+
+class SpecCache(unittest.TestCase):
+    def test_spec_is_reused_while_the_api_pod_runs_the_same_image(self):
+        from tui.instance_manager.subservices import embedded_spec as es
+        src = _Src()
+        src.parts[es.SPEC_PART] = {"base": "/lakehouse/api/v3", "namespace": "ns", "service": "lh-api",
+                                   "pod": "api-1", "image": "sha256:aaa", "spec": SPEC}
+        with patch.object(es, "_service_pods", return_value=[_pod("api-2", "aaa")]), \
+                patch.object(es, "_discover", side_effect=AssertionError("no discovery expected")):
+            es._cache.clear()
+            self.assertEqual(es.find_spec(None, "ns", "/lakehouse/api/v3", sources=src), SPEC)
+        with patch.object(es, "_service_pods", return_value=[_pod("api-3", "bbb")]), \
+                patch.object(es, "_discover", return_value=(SPEC, {"service": "lh-api", "pod": "api-3",
+                                                                   "image": "sha256:bbb"})) as disc:
+            es._cache.clear()
+            es.find_spec(None, "ns", "/lakehouse/api/v3", sources=src)
+            disc.assert_called_once()                                       # a new API image: discovered again
+        self.assertEqual(src.parts[es.SPEC_PART]["image"], "sha256:bbb")
+        es._cache.clear()
+
+    def test_trim_keeps_collections_and_definitions(self):
+        from tui.instance_manager.subservices.embedded_spec import trim_spec
+        doc = {**SPEC, "paths": {**SPEC["paths"], "/catalogs": {"get": {}}}, "info": {"x": 1}}
+        t = trim_spec(doc)
+        self.assertNotIn("/catalogs", t["paths"])
+        self.assertIn("/presto_engines/{engine_id}", t["paths"])
+        self.assertNotIn("info", t)
+        sp, _ = engines()
+        sp.spec = t
+        self.assertEqual(list(sp.collections()), ["milvus", "presto", "spark"])

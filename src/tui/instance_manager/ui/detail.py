@@ -40,6 +40,8 @@ def config_text(inst: Instance, itype: InstanceType | None, fm: FormModel | Exce
     t.append(f"{inst.display_name or inst.name}", style="bold")
     t.append(f"  {inst.state.word}", style=f"bold {'' if inst.state.value == 'inactive' else ''}")
     t.append(f"\n{inst.reason}\n", style="dim")
+    if inst.meta.get("cached"):
+        t.append("from the discovery cache: the live state is loading (changes wait for it)\n", style="italic yellow")
     zen = inst.meta.get("zen") or {}
     rows = [("type", itype.display if itype else inst.type_key), ("namespace", inst.namespace or "-")]
     if itype and itype.kind:
@@ -57,6 +59,8 @@ def config_text(inst: Instance, itype: InstanceType | None, fm: FormModel | Exce
         return t
     if isinstance(fm, Exception):
         t.append(f"\nfield discovery failed: {fm}", style="red")
+        return t
+    if inst.meta.get("cached"):
         return t
     flat = flatten(inst.spec)
     for title, roles in GROUPS:
@@ -145,10 +149,38 @@ class Detail(Vertical):
                     yield Static("", id="storage-empty")
             with TabPane("Sub-services", id="tab-sub"):
                 yield Static("", id="sub-text")
+            if self.with_fields:
+                with TabPane("Fields", id="tab-fields"):
+                    with VerticalScroll():
+                        yield Static("select an instance or a type", id="fields-text")
+
+    def __init__(self, *a, with_fields: bool = False, **kw):
+        super().__init__(*a, **kw)
+        self.with_fields = with_fields           # the inline UI's Explain (x) is this tab
+        self._fields_key: tuple | None = None
 
     def on_mount(self) -> None:
         self.border_title = "detail"
         self._storage_rows: list[StorageFieldRow] = []
+
+    def show_fields(self, itype: InstanceType | None, fm, version: int) -> None:
+        """The discovered field model with provenance (the report's --explain), redrawn per model version."""
+        if not self.with_fields:
+            return
+        key = (itype.key if itype else None, version, isinstance(fm, FormModel))
+        if key == self._fields_key:
+            return
+        self._fields_key = key
+        box = self.query_one("#fields-text", Static)
+        if itype is None:
+            box.update("select an instance or a type")
+        elif isinstance(fm, FormModel):
+            from .screens import _render_model
+            box.update(_render_model(itype, fm))
+        elif isinstance(fm, Exception):
+            box.update(Text(f"field discovery failed: {fm}", style="red"))
+        else:
+            box.update(Text("discovering fields...", style="dim italic"))
 
     def show(self, inst: Instance | None, itype: InstanceType | None, fm, tab: TabState | None,
              sc: dict[str, StorageClassInfo]) -> None:
@@ -161,7 +193,7 @@ class Detail(Vertical):
         set_text(self.query_one("#config-text", Static), config_text(inst, itype, fm))
         flat = flatten(inst.spec)
         fields = []
-        if isinstance(fm, FormModel):
+        if isinstance(fm, FormModel) and not inst.meta.get("cached"):
             fields = fm.representatives([f for f in fm.by_role(Role.STORAGE_CLASS)
                                          if f.path in flat or not inst.spec])
         self._fill_storage(fields, flat, sc)
@@ -189,7 +221,8 @@ class Detail(Vertical):
             text.append("checking for sub-services...", style="dim")
         elif tab.enabled:
             text.append(f"{tab.reason}\n", style="bold")
-            text.append("press s (or click here) to open", style="dim")
+            text.append("pick a kind in the sub-service dropdown (top left, s); its items list beside the "
+                        "instances" if self.with_fields else "press s (or click here) to open", style="dim")
         else:
             text.append(f"{tab.state}: ", style="bold")
             text.append(tab.reason, style="dim")

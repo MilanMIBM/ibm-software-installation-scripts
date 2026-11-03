@@ -15,6 +15,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from ....common.kube import METADATA_ONLY, Kube, KubeError
+from ...timings import span
 
 MAX_OWNER_ROUNDS = 6
 PAGE = 500
@@ -38,6 +39,7 @@ class Cluster:
         self._crd_by_name: dict[str, dict | None] = {}
         self._discovery: dict[str, list[dict]] = {}
         self._cache: dict[str, list[dict]] = {}
+        self.sources = None                     # cache.sources.SourceCache (read-through CRDs), or None
 
     # -- lists ---------------------------------------------------------------
     def list(self, path: str, *, accept: str | None = None, cache: bool = True, **query) -> list[dict]:
@@ -83,6 +85,13 @@ class Cluster:
         with self._lock:
             if self._index is not None:
                 return self._index
+        with span("api index (aggregated discovery)"):
+            out = self._load_index()
+        with self._lock:
+            self._index = out
+        return out
+
+    def _load_index(self) -> list[dict]:
         out: list[dict] = []
         for path in ("/apis", "/api"):
             try:
@@ -98,19 +107,25 @@ class Cluster:
                                     "plural": r.get("resource", ""), "singular": r.get("singularResource", ""),
                                     "short": r.get("shortNames") or [], "namespaced": r.get("scope") == "Namespaced",
                                     "preferred": n == 0})
-        with self._lock:
-            self._index = out
         return out
 
     def get_crd(self, name: str) -> dict | None:
-        """One CRD by name (<plural>.<group>), cached; None for built-in kinds."""
+        """One CRD by name (<plural>.<group>), trimmed to what discovery reads; None for built-in kinds.
+        Read through the discovery cache when one is attached (the probe drops changed CRDs)."""
+        from ...cache.sources import trim_crd
         with self._lock:
             if name in self._crd_by_name:
                 return self._crd_by_name[name]
-        try:
-            crd = self.kube.get(f"{CRD_PATH}/{name}")
-        except KubeError:
-            crd = None
+        part = f"sources/crd/{name}"
+        crd = self.sources.get(part) if self.sources else None
+        if crd is None:
+            try:
+                with span(f"crd {name}"):
+                    crd = trim_crd(self.kube.get(f"{CRD_PATH}/{name}"))
+            except KubeError:
+                crd = None
+            if crd is not None and self.sources is not None:
+                self.sources.put(part, crd, fp=crd["metadata"].get("resourceVersion") or "")
         with self._lock:
             self._crd_by_name[name] = crd
         return crd

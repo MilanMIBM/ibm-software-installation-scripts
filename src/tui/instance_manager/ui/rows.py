@@ -6,7 +6,10 @@ when its content changes, so a 30 s poll never redraws the list.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual.app import ComposeResult
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Label
@@ -58,9 +61,12 @@ class _Deferred:
 
 
 class TypeSelected(Message):
-    def __init__(self, key: str):
+    """open=True: a click or Enter (the inline UI opens the New form, UI-D1); False: focus only."""
+
+    def __init__(self, key: str, open: bool = False):
         super().__init__()
         self.key = key
+        self.open = open
 
 
 class InstanceSelected(Message):
@@ -75,14 +81,18 @@ class CatalogRow(_Deferred, Horizontal, can_focus=True):
     CatalogRow:focus { background: $boost; }
     CatalogRow.-selected { background: $accent 25%; }
     CatalogRow.-unmanaged .c-name { color: $text-muted; }
+    CatalogRow.-rebuilding .c-count { color: $warning; }
     CatalogRow Label { text-wrap: nowrap; text-overflow: ellipsis; }
     CatalogRow .c-name { width: 1fr; margin-left: 1; }
     CatalogRow .c-count { width: 9; content-align: right middle; color: $text-muted; }
     """
 
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("enter", "open", "open", show=False)]
+
     def __init__(self, key: str):
         super().__init__()
         self.key = key
+        self.rebuilding = False
 
     def compose(self) -> ComposeResult:
         yield GlowDot(State.INACTIVE, "ring", size="mini")
@@ -97,14 +107,20 @@ class CatalogRow(_Deferred, Horizontal, can_focus=True):
         name = itype.display if itype else "all types"
         set_text(self.query_one(".c-name", Label), name)
         cap = f"/{itype.max_instances}" if itype and itype.max_instances else ""
-        set_text(self.query_one(".c-count", Label), f"{len(instances)}{cap}")
+        set_text(self.query_one(".c-count", Label), ("... " if self.rebuilding else "") + f"{len(instances)}{cap}")
         self.set_class(bool(itype) and not itype.creatable, "-unmanaged")
+        self.set_class(self.rebuilding, "-rebuilding")
+        self.tooltip = "rebuilding this type's fields" if self.rebuilding else None
 
     def on_focus(self) -> None:
         self.post_message(TypeSelected(self.key))
 
     def on_click(self) -> None:
         self.focus()
+        self.post_message(TypeSelected(self.key, open=True))
+
+    def action_open(self) -> None:
+        self.post_message(TypeSelected(self.key, open=True))
 
 
 class InstanceRow(_Deferred, Horizontal, can_focus=True):

@@ -48,7 +48,7 @@ def _values(lines: list[str]) -> dict[str, str]:
         return {}
     script = "\n".join(ln for ln in lines if _EXPORT.match(ln.strip())) + "\n" + \
         "for _n in " + " ".join(names) + "; do print -rn -- \"${(P)_n}\"; print -n '\\0'; done"
-    out = subprocess.run(["zsh", "-f", "-c", script], capture_output=True, text=True, check=True).stdout
+    out = subprocess.run(["zsh", "-f", "-c", script], capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, check=True).stdout
     return dict(zip(names, out.split("\0")))
 
 
@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     ns = os.environ.get("PROJECT_CPD_INST_OPERANDS", "?")
     api = ""
     try:
-        api = subprocess.run(["oc", "whoami", "--show-server"], capture_output=True, text=True, timeout=20).stdout.strip()
+        api = subprocess.run(["oc", "whoami", "--show-server"], capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=20).stdout.strip()
     except Exception:
         pass
     moves, rest = plan(details)

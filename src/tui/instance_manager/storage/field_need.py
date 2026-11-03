@@ -1,6 +1,11 @@
 """Storage-class field -> what it needs: file | block-preferred | either | unknown (plan §5.2).
 
   1 explicit    sibling accessModes, schema description, a form/sample enum of classes
+                (what the CRD / zen form says; a form default is no evidence: zen's EDB form
+                defaults to a file class while EDB needs block)
+  1b docs       when 1 found nothing: the IBM docs' storage kind of the service (docs_needs.py);
+                a service that uses file and block storage only decides fields whose name says
+                which, else the field ends on "either" (every file and block class is valid)
   2 value-flow  the field's value on each existing instance, traced to that instance's PVCs:
                 any RWX filesystem PVC -> file; all RWO -> block-preferred
   3 peers       PVCs owned by the same sink kind elsewhere in the cluster (>= 80% one kind)
@@ -14,7 +19,17 @@ from collections.abc import Callable
 
 from ..discovery.observed import Flat
 from ..discovery.roles import leaf_name
-from ..model import Evidence, Field, Kind, Need, Path, StorageClassInfo, StorageNeed
+from ..model import (
+    Evidence,
+    Field,
+    Kind,
+    Need,
+    Path,
+    Role,
+    StorageClassInfo,
+    StorageNeed,
+)
+from .docs_needs import DocNeed, lookup
 
 PEER_SHARE = 0.8
 PEER_MIN = 3
@@ -28,9 +43,11 @@ def _kind_need(kind: Kind) -> Need | None:
 
 def assess(f: Field, fields: dict[Path, Field], flats: list[tuple[str, Flat]],
            pvcs_of: Callable[[str], list[dict]], sc_info: dict[str, StorageClassInfo],
-           peer_pvcs: Callable[[set[str], set[str]], list[dict]] | None = None) -> StorageNeed:
+           peer_pvcs: Callable[[set[str], set[str]], list[dict]] | None = None,
+           docs: DocNeed | None = None) -> StorageNeed:
     """flats: (instance name, flattened spec); pvcs_of(name) -> that instance's PVCs;
-    peer_pvcs(sink_keys, exclude_uids) -> PVCs of the same sink kinds elsewhere."""
+    peer_pvcs(sink_keys, exclude_uids) -> PVCs of the same sink kinds elsewhere;
+    docs: the service's documented storage kinds (docs_needs.lookup)."""
     sn = StorageNeed()
 
     def decide(need: Need, ev: Evidence) -> None:
@@ -61,6 +78,17 @@ def assess(f: Field, fields: dict[Path, Field], flats: list[tuple[str, Flat]],
                 decide(_kind_need(k), Evidence(next(iter(f.sources), "S1"),
                                                f"offered classes are {k.label} ({', '.join(map(str, f.enum))})",
                                                0.7))
+
+    # 1b. docs, when the CRD / form said nothing
+    leaf = (leaf_name(f.path) + " " + (f.label or "")).lower()     # the form label counts ("File storage class")
+    token = Need.FILE if any(w in leaf for w in ("file", "rwx", "shared")) else (
+        Need.BLOCK if any(w in leaf for w in ("block", "rwo")) else None)
+    if docs is not None and sn.need == Need.UNKNOWN:
+        where = f"IBM docs: \"{docs.quote}\""
+        if docs.need is not None:
+            decide(docs.need, Evidence("docs", where, 0.85))
+        elif token is not None:
+            decide(token, Evidence("docs", f"{where}; the field name says {token.value}", 0.75))
 
     # 2. value-flow
     flow: list[Need] = []
@@ -108,15 +136,17 @@ def assess(f: Field, fields: dict[Path, Field], flats: list[tuple[str, Flat]],
                     sn.evidence.append(ev)
 
     # 4. name tokens (hint only)
-    leaf = (leaf_name(f.path) + " " + (f.label or "")).lower()     # the form label counts ("File storage class")
-    token = Need.FILE if any(w in leaf for w in ("file", "rwx", "shared")) else (
-        Need.BLOCK if any(w in leaf for w in ("block", "rwo")) else None)
     if token:
         ev = Evidence("S8", f"name/label hint '{leaf.strip()}' -> {token.value}", 0.3)
         if sn.need == Need.UNKNOWN:
             decide(token, ev)
         elif sn.need != token:
             sn.evidence.append(Evidence("S8", f"name says {token.value}, outranked by the evidence above", 0.3))
+
+    # a documented file-and-block service, nothing more specific found: both kinds are valid
+    if docs is not None and docs.need is None and sn.need == Need.UNKNOWN:
+        decide(Need.EITHER, Evidence("docs", f"IBM docs: \"{docs.quote}\" (this field isn't documented "
+                                             "separately)", 0.6))
 
     # mismatches: current values the need doesn't accept
     for name, flat in flats:
@@ -125,3 +155,14 @@ def assess(f: Field, fields: dict[Path, Field], flats: list[tuple[str, Flat]],
         if info and not sn.accepts(info.kind):
             sn.mismatches.append(f"{name}: {value} is {info.kind.label}, field needs {sn.need.value}")
     return sn
+
+
+def assess_static(fields: dict[Path, Field], sc_info: dict[str, StorageClassInfo], type_key: str = "") -> None:
+    """Storage needs for a form without traceable instances (sub-service forms such as the watsonx.data
+    engines): what the schema says (descriptions like "rwo storage class"), the docs, the field name.
+    Fields that already carry a need keep it."""
+    docs = lookup(type_key) if type_key else None
+    for f in fields.values():
+        if f.role == Role.STORAGE_CLASS and f.storage is None:
+            f.storage = assess(f, fields, [], lambda n: [], sc_info, docs=docs)
+

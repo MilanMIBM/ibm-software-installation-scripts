@@ -28,13 +28,21 @@ def _helpers():
 
 class LakehouseAPI:
     def __init__(self, instance_id: str, url: str | None = None, username: str | None = None,
-                 api_key: str | None = None, verify: bool = False):
+                 api_key: str | None = None, verify: bool | str | None = None):
         self.instance_id = str(instance_id)
         self.url = (url or os.environ.get("CPD_URL") or "").rstrip("/")
         self._user = username or os.environ.get("CPD_USERNAME") or ""
         self._key = api_key or os.environ.get("CPD_APIKEY") or ""
-        self.verify = verify
+        self._verify = verify                  # None: decided on first use (common/tls.py)
         self._token: str | None = None
+
+    @property
+    def verify(self) -> bool | str:
+        """The CA bundle that verifies the Software Hub route, or False when none does (tls.verify_for)."""
+        if self._verify is None:
+            from ....common import tls
+            self._verify = tls.verify_for(self.url, f"Software Hub {self.url}") if self.url else False
+        return self._verify
 
     @property
     def configured(self) -> bool:

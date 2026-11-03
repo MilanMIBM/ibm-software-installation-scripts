@@ -17,6 +17,7 @@ from ....common.state import State
 from ...discovery.observed import observe
 from ...discovery.samples import load_sample
 from ...model import Field, FormModel, Instance, InstanceType, Path
+from ...timings import span
 from ..k8s_crd.cluster import Cluster
 from ..k8s_crd.provider import CrdProvider, type_from_crd
 from . import extensions, registry
@@ -77,14 +78,15 @@ class CpdProvider(CrdProvider):
         self._addons: dict[str, registry.AddonEntry] | None = None
         self._prov_ext: dict[str, dict] = {}
         self._details_ext: dict[str, dict] = {}
-        self._cpd_lock = threading.RLock()
+        self._cpd_lock = threading.RLock()            # the add-on registry
+        self._zen_lock = threading.RLock()            # zen records + gets: separate, so both load at once
+        self.sources = None                           # cache.sources.SourceCache (read-through), or None
 
     # -- registry / zen ----------------------------------------------------------
     def addons(self) -> dict[str, registry.AddonEntry]:
         with self._cpd_lock:
             if self._addons is None:
-                cms = self.cluster.try_list(f"/api/v1/namespaces/{self.namespace}/configmaps",
-                                            labelSelector="icpdata_addon=true")
+                cms = self._addon_cms()
                 self._addons, notes = registry.parse_addon_cms(cms)
                 self._prov_ext, self._details_ext, notes2 = registry.parse_extensions(cms)
                 self.notices.extend(notes + notes2)
@@ -95,25 +97,87 @@ class CpdProvider(CrdProvider):
                         self._prov_ext[ext["extension_name"]] = ext
             return self._addons
 
+    def _addon_cms(self) -> list[dict]:
+        from ...cache.sources import cms_from_part, trim_cm
+        part = self.sources.get("sources/addons") if self.sources else None
+        if part is not None:
+            return cms_from_part(part)
+        with span("addons (configmaps)"):
+            cms = self.cluster.try_list(f"/api/v1/namespaces/{self.namespace}/configmaps",
+                                        labelSelector="icpdata_addon=true")
+        trimmed = [trim_cm(c) for c in cms]
+        if self.sources is not None:
+            self.sources.put("sources/addons", {"cms": trimmed})
+        return cms_from_part({"cms": trimmed})
+
     def _zen_extensions(self, point: str) -> list[dict]:
-        from ...subservices.wxd.api import LakehouseAPI, _helpers
-        api = LakehouseAPI("")
-        if not api.configured:
-            return []
+        part = f"sources/zen_ext/{point}"
+        hit = self.sources.get(part) if self.sources else None
+        if hit is not None:
+            return list(hit.get("items") or [])
         try:
-            h = _helpers()
-            hub = h.SoftwareHub.sign_in(api.url, api._user, api_key=api._key, verify=False)
-            return list((hub.request(f"/zen-data/v1/extensions?extension_point_id={point}") or {}).get("data") or [])
+            items = self._fetch_zen_extensions(point)
         except Exception as e:
             self.notices.append(f"zen extensions API: {str(e)[:120]}; using the add-on configmaps only")
             return []
+        if items is None:
+            return []
+        if self.sources is not None:                   # a failed call is never cached: retried next run
+            self.sources.put(part, {"items": items})
+        return items
+
+    @staticmethod
+    def _fetch_zen_extensions(point: str) -> list[dict] | None:
+        """The zen extensions API (None without CPD_URL / CPD_USERNAME / CPD_APIKEY); raises on failure."""
+        from ...subservices.wxd.api import LakehouseAPI, _helpers
+        api = LakehouseAPI("")
+        if not api.configured:
+            return None
+        with span(f"zen extensions {point} (sign-in + GET)"):
+            h = _helpers()
+            hub = h.SoftwareHub.sign_in(api.url, api._user, api_key=api._key, verify=api.verify)
+            return list((hub.request(f"/zen-data/v1/extensions?extension_point_id={point}") or {}).get("data")
+                        or [])
+
+    def revalidate_zen_extensions(self, point: str = "service_provisioning") -> bool | None:
+        """V-C2: forms registered only through the zen API (Informix) can change while no configmap does.
+        Re-read them, bypassing the cache. True = changed (cached anew; the registry is re-read on next
+        use), False = unchanged, None = nothing cached or the API not reachable."""
+        from ...cache.store import dumps
+        part = f"sources/zen_ext/{point}"
+        cached = self.sources.get(part) if self.sources else None
+        if cached is None:
+            return None
+        try:
+            live = self._fetch_zen_extensions(point)
+        except Exception:
+            return None
+        if live is None or dumps(live) == dumps(cached.get("items") or []):
+            return None if live is None else False
+        self.sources.put(part, {"items": live})
+        with self._cpd_lock:
+            self._addons = None
+        return True
+
+    def seed_zen(self, records: list[dict] | None) -> None:
+        """Zen records the profile preflight already listed (the same cpd-cli call): no second list."""
+        if records is None:
+            return
+        with self._zen_lock:
+            if self._zen is None and not self._zen_disabled:
+                self._zen = self._in_namespace(records)
+                self.zen_ok = True
+
+    def _in_namespace(self, records: list[dict]) -> list[dict]:
+        return [r for r in records if not self.namespace or r.get("namespace") in (None, "", self.namespace)]
 
     def zen_records(self) -> list[dict]:
-        with self._cpd_lock:
+        with self._zen_lock:
             if self._zen is None:
                 try:
-                    self._zen = [r for r in self.cli.list_instances()
-                                 if not self.namespace or r.get("namespace") in (None, "", self.namespace)]
+                    with span("zen records (cpd-cli list)"):
+                        recs = self.cli.list_instances()
+                    self._zen = self._in_namespace(recs)
                     self.zen_ok = True
                 except (CpdCliError, OSError, ValueError) as e:
                     self._zen, self.zen_ok = [], False
@@ -122,10 +186,11 @@ class CpdProvider(CrdProvider):
 
     def zen_get(self, name: str, service_type: str) -> dict:
         key = (name, service_type)
-        with self._cpd_lock:
+        with self._zen_lock:
             if key not in self._zen_get:
                 try:
-                    self._zen_get[key] = self.cli.get_instance(name, service_type)
+                    with span(f"s4 get {service_type}/{name}"):
+                        self._zen_get[key] = self.cli.get_instance(name, service_type)
                 except (CpdCliError, OSError, ValueError) as e:
                     self._zen_get[key] = {}
                     self.notices.append(f"service-instance get {name}: {str(e)[:120]}")
@@ -133,27 +198,29 @@ class CpdProvider(CrdProvider):
 
     def disable_zen(self, reason: str) -> None:
         """Profile not usable: show CRs only, mutations stay blocked (survives refresh until enable_zen)."""
-        with self._cpd_lock:
+        with self._zen_lock:
             self._zen_disabled = reason
             self._zen, self.zen_ok = [], False
             self.notices.append(f"zen records unavailable ({reason})")
 
     def enable_zen(self) -> None:
         """The profile works again (repaired): read zen records on the next discovery."""
-        with self._cpd_lock:
+        with self._zen_lock:
             self._zen_disabled = None
             self._zen, self.zen_ok = None, True
 
     def refresh_instances(self) -> None:
         super().refresh_instances()
-        with self._cpd_lock:
+        with self._zen_lock:
             if self.zen_ok:
                 self._zen = None
 
     def refresh(self) -> None:
         super().refresh()
         with self._cpd_lock:
-            self._zen, self._addons = None, None
+            self._addons = None
+        with self._zen_lock:
+            self._zen = None
             self._zen_get.clear()
             if self._zen_disabled:                          # still no usable profile: keep showing CRs only
                 self._zen, self.zen_ok = [], False
@@ -161,8 +228,22 @@ class CpdProvider(CrdProvider):
 
     # -- types ---------------------------------------------------------------------
     def _crd_for(self, entry: registry.AddonEntry) -> tuple[dict | None, str | None]:
+        """The add-on's CRD, read through the cache (`sources/crd_for/<addon>` names it)."""
+        from ...cache.codec import crd_name
         if not entry.cr_kind:
             return None, None
+        part = f"sources/crd_for/{entry.addon_type}"
+        hit = self.sources.get(part) if self.sources else None
+        if hit is not None:
+            crd = self.cluster.get_crd(hit["crd"]) if hit.get("crd") else None
+            if crd is not None or not hit.get("crd"):
+                return crd, hit.get("note")
+        crd, note = self._resolve_crd(entry)
+        if self.sources is not None:
+            self.sources.put(part, {"kind": entry.cr_kind, "crd": crd_name(crd), "note": note})
+        return crd, note
+
+    def _resolve_crd(self, entry: registry.AddonEntry) -> tuple[dict | None, str | None]:
         cands = self.cluster.find_crds(entry.cr_kind)
         if len(cands) == 1:
             return cands[0], None
@@ -174,10 +255,18 @@ class CpdProvider(CrdProvider):
                       ("no CRD" if not cands else f"{len(cands)} CRDs, none with zen-linked CRs"))
 
     def discover_types(self) -> list[InstanceType]:
+        with span("discover_types"):
+            return self._discover_types()
+
+    def _discover_types(self) -> list[InstanceType]:
         # independent sources at once: zen records (cpd-cli, ~1.5 s), the add-on configmaps, the API index
+        # (the index only when the add-on -> CRD links aren't cached)
         from concurrent.futures import ThreadPoolExecutor
+        cached = self.sources is not None and self.sources.get("sources/addons") is not None
         with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = [pool.submit(self.zen_records), pool.submit(self.addons), pool.submit(self.cluster.index)]
+            futures = [pool.submit(self.zen_records), pool.submit(self.addons)]
+            if not cached:
+                futures.append(pool.submit(self.cluster.index))
             for f in futures:
                 f.result()
         addons = self.addons()
@@ -211,6 +300,10 @@ class CpdProvider(CrdProvider):
 
     # -- instances -------------------------------------------------------------------
     def list_instances(self, itype: InstanceType) -> list[Instance]:
+        with span(f"list {itype.display}"):
+            return self._list_instances(itype)
+
+    def _list_instances(self, itype: InstanceType) -> list[Instance]:
         at = itype.key.split(":", 1)[1]
         zen = [r for r in self.zen_records() if r.get("service_type") == at]
         crs = [self.instance_from(itype, o) for o in self.cluster.try_list(itype.list_path(self.namespace))] \
@@ -243,8 +336,24 @@ class CpdProvider(CrdProvider):
         return out
 
     # -- form ------------------------------------------------------------------------------
+    def zen_params(self, rec: dict, addon_type: str, name: str) -> dict | None:
+        """S4: the create parameters zen stored for an instance (a create-time snapshot, so it is
+        cached per zen id), secrets redacted right after the cpd-cli call in every mode."""
+        from ...cache.redact import redact
+        zid = rec.get("id")
+        part = f"sources/s4/{addon_type}/{zid}" if zid is not None and self.sources is not None else None
+        hit = self.sources.get(part) if part else None
+        if hit is not None:
+            return hit.get("params")
+        got = self.zen_get(rec.get("display_name", name), addon_type)
+        params = redact(got["parameters"]) if isinstance(got.get("parameters"), dict) else None
+        if got and part:                               # a failed get is never cached
+            self.sources.put(part, {"name": rec.get("display_name", name), "params": params})
+        return params
+
     def extra_sources(self, itype: InstanceType, instances: list[Instance]) -> tuple[list, list]:
         entry: registry.AddonEntry | None = itype.meta.get("addon")
+        self.addons()                       # the S1 forms (a type may come from the cached catalog)
         above: list[dict[Path, Field]] = []
         if entry and entry.extension_name in self._prov_ext:
             s1, notes = extensions.provisioning_fields(self._prov_ext[entry.extension_name],
@@ -259,9 +368,9 @@ class CpdProvider(CrdProvider):
         for inst in sample:
             rec = inst.meta.get("zen")
             if rec:
-                got = self.zen_get(rec.get("display_name", inst.name), at)
-                if isinstance(got.get("parameters"), dict):
-                    params.append(got["parameters"])
+                got = self.zen_params(rec, at, inst.name)
+                if isinstance(got, dict):
+                    params.append(got)
         if params:
             s4, _ = observe(params, source="S4")
             above.append(_prefixed(s4, ("parameters",), "S4"))

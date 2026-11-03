@@ -216,6 +216,55 @@ class FieldNeed(unittest.TestCase):
         self.assertTrue(need.accepts(Kind.FILE) and need.accepts(Kind.BLOCK))
 
 
+class DocsNeeds(unittest.TestCase):
+    """storage/docs_needs.py: what the IBM docs say, used when the CRD / zen form says nothing."""
+    SC = FieldNeed.SC
+
+    def _need(self, key, docs_key, extra=None):
+        from tui.instance_manager.storage import docs_needs
+        fields, flats = model([{key: FILE, **(extra or {})}])
+        return field_need.assess(fields[(key,)], fields, [], lambda n: [], self.SC, docs=docs_needs.lookup(docs_key))
+
+    def test_one_kind_services_decide_every_storage_field(self):
+        need = self._need("storage_class", "cpd:edb")
+        self.assertEqual(need.need, Need.BLOCK)
+        self.assertTrue(any(e.source == "docs" and "EDB Postgres uses block storage" in e.detail
+                            for e in need.evidence))
+        self.assertEqual(self._need("storage_class", "cpd:informix").need, Need.FILE)
+        # the CR kind (k8s-crd provider) finds the same entry
+        self.assertEqual(self._need("storage_class", "crd:cpdedbinstances.edb.cpd.ibm.com_CPDEdbInstance").need,
+                         Need.BLOCK)
+
+    def test_file_and_block_services_decide_by_name_else_either(self):
+        self.assertEqual(self._need("fileStorageClass", "cpd:mdm").need, Need.FILE)
+        self.assertEqual(self._need("blockStorageClass", "cpd:mdm").need, Need.BLOCK)
+        generic = self._need("storage_class", "cpd:mdm")
+        self.assertEqual(generic.need, Need.EITHER)                 # both kinds valid: show them all
+        self.assertTrue(generic.accepts(Kind.FILE) and generic.accepts(Kind.BLOCK))
+        self.assertFalse(generic.accepts(Kind.OBJECT))
+
+    def test_the_schema_outranks_the_docs_and_unknown_services_stay_unknown(self):
+        from tui.instance_manager.storage import docs_needs
+        fields, _ = model([{"storage_class": FILE}])
+        f = fields[("storage_class",)]
+        f.description = "rwx storage class"                          # what the CRD / API spec says
+        need = field_need.assess(f, fields, [], lambda n: [], self.SC, docs=docs_needs.lookup("cpd:edb"))
+        self.assertEqual(need.need, Need.FILE)
+        self.assertIsNone(docs_needs.lookup("cpd:no-such-service"))
+        self.assertEqual(self._need("storage_class", "cpd:no-such-service").need, Need.UNKNOWN)
+
+    def test_assess_static_fills_sub_service_fields(self):
+        fields, _ = model([{"block_storage_class": "", "volume_storage_class": ""}])
+        fields[("block_storage_class",)].description = "rwo storage class"
+        field_need.assess_static(fields, self.SC, "wxd:milvus")
+        self.assertEqual(fields[("block_storage_class",)].storage.need, Need.BLOCK)
+        self.assertEqual(fields[("volume_storage_class",)].storage.need, Need.UNKNOWN)   # every file + block class
+
+    def test_class_under_persistence_is_a_storage_class(self):
+        fields, _ = model([{"persistence": {"class": "x", "size": "10Gi"}}])
+        self.assertEqual(fields[("persistence", "class")].role, Role.STORAGE_CLASS)
+
+
 class FakeCluster:
     def __init__(self, pvcs, stss, objects):
         self._pvcs, self._stss, self._objects = pvcs, stss, objects

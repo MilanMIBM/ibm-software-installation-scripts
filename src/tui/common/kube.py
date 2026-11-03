@@ -1,7 +1,9 @@
 """Cluster access shared by the TUIs: raw REST GETs, watches, exec, logs.
 
 Uses the kubeconfig that `oc login` writes. Raw paths instead of the dynamic client
-so no API-discovery cache file is written.
+so no API-discovery cache file is written. A kubeconfig without TLS verification
+(oc login --insecure-skip-tls-verify) still verifies when a CA bundle vouches for the
+API server (tls.py).
 """
 
 from __future__ import annotations
@@ -11,6 +13,8 @@ import time
 
 from kubernetes import client, config
 from kubernetes.watch.watch import iter_resp_lines
+
+from . import tls
 
 WATCH_TIMEOUT = 25          # seconds per watch request (server side)
 METADATA_ONLY = "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1,application/json"
@@ -25,7 +29,16 @@ class KubeError(Exception):
 class Kube:
     def __init__(self, context: str | None = None, kubeconfig: str | None = None):
         config.load_kube_config(config_file=kubeconfig, context=context)
-        self.api = client.ApiClient()
+        cfg = client.Configuration.get_default_copy()
+        if not cfg.verify_ssl:
+            # kubeconfig from `oc login --insecure-skip-tls-verify`: verify anyway when a CA bundle
+            # (OCP_CA_FILE, or the public ones) vouches for the API server (tls.py)
+            ca = tls.verify_for(cfg.host, "Kubernetes API " + cfg.host)
+            if ca:
+                cfg.verify_ssl, cfg.ssl_ca_cert = True, ca
+                client.Configuration.set_default(cfg)          # clients made from the default config too
+        self.verified = bool(cfg.verify_ssl)
+        self.api = client.ApiClient(cfg)
         self.host = self.api.configuration.host
         try:
             _, active = config.list_kube_config_contexts(config_file=kubeconfig)

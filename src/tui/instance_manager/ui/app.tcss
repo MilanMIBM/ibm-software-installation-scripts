@@ -59,3 +59,109 @@ Screen {
     border-title-color: $text-muted;
     padding: 0 1;
 }
+#events.-collapsed {
+    height: 3;
+}
+#status #cache-tag {
+    color: $text-muted;
+    margin-left: 2;
+}
+
+/* inline UI (default): selectors + lists | big work panel over a state panel */
+#left {
+    width: 44;
+}
+#left.-sub-select {
+    width: 64;
+}
+#left.-sub {
+    width: 84;
+}
+#selectors {
+    height: 3;
+}
+#selectors Select {
+    width: 1fr;
+}
+#selectors #sub-select {
+    display: none;
+    margin-left: 1;
+}
+#left.-sub-select #sub-select {
+    display: block;
+}
+#lists {
+    height: 1fr;
+}
+#inst-panel, #sub-panel {
+    width: 1fr;
+    height: 1fr;
+    border: round $panel-lighten-2;
+    border-title-color: $text-muted;
+    border-subtitle-color: $text-muted;
+}
+#sub-panel {
+    display: none;
+}
+#lists .new-btn {
+    width: 100%;
+    margin-top: 1;
+}
+/* the small lists: dot + name (+ the service when all services are listed); the state panel has the rest */
+#lists InstanceRow .c-badge, #lists InstanceRow .c-why {
+    display: none;
+}
+#lists InstanceRow .c-name {
+    width: 1fr;
+}
+#lists InstanceRow .c-type {
+    width: 14;
+}
+#inst-panel.-one-type InstanceRow .c-type, #sub-panel InstanceRow .c-type {
+    display: none;
+}
+#right {
+    width: 1fr;
+}
+#work {
+    height: 1fr;
+    border: round $panel-lighten-2;
+    border-title-color: $text-muted;
+}
+#work #crumb {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+#work #type-banner {
+    height: 1;
+    padding: 0 1;
+    color: $warning;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+#work #switcher {
+    height: 1fr;
+}
+#overview #actions {
+    height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+#overview #actions Button {
+    margin-right: 2;
+    width: auto;
+}
+#overview #detail {
+    border: none;
+    height: 1fr;
+    width: 1fr;
+}
+#state {
+    height: 14;
+    border: round $panel-lighten-2;
+    border-title-color: $text-muted;
+}
+#state #st-info {
+    padding: 0 1;
+}

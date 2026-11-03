@@ -248,3 +248,14 @@ export OTHER="stays"
             out = subprocess.run(["zsh", "-fc", f"source {p}; print -r -- $EDB_POSTGRES_EDB_A_PASSWORD"],
                                  capture_output=True, text=True).stdout
             self.assertEqual(out.rstrip("\n"), "p'1 $x")       # the new single-quoted format keeps $ literally
+
+
+class PatternChecks(unittest.TestCase):
+    def test_patterns_python_cannot_compile_are_left_to_the_server(self):
+        from tui.instance_manager.model import Field
+        from tui.instance_manager.ops import payload as pl
+        f = Field(path=("parameters", "n"), label="N", pattern=r"^[\p{L}0-9]+$", payload=True)
+        self.assertEqual(pl.check_field(f, "abc", {}), ([], []))           # \p{L}: JS regex, no crash
+        g = Field(path=("parameters", "m"), label="M", pattern=r"^[a-z]+$", payload=True)
+        self.assertEqual(pl.check_field(g, "AB", {})[0], ["M: does not match ^[a-z]+$"])
+        self.assertIsNone(pl.pattern_ok(r"\p{L}", "x"))

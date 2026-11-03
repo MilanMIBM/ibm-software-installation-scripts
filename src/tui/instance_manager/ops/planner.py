@@ -119,7 +119,7 @@ def plan_create(provider, itype: InstanceType, fm: FormModel, values: dict[Path,
 
     def to_vault(log: Log) -> None:
         try:
-            vmod.store(credentials.path_for(at, name), members_, log=log)
+            vmod.store(credentials.path_for(at, name), members_, log=log, vault=credentials.vault_client())
         except Exception as e:                 # the local file is saved; the vault is a copy
             log(f"  [WARN] vault: {str(e).splitlines()[0][:200]} (the credentials file is saved)")
 
@@ -369,7 +369,7 @@ def plan_delete(provider, itype: InstanceType, inst: Instance, force: bool = Fal
         vmod = credentials.vault()
         if vmod.enabled(None):
             try:
-                vmod.delete(at, inst.display_name or inst.name, log=log)
+                vmod.delete(at, inst.display_name or inst.name, log=log, vault=credentials.vault_client())
             except Exception as e:
                 log(f"  [WARN] vault: {str(e).splitlines()[0][:200]}")
         t0 = time.monotonic()

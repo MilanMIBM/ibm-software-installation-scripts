@@ -17,7 +17,8 @@ from ...discovery.merge import merge
 from ...discovery.observed import observe
 from ...discovery.schema_walk import served_version, walk_crd
 from ...model import Field, FormModel, Instance, InstanceType, Kind, Mutability, Path, Role, StorageClassInfo
-from ...storage import field_need, sc_classifier
+from ...storage import docs_needs, field_need, sc_classifier
+from ...timings import span
 from ..base import Provider
 from .cluster import Cluster, OwnerGraph
 
@@ -89,16 +90,20 @@ class CrdProvider(Provider):
     def storage_classes(self) -> dict[str, StorageClassInfo]:
         with self._lock:
             if self._sc is None:
-                self._sc = sc_classifier.classify(self.cluster.storage_classes(), self.cluster.pvcs(),
-                                                  self.cluster.storage_profiles(), self.declared_sc,
-                                                  self.sc_overrides)
+                with span("storage classes (SC + PVC census)"):
+                    self._sc = self._classify_sc()
             return self._sc
+
+    def _classify_sc(self) -> dict[str, StorageClassInfo]:
+        return sc_classifier.classify(self.cluster.storage_classes(), self.cluster.pvcs(),
+                                      self.cluster.storage_profiles(), self.declared_sc, self.sc_overrides)
 
     def graph(self, namespaces: set[str]) -> OwnerGraph:
         with self._lock:
             if self._graph is None:
                 self._graph = OwnerGraph(self.cluster)
-            return self._graph.build(namespaces)
+            with span("owner graph"):
+                return self._graph.build(namespaces)
 
     def refresh_instances(self) -> None:
         self.cluster.drop_lists()
@@ -129,6 +134,10 @@ class CrdProvider(Provider):
                    storage: bool = True) -> FormModel:
         """storage=False skips the storage-need analysis (it needs the owner graph); the hub publishes
         the fields first and calls assess_storage() right after, so the detail pane doesn't wait."""
+        with span(f"form_model {itype.display}"):
+            return self._form_model(itype, instances, storage)
+
+    def _form_model(self, itype: InstanceType, instances: list[Instance] | None, storage: bool) -> FormModel:
         instances = self.list_instances(itype) if instances is None else instances
         observed, flats = observe([i.spec for i in instances])
         schema = walk_crd(itype.crd) if itype.crd else {}
@@ -143,6 +152,10 @@ class CrdProvider(Provider):
         return fm
 
     def assess_storage(self, fm: FormModel, instances: list[Instance], flats: list | None = None) -> None:
+        with span(f"assess_storage {fm.type_key}"):
+            self._assess_storage(fm, instances, flats)
+
+    def _assess_storage(self, fm: FormModel, instances: list[Instance], flats: list | None) -> None:
         if flats is None:
             flats = observe([i.spec for i in instances])[1]
         sc_fields: list[Field] = fm.by_role(Role.STORAGE_CLASS)
@@ -153,9 +166,10 @@ class CrdProvider(Provider):
         under = {i.name: graph.pvcs_under(i.uid) for i in instances}
         own = {(p.get("metadata") or {}).get("uid") for ps in under.values() for p in ps}
         named = [(i.name, flat) for i, flat in zip(instances, flats)]
+        docs = docs_needs.lookup(fm.type_key)
         for f in sc_fields:
             f.storage = field_need.assess(f, fm.fields, named, lambda n: under.get(n, []), sc,
-                                          lambda keys, ex: graph.peer_pvcs(keys, ex | own))
+                                          lambda keys, ex: graph.peer_pvcs(keys, ex | own), docs=docs)
             traced = any(ev.source == "live" and "PVC(s) on" in ev.detail for ev in f.storage.evidence)
             if traced:
                 f.mutability = Mutability.IMMUTABLE

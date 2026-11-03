@@ -13,12 +13,13 @@ from dataclasses import dataclass, field
 
 from ..model import UNIT_RE, Evidence, Field, Path, Role
 
+SECRET_TOKENS = r"password|passwd|token"        # also what the discovery cache redacts (cache/redact.py)
 _NUMERIC = re.compile(r"^[0-9]+(\.[0-9]+)?([a-zA-Z]{1,2})?$")
 _CAPACITY = (Role.REPLICAS, Role.CPU, Role.MEMORY, Role.STORAGE_SIZE)
 
 # (role, leaf-name patterns) in check order: memory/cpu before replicas ("memorypernode", "corespernode")
 _TOKENS: list[tuple[Role, re.Pattern]] = [(role, re.compile(rx)) for role, rx in [
-    (Role.SECRET, r"password|passwd|token"),
+    (Role.SECRET, SECRET_TOKENS),
     (Role.SECRET_REF, r"secret"),
     (Role.STORAGE_CLASS, r"storageclass|storage_class"),
     (Role.SIZE_PRESET, r"scaleconfig|scale_config|sizeconfig|size_config|scalesize|tshirt"),
@@ -91,6 +92,9 @@ def infer(f: Field, fields: dict[Path, Field], ctx: RoleContext) -> None:
             return set_role(role, "live", f"value is a known version ({strings[0]})", 0.8)
         return set_role(role, "S8", f"name token '{m.group(0)}'", 0.5)
     parents = [p.lower() for p in f.path[:-1]]
+    if leaf in ("class", "classname", "sc") and f.type in ("string", "") and any(
+            s in p for p in parents for s in _STORAGE_PARENTS):          # persistence.class (Planning Analytics)
+        return set_role(Role.STORAGE_CLASS, "S8", "class under a storage/persistence object", 0.5)
     if ("size" in leaf and _numeric_like(f)
             and (any(s in leaf for s in _STORAGE_PARENTS) or any(s in p for p in parents for s in _STORAGE_PARENTS))):
         return set_role(Role.STORAGE_SIZE, "S8", "size under a storage/persistence object", 0.5)

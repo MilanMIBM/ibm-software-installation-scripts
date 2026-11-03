@@ -28,6 +28,7 @@ from ...model import Evidence, Field, FormModel, Instance, InstanceType, Path, R
 from ...ops import payload as pl
 from ...ops.plan import ActionPlan, Log, Step
 from ...providers.k8s_crd.provider import type_from_crd
+from ...timings import span
 from ..base import Match, SubServiceProvider
 from ..embedded_spec import find_spec
 from .api import BASE, LakehouseAPI
@@ -38,6 +39,8 @@ ENGINE_KIND = "WxdEngine"
 CUSTOMIZATION_TASK = "/opt/ansible/roles/wxdEngine/tasks/get_engine_customization.yaml"
 MERGE_PATCH = "application/merge-patch+json"
 RESIZE_STEP = "resize (operator, after create)"
+ROWS_TTL = 3.0            # kinds() and the list right after it share one GET per collection
+CRD_PART = "subservices/wxd/engine_crd"
 WHAT_ROLE = {"replicas": Role.REPLICAS, "cpu": Role.CPU, "memory": Role.MEMORY}
 
 
@@ -87,6 +90,8 @@ class WxdEngines(SubServiceProvider):
         self.spec: dict | None = None
         self._api: dict[str, LakehouseAPI] = {}
         self._crd: dict | None = None
+        self._rows_memo: dict[str, tuple[float, list[dict]]] = {}
+        self.sources = None          # cache.sources.SourceCache (read-through operator facts + spec), or None
 
     # -- matching / plumbing -------------------------------------------------------------
     def matches(self, parent_type: InstanceType, parent: Instance) -> Match | None:
@@ -102,9 +107,11 @@ class WxdEngines(SubServiceProvider):
         self.parent = parent
         self.namespace = parent.namespace
         if self.facts is None:
-            self.facts = OperatorFacts(self.cluster.kube, self.operator_ns or [parent.namespace or ""], ENGINE_KIND)
+            self.facts = OperatorFacts(self.cluster.kube, self.operator_ns or [parent.namespace or ""], ENGINE_KIND,
+                                       sources=self.sources)
         if self.spec is None:
-            self.spec = find_spec(self.cluster.kube, parent.namespace or "", BASE) or {}
+            with span("wxd bind (find_spec)"):
+                self.spec = find_spec(self.cluster.kube, parent.namespace or "", BASE, sources=self.sources) or {}
             if not self.spec:
                 self.notices.append("the lakehouse API spec was not found; engine types can't be discovered")
 
@@ -115,12 +122,30 @@ class WxdEngines(SubServiceProvider):
         return self._api[zid]
 
     def engine_crd(self) -> dict | None:
+        """The engine CRD; its name is cached so a warm open needs no API index (the CRD itself is
+        read through the cache and checked by the probe's resourceVersion)."""
         if self._crd is None:
-            self._crd = self.cluster.find_crd(ENGINE_KIND) or {}
+            hit = self.sources.get(CRD_PART) if self.sources is not None else None
+            crd = self.cluster.get_crd(hit["name"]) if hit and hit.get("name") else None
+            if crd is None:
+                crd = self.cluster.find_crd(ENGINE_KIND)
+                name = ((crd or {}).get("metadata") or {}).get("name")
+                if name and self.sources is not None:
+                    self.sources.put(CRD_PART, {"kind": ENGINE_KIND, "name": name})
+            self._crd = crd or {}
         return self._crd or None
 
     def refresh_instances(self) -> None:
         self.cluster.drop_lists()
+        self._rows_memo.clear()
+
+    def warm(self, parent: Instance) -> None:
+        """Cache build (C-D3): load what opening the sub-services needs, so the cache keeps it."""
+        self.bind(parent)
+        self.engine_crd()
+        if self.facts is not None:
+            self.facts.presets()
+            self.facts.documented_fields(CUSTOMIZATION_TASK)
 
     def storage_classes(self):
         return {}
@@ -154,17 +179,36 @@ class WxdEngines(SubServiceProvider):
         return it
 
     def kinds(self) -> list[tuple[str, int | None]]:
-        return [(kind, len(self._rows(kind))) for kind in self.collections()]
+        """Every collection with its size; the GETs run in parallel (one sign-in first)."""
+        from concurrent.futures import ThreadPoolExecutor
+        names = list(self.collections())
+        if not names:
+            return []
+        with span("wxd kinds"):
+            try:
+                signin = getattr(self.api(), "_sign_in", None)
+                if signin:
+                    signin()
+            except Exception:
+                pass
+            with ThreadPoolExecutor(max_workers=min(8, len(names))) as pool:
+                counts = list(pool.map(lambda k: len(self._rows(k)), names))
+        return list(zip(names, counts, strict=True))
 
-    def _rows(self, kind: str) -> list[dict]:
+    def _rows(self, kind: str, fresh: bool = False) -> list[dict]:
         coll = (self.collections().get(kind) or {}).get("collection")
         if not coll:
             return []
+        memo = self._rows_memo.get(kind)
+        if memo and not fresh and time.monotonic() - memo[0] < ROWS_TTL:
+            return memo[1]
         try:
             data = self.api().request("GET", f"/{coll}")
         except Exception:
             return []
-        return list((data or {}).get(coll) or [])
+        rows = list((data or {}).get(coll) or [])
+        self._rows_memo[kind] = (time.monotonic(), rows)
+        return rows
 
     def _crs(self) -> list[dict]:
         crd = self.engine_crd()
@@ -212,6 +256,10 @@ class WxdEngines(SubServiceProvider):
                                               ("replicas", "resources_requests_cpu", "resources_requests_memory")))
 
     def form_model(self, itype: InstanceType) -> FormModel:
+        with span(f"wxd form {itype.key}"):
+            return self._form_model(itype)
+
+    def _form_model(self, itype: InstanceType) -> FormModel:
         kind = itype.key.split(":", 1)[1]
         fm = FormModel(itype.key)
         schema = self.request_schema(kind)
@@ -330,6 +378,29 @@ class WxdEngines(SubServiceProvider):
         self.cluster.kube.send("PATCH", path, body, content_type=MERGE_PATCH)
         log(f"  patched {cr['metadata']['name']}: " + " ".join(f"{k}={v}" for k, v in spec.items()))
 
+    def create_bodies(self, fm: FormModel, values: dict[Path, object], name: str
+                      ) -> tuple[dict, dict[str, str], str, list[str]]:
+        """(API request body, WxdEngine CR keys changed from the chosen template, the template, summary
+        lines): what plan_create sends, also the inline form's live preview."""
+        body = body_from(fm.fields, values, pl.coerce, exclude_steps=(RESIZE_STEP,))
+        body["display_name"] = name
+        size = next((f for f in fm.fields.values() if f.role == Role.SIZE_PRESET), None)
+        chosen = str(values.get(size.path)) if size else ""
+        preset = next((p["metadata"] for p in (size.presets or []) if p["value"] == chosen), {}) if size else {}
+        custom: dict[str, str] = {}
+        lines: list[str] = []
+        for f in fm.fields.values():
+            if f.step != RESIZE_STEP or values.get(f.path) in (None, ""):
+                continue
+            key = f.path[-1]
+            changed = str(values[f.path]) != str(preset.get(key))
+            lines.append(f"{f.label}: {values[f.path]}" + (f"  (changed from {chosen}: {preset.get(key, '-')})"
+                                                            if changed else ""))
+            if changed:
+                for ck in self._cr_keys(key):
+                    custom[ck] = str(values[f.path])
+        return body, custom, chosen, lines
+
     def plan_create(self, itype: InstanceType, fm: FormModel, values: dict[Path, object], name: str,
                     on_update=None) -> ActionPlan:
         kind = itype.key.split(":", 1)[1]
@@ -353,22 +424,8 @@ class WxdEngines(SubServiceProvider):
                         plan.errors.append(f"{f.label or f.key} must be at least {f.minimum}")
                 except ValueError:
                     plan.errors.append(f"{f.label or f.key}: {v} is not a number")
-        body = body_from(fm.fields, values, pl.coerce, exclude_steps=(RESIZE_STEP,))
-        body["display_name"] = name
-        size = next((f for f in fm.fields.values() if f.role == Role.SIZE_PRESET), None)
-        chosen = str(values.get(size.path)) if size else ""
-        preset = next((p["metadata"] for p in (size.presets or []) if p["value"] == chosen), {}) if size else {}
-        custom: dict[str, str] = {}
-        for f in fm.fields.values():
-            if f.step != RESIZE_STEP or values.get(f.path) in (None, ""):
-                continue
-            key = f.path[-1]
-            changed = str(values[f.path]) != str(preset.get(key))
-            plan.summary.append(f"{f.label}: {values[f.path]}" + (f"  (changed from {chosen}: {preset.get(key, '-')})"
-                                                                  if changed else ""))
-            if changed:
-                for ck in self._cr_keys(key):
-                    custom[ck] = str(values[f.path])
+        body, custom, chosen, lines = self.create_bodies(fm, values, name)
+        plan.summary += lines
         workers = None
         for p, v in values.items():
             if p[-1].endswith("worker_replicas") and v not in (None, ""):
@@ -387,7 +444,8 @@ class WxdEngines(SubServiceProvider):
             except Exception as e:
                 log(f"  the create call answered {e}; checking whether it exists")
             if not state.get("id"):
-                state["id"] = next((r.get("id") for r in self._rows(kind) if r.get("display_name") == name), None)
+                state["id"] = next((r.get("id") for r in self._rows(kind, fresh=True)
+                                    if r.get("display_name") == name), None)
             if not state.get("id"):
                 raise RuntimeError(f"{kind} {name} was not created")
             log(f"  registered {state['id']}")

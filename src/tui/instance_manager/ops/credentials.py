@@ -79,6 +79,14 @@ def vault():
     raise ImportError("src/helpers/instance_details_vault.py not found")
 
 
+def vault_client():
+    """A signed-in vault client that verifies TLS when a CA bundle vouches for the Software Hub
+    route (common/tls.py); unverified otherwise, as before."""
+    from ...common import tls
+    url = os.environ.get("CPD_URL", "")
+    return vault().sign_in(verify=tls.verify_for(url, f"Software Hub {url}") if url else False)
+
+
 def mark(addon_type: str, name: str, line: str) -> Path | None:
     """Append "# <line> <time>"; "deleted" makes source_env_setup.sh skip the file."""
     p = path_for(addon_type, name)

@@ -22,6 +22,7 @@ from ..model import State
 from .chain_view import ChainView, RowFocused
 from .cr_list import SORTS, CRList, sort_keys
 from .detail import Detail
+from ...common import tls
 from ...common.glow_dot import DOT_COLORS, GlowDot, as_content
 from ...common.pulse import PulseClock
 from .screens import LegendScreen, OpLogScreen
@@ -36,7 +37,11 @@ def _truecolor() -> bool:
     return os.environ.get("TERM_PROGRAM", "") in ("iTerm.app", "WezTerm", "vscode", "ghostty", "Hyper", "tmux")
 
 
+STARTUP_KEY_GRACE = 2.0      # s after mount in which no key binding runs (stray terminal replies)
+
+
 class DashboardApp(App):
+    AUTO_FOCUS = ""          # nothing focused at start: stray terminal replies must not type into the search
     CSS_PATH = "app.tcss"
     TITLE = "cr-dashboard"
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -102,6 +107,8 @@ class DashboardApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._mounted_at = time.monotonic()
+        self.set_timer(STARTUP_KEY_GRACE + 0.1, self.refresh_bindings)   # the footer shows them again
         self.sub_title = self.header_text.replace("cr-dashboard · ", "")
         self.query_one("#events", RichLog).border_title = "events"
         self.hub.start(self.resources)
@@ -110,6 +117,9 @@ class DashboardApp(App):
         log = self.query_one("#events", RichLog)
         for note in self.profile.notes:
             log.write(Text(f"note  {note}", style="yellow"))
+        tls.ECHO = False                 # stderr would draw over the screen
+        for note in tls.drain():         # e.g. the API server's certificate couldn't be verified
+            log.write(Text(f"tls   {note}", style="yellow"))
         if not self.intro.enabled:
             log.write(Text("note  operator introspection off (--no-exec): no current step", style="dim"))
         self.set_interval(0.5, self._tick)
@@ -255,6 +265,13 @@ class DashboardApp(App):
     def action_relist(self) -> None:
         self.hub.request_relist()
         self.notify("re-listing all resources", timeout=2)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """A terminal's reply to a start-up query (e.g. its colours, "rgb:1f1f/...") can arrive as typed
+        keys: in the first seconds no key binding runs (they used to toggle the problems filter)."""
+        if action != "quit" and time.monotonic() - getattr(self, "_mounted_at", 0.0) < STARTUP_KEY_GRACE:
+            return False
+        return super().check_action(action, parameters)
 
     def action_problems(self) -> None:
         self.problems_only = not self.problems_only

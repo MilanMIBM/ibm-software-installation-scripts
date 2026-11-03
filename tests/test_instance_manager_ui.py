@@ -88,7 +88,7 @@ async def test_browse_storage_tag_and_subservice_tab():
     from tui.instance_manager.ui.storage_kind_tag import StorageKindTag
 
     hub = DataHub(FakeProvider(), poll=3600)
-    app = InstanceManagerApp(hub, "instance-manager · test", animate=False)
+    app = InstanceManagerApp(hub, "instance-manager · test", animate=False, classic_ui=True)
     async with app.run_test(size=(180, 45)) as pilot:
         assert await settle(pilot, lambda: len(app.query("InstanceRow")) == 3 and filled(app, "InstanceRow")
                             and filled(app, "CatalogRow"))
@@ -191,13 +191,13 @@ class FormProvider(FakeProvider):
 
 @pytest.mark.asyncio
 async def test_create_form_storage_picker_and_plan_gates():
-    from textual.widgets import Button, Checkbox, Input, Select, Switch
+    from textual.widgets import Button, Checkbox, Input, Select
     from tui.instance_manager.ui.app import InstanceManagerApp
     from tui.instance_manager.ui.forms import CreateScreen, FieldRow, PlanScreen, StoragePicker
     from tui.instance_manager.ui.storage_kind_tag import StorageKindTag
 
     hub = DataHub(FormProvider(), poll=3600)
-    app = InstanceManagerApp(hub, "t", animate=False)
+    app = InstanceManagerApp(hub, "t", animate=False, classic_ui=True)
     async with app.run_test(size=(200, 60)) as pilot:
         assert await settle(pilot, lambda: filled(app, "CatalogRow") and len(app.query("CatalogRow")) == 3)
         row = next(r for r in app.query("CatalogRow") if r.key == "cpd:db")
@@ -210,10 +210,10 @@ async def test_create_form_storage_picker_and_plan_gates():
         picker = scr.query_one(StoragePicker)
         assert picker.value == "rbd"                                 # observed "fs" is file; the field needs block
         assert picker.query_one(StorageKindTag).kind == Kind.BLOCK
-        assert [v for _, v in picker._options()] == ["rbd"]          # filtered
-        picker.query_one(Switch).value = True                        # show all
-        assert await settle(pilot, lambda: [v for _, v in picker._options()] == ["rbd", "fs"])
-        picker.query_one(Select).value = "fs"
+        assert [v for _, v in picker._options()] == ["rbd"]          # filtered: only what the field accepts
+        picker.query_one("#override", Checkbox).value = True         # override: free text
+        assert await settle(pilot, lambda: picker.override and picker.query_one("#sc-input").display)
+        picker.query_one("#sc-input", Input).value = "fs"
         tag = picker.query_one(StorageKindTag)
         assert await settle(pilot, lambda: tag.kind == Kind.FILE and tag.has_class("-mismatch"))
         oracle = next(r for r in scr.query(FieldRow) if r.f.path[-1] == "oracle")
@@ -240,7 +240,7 @@ async def test_delete_needs_the_name_and_read_only_blocks_changes():
     from tui.instance_manager.ui.forms import PlanScreen
 
     hub = DataHub(FormProvider(), poll=3600)
-    app = InstanceManagerApp(hub, "t", animate=False)
+    app = InstanceManagerApp(hub, "t", animate=False, classic_ui=True)
     async with app.run_test(size=(200, 60)) as pilot:
         assert await settle(pilot, lambda: filled(app, "InstanceRow"))
         await pilot.press("d")
@@ -254,7 +254,7 @@ async def test_delete_needs_the_name_and_read_only_blocks_changes():
         assert await settle(pilot, lambda: not run.disabled)
         await pilot.press("escape")
 
-    ro = InstanceManagerApp(DataHub(FormProvider(), poll=3600), "t", animate=False, read_only=True)
+    ro = InstanceManagerApp(DataHub(FormProvider(), poll=3600), "t", animate=False, read_only=True, classic_ui=True)
     async with ro.run_test(size=(200, 60)) as pilot:
         assert await settle(pilot, lambda: filled(ro, "InstanceRow"))
         await pilot.press("d")
@@ -293,7 +293,7 @@ async def test_subservice_screen_starter_template_and_back():
     REGISTRY.append(sp)
     try:
         with patch.dict(os.environ, {"CPD_URL": "https://x", "CPD_USERNAME": "u", "CPD_APIKEY": "k"}):
-            app = InstanceManagerApp(DataHub(WxdParent(), poll=3600), "t", animate=False)
+            app = InstanceManagerApp(DataHub(WxdParent(), poll=3600), "t", animate=False, classic_ui=True)
             async with app.run_test(size=(200, 60)) as pilot:
                 assert await settle(pilot, lambda: filled(app, "InstanceRow"))
                 tabs = app.query_one("#tabs")
@@ -360,6 +360,9 @@ async def test_problems_filter_is_off_by_default_and_says_so():
     async with app.run_test(size=(180, 45)) as pilot:
         assert await settle(pilot, lambda: filled(app, "InstanceRow") and len(app.query("InstanceRow")) == 3)
         assert app.problems_only is False
-        assert "· all" in str(app.query_one("#instances").border_title)
+        panel = app.query_one("#inst-panel")
+        assert "f: problems only" in str(panel.border_subtitle) and "problems" not in str(panel.border_title)
         await pilot.press("f")
-        assert await settle(pilot, lambda: "problems only" in str(app.query_one("#instances").border_title))
+        assert await settle(pilot, lambda: "problems only" in str(panel.border_title)
+                            and "f: show all" in str(panel.border_subtitle))
+        assert await settle(pilot, lambda: len(app.query("InstanceRow")) == 2)       # db-b failing, db-a storage!

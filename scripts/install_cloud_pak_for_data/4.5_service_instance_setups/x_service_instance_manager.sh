@@ -11,6 +11,11 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 # for existing instances, the CRs and their CRDs. Nothing per service is hardcoded.
 # Storage-class fields are classified file / block from the PVCs their values feed.
 #
+# What discovery learns is cached in ${CONFIG_DIR}/instance_manager_cache/ (no secrets), so
+# the manager opens at once. It is rebuilt automatically, with a progress bar, when there is
+# none yet or when the cluster, the relevant cpd_vars values, the install options or the
+# patch level changed; x_build_instance_manager_cache.sh builds or checks it on its own.
+#
 # Uses `cpd-cli service-instance` (talks to zen directly; never `cpd-cli manage`,
 # which would recreate the olm-utils container). The cpd-cli profile is checked
 # first; x_repair_cpd_cli_profile.sh fixes a stale one.
@@ -20,6 +25,8 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 #   ./x_service_instance_manager.sh --explain edb          # discovered fields + where each came from
 #   ./x_service_instance_manager.sh --storage-report       # StorageClass kinds + every field's need
 #   ./x_service_instance_manager.sh --save-auto-repair on  # repair a broken profile automatically (this cluster)
+#   ./x_service_instance_manager.sh --classic-ui           # the earlier pop-up windows instead of the inline UI
+#   ./x_service_instance_manager.sh --no-cache             # bypass the discovery cache (x_build_instance_manager_cache.sh)
 #   ./x_service_instance_manager.sh --help                 # every option
 # =============================================================================
 
