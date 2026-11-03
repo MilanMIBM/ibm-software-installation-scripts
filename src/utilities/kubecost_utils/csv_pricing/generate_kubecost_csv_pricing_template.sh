@@ -193,7 +193,7 @@ print -r -- "${CSV}" | _kc_write_private "${OUTPUT}"
     else
         print -r -- "  Node rows: price per node per hour."
     fi
-    print -r -- "  Monthly to hourly: divide by 730. Prices are in ${CURRENCY} (the instance's currency; set_kubecost_currency.sh"
+    print -r -- "  Monthly to hourly: divide by 730. Prices are in ${CURRENCY} (the instance's currency; currency/set_kubecost_currency.sh"
     print -r -- "  changes it). Kubecost does not convert: enter prices in that currency."
     print -r -- "  Leave no PricePerUnit empty; rows you don't want to price can be deleted (those assets keep default pricing)."
 } | _kc_write_private "${PROFILES_FILE}"

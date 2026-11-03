@@ -347,7 +347,7 @@ echo "[INFO] Every ${RUN_INTERVAL}, ${QSOURCE}: $(jq -r '[to_entries[] | .key as
 kc_product_key_status "${CR_JSON}" "${NAMESPACE}"
 if [[ "${KC_KEY_LINKED}" != true ]]; then
     echo "[WARN] The Postgres integration is a Kubecost Enterprise feature, and no product key is linked"
-    echo "[WARN] to '${CR_NAME}' (${KC_KEY_SOURCE}). Link one first: link_kubecost_product_key.sh ${CR_NAME} -k <key>"
+    echo "[WARN] to '${CR_NAME}' (${KC_KEY_SOURCE}). Link one first: product_key/link_kubecost_product_key.sh ${CR_NAME} -k <key>"
     [[ "${FORCE}" == true ]] || die "Stopped. --force applies it anyway."
     echo "[WARN] --force: applying anyway."
 else

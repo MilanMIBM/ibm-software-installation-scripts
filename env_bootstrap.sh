@@ -58,6 +58,8 @@ fi
 #   2. ENV_TARGET from the environment / caller (e.g. ENV_TARGET=confluent ./x.sh).
 #   3. Inferred from the calling script's location:
 #        scripts/install_cloud_pak_for_data/, src/utilities/  -> cpd
+#        src/utilities/kubecost_utils/  -> kubecost when configs/kubecost_config/
+#                                          kubecost_vars.sh exists, else cpd
 #        scripts/install_confluent_platform/                  -> confluent
 #        scripts/install_ibm_concert/                         -> concert
 #        scripts/install_datastax_mc_standalone/              -> datastax_mc
@@ -88,6 +90,13 @@ if [[ -z "${ENV_TARGET:-}" ]]; then
     _CP4D_ENV_TARGET_WHY="no target for this script's folder"
     case "${_caller#${_CP4D_REPO_ROOT}/}" in
         scripts/install_cloud_pak_for_data/*) ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder scripts/install_cloud_pak_for_data/" ;;
+        # Kubecost: its own config when there is one, else the CP4D config as before.
+        src/utilities/kubecost_utils/*)
+            if [[ -f "${_CP4D_REPO_ROOT}/configs/kubecost_config/kubecost_vars.sh" ]]; then
+                ENV_TARGET=kubecost; _CP4D_ENV_TARGET_WHY="script folder src/utilities/kubecost_utils/ + configs/kubecost_config/kubecost_vars.sh"
+            else
+                ENV_TARGET=cpd;      _CP4D_ENV_TARGET_WHY="script folder src/utilities/kubecost_utils/, no kubecost_vars.sh"
+            fi ;;
         src/utilities/*)                      ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder src/utilities/" ;;
         scripts/install_confluent_platform/*) ENV_TARGET=confluent; _CP4D_ENV_TARGET_WHY="script folder scripts/install_confluent_platform/" ;;
         scripts/install_ibm_concert/*)        ENV_TARGET=concert;   _CP4D_ENV_TARGET_WHY="script folder scripts/install_ibm_concert/" ;;

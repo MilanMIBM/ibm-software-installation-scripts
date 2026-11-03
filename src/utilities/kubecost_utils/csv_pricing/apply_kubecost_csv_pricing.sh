@@ -14,7 +14,7 @@ set -euo pipefail
 #
 # CSV pricing is an Enterprise feature: per the Kubecost docs, turning it on
 # without a valid product key locks the application. Without a product key
-# linked to the instance (link_kubecost_product_key.sh) this script stops,
+# linked to the instance (product_key/link_kubecost_product_key.sh) this script stops,
 # unless --force.
 #
 # Re-run it after editing prices or adding nodes: new nodes get their profile
@@ -184,7 +184,7 @@ kc_product_key_status "${CR_JSON}" "${NAMESPACE}"
 if [[ "${KC_KEY_LINKED}" != true ]]; then
     echo "[WARN] CSV pricing (Enterprise Custom Pricing) is a Kubecost Enterprise feature, and no product key is"
     echo "[WARN] linked to '${CR_NAME}' (${KC_KEY_SOURCE}). Per the Kubecost docs, enabling it without a valid"
-    echo "[WARN] key locks the application. Link one first: link_kubecost_product_key.sh ${CR_NAME} -k <key>"
+    echo "[WARN] key locks the application. Link one first: product_key/link_kubecost_product_key.sh ${CR_NAME} -k <key>"
     [[ "${FORCE}" == true ]] || die "Stopped. --force applies it anyway."
     echo "[WARN] --force: applying anyway."
 else

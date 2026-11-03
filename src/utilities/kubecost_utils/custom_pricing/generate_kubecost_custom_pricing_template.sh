@@ -10,7 +10,7 @@ set -euo pipefail
 # the whole cluster (CPU, RAM, GPU, storage, network egress, and spot prices),
 # no product key needed. Fill it in and apply it with
 # apply_kubecost_custom_pricing.sh. For per-node-type prices use CSV pricing
-# (generate_kubecost_csv_pricing_template.sh, Enterprise).
+# (csv_pricing/generate_kubecost_csv_pricing_template.sh, Enterprise).
 #
 #   configs/kubecost_config/<namespace>/<instance>-custom-pricing.conf
 #

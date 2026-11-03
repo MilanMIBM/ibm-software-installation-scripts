@@ -35,12 +35,12 @@ set -euo pipefail
 # The login URL, mode and credentials are saved to
 # configs/kubecost_config/<namespace>/<instance>-instance_details.sh, the
 # product key to <secret>-productkey.json next to it
-# (get_kubecost_instance_details.sh reads them back).
+# (instance_details/get_kubecost_instance_details.sh reads them back).
 #
 # --mode auto (default): oidc when OIDC flags are given, saml when SAML flags
 # are given, otherwise openshift. OIDC/SAML flags without a linked product key
 # are an error (link one with --product-key-secret, made by
-# create_kubecost_product_key_secret.sh). Re-running with another mode switches
+# product_key/create_kubecost_product_key_secret.sh). Re-running with another mode switches
 # over and removes what the previous mode added.
 #
 # The Route keeps the name the chart gives it (<fullname>-route), so its URL
@@ -228,7 +228,7 @@ echo "[INFO] Kubecost instance: ${NAMESPACE}/${CR_NAME}"
 if [[ -n "${PRODUCT_KEY_SECRET}" ]]; then
     oc get secret "${PRODUCT_KEY_SECRET}" -n "${NAMESPACE}" -o json 2>/dev/null \
         | jq -e '.data["productkey.json"]' >/dev/null \
-        || die "Secret '${PRODUCT_KEY_SECRET}' in '${NAMESPACE}' has no 'productkey.json' (make it with create_kubecost_product_key_secret.sh)."
+        || die "Secret '${PRODUCT_KEY_SECRET}' in '${NAMESPACE}' has no 'productkey.json' (make it with product_key/create_kubecost_product_key_secret.sh)."
     KEY_LINKED=true
     KEY_SOURCE="Secret ${PRODUCT_KEY_SECRET} (linked by this run)"
 else
@@ -258,7 +258,7 @@ if [[ "${MODE}" == openshift ]]; then
         || die "--admin/editor/readonly-group are for OIDC/SAML. With OpenShift login, grant 'view' on '${NAMESPACE}' to a group instead, or use --openshift-sar."
 else
     [[ "${KEY_LINKED}" == true ]] \
-        || die "${MODE:u} login needs a product key linked to '${CR_NAME}'. Link one with --product-key-secret <name> (create_kubecost_product_key_secret.sh makes it), or use --mode openshift."
+        || die "${MODE:u} login needs a product key linked to '${CR_NAME}'. Link one with --product-key-secret <name> (product_key/create_kubecost_product_key_secret.sh makes it), or use --mode openshift."
     [[ -z "${OPENSHIFT_SAR}" && "${ALLOW_ALL_USERS}" == false && -z "${PROXY_IMAGE}" ]] \
         || die "--openshift-sar/--allow-all-users/--proxy-image only apply to --mode openshift."
 fi
@@ -588,4 +588,4 @@ if [[ "${MODE}" != openshift ]] && (( ${#ADMIN_GROUPS[@]} + ${#CA_GROUPS[@]} + $
 fi
 
 kc_save_instance_details "${CR_NAME}" "${NAMESPACE}" false
-echo "Details saved to ${REPLY#${_CP4D_REPO_ROOT}/} (get_kubecost_instance_details.sh ${CR_NAME} shows them)."
+echo "Details saved to ${REPLY#${_CP4D_REPO_ROOT}/} (instance_details/get_kubecost_instance_details.sh ${CR_NAME} shows them)."

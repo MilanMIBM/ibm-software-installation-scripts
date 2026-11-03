@@ -10,7 +10,7 @@ set -euo pipefail
 # credentials (OIDC client secret, API master key) and the product key. Read
 # from the cluster and saved to
 #   configs/kubecost_config/<namespace>/<instance>-instance_details.sh
-# (source it to get KUBECOST_<INSTANCE>_* variables). A product key kept in a
+# (source it to get KUBECOST_* variables). A product key kept in a
 # Secret is also saved to <secret>-productkey.json there when that file is
 # missing; when the file holds another key, that is reported and the file kept
 # (--update-key-file takes the cluster's key).

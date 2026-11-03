@@ -93,6 +93,7 @@ kc_wait_for_release() {   # <name> <namespace> <start revision> <start time, ISO
 #   <instance>-instance_details.sh   login URL, mode, credentials (sourceable)
 #   <secret>-productkey.json         copy of a product key Secret's productkey.json
 #   <instance>-management-postgres.json  Postgres integration connection + queries
+#   <instance>-features.yaml         optional features (generate/apply_kubecost_features)
 # =============================================================================
 KC_CONFIG_DIR="${_CP4D_REPO_ROOT}/configs/kubecost_config"
 
@@ -138,8 +139,8 @@ kc_save_product_key_file() {   # <namespace> <name> <key> <force: true|false>
         [[ "${old}" == "$3" ]] && return 0
         if [[ "$4" != true ]]; then
             echo "[WARN] ${f#${_CP4D_REPO_ROOT}/} holds another key (${old[1,4]}****) than the cluster (${3[1,4]}****); kept as is."
-            echo "[WARN]   use the file's key:     link_kubecost_product_key.sh <instance> -f ${f#${_CP4D_REPO_ROOT}/}"
-            echo "[WARN]   take the cluster's key: get_kubecost_instance_details.sh <instance> --update-key-file"
+            echo "[WARN]   use the file's key:     product_key/link_kubecost_product_key.sh <instance> -f ${f#${_CP4D_REPO_ROOT}/}"
+            echo "[WARN]   take the cluster's key: instance_details/get_kubecost_instance_details.sh <instance> --update-key-file"
             return 0
         fi
     fi
@@ -195,7 +196,7 @@ kc_cluster_admins() {
 
 # Reads the instance's UI, login and key settings from the cluster and writes
 # configs/kubecost_config/<ns>/<instance>-instance_details.sh (variables
-# KUBECOST_<INSTANCE>_*). Also saves the product key file when the key is in
+# KUBECOST_*). Also saves the product key file when the key is in
 # a Secret (<update key file>=true overwrites a different local key).
 # REPLY = details file path.
 kc_save_instance_details() {   # <instance> <namespace> <update key file: true|false>
@@ -224,7 +225,7 @@ kc_save_instance_details() {   # <instance> <namespace> <update key file: true|f
         mode="not-published"
     fi
 
-    p="KUBECOST_${${cr//[^A-Za-z0-9]/_}:u}_"
+    p="KUBECOST_"   # the file name says which instance
     vars=("${p}NAME=${cr}" "${p}NAMESPACE=${ns}" "${p}URL=${url}" "${p}LOGIN_MODE=${mode}")
     case "${mode}" in
         openshift)
@@ -405,4 +406,84 @@ kc_postgres_status() {   # <cr json> <namespace>
     KC_PG_QUERIES="$(jq -r '[.queryConfigs // {} | .[]? | .[]?] | length' <<<"${pg}")"
     KC_PG="$(kc_postgres_from_secret "$2" "${KC_PG_SECRET}" "$2" 2>/dev/null)" \
         || KC_PG="$(kc_postgres_normalize <<<"${pg}" | jq -c 'del(.runInterval, .queryConfigs)')"
+}
+
+# =============================================================================
+# Optional features (alerts, budgets, reports, network costs, ...)
+# configs/kubecost_config/<ns>/<instance>-features.yaml, converted by
+# src/helpers/kubecost_features.py (PyYAML: the repo's .venv)
+# =============================================================================
+kc_features_file() {   # <namespace> <instance>  -> REPLY = path
+    REPLY="${KC_CONFIG_DIR}/$1/$2-features.yaml"
+}
+
+# Python with PyYAML (the repo's .venv, else python3 on PATH), running
+# <script> from src/helpers/.
+kc_py() {   # <script.py> <args...>
+    local py="python3" script="$1"; shift
+    [[ -x "${_CP4D_REPO_ROOT}/.venv/bin/python" ]] && py="${_CP4D_REPO_ROOT}/.venv/bin/python"
+    "${py}" -c 'import yaml' 2>/dev/null \
+        || { echo "[ERROR] ${py} has no PyYAML; run 'uv sync' in the repo (or pip install pyyaml)." >&2; return 1; }
+    "${py}" "${_CP4D_REPO_ROOT}/src/helpers/${script}" "$@"
+}
+
+kc_python() { kc_py kubecost_features.py "$@"; }
+
+# Writes the context kubecost_features.py works from to <file> (private): the
+# CR spec, the effective Helm values (the chart's helm-values-<instance>
+# ConfigMap), Route URL, product key / SSO state, node label counts and the
+# decoded data of the Secrets the features use.
+kc_features_context() {   # <instance> <namespace> <file>
+    local cr="$1" ns="$2" cr_json eff host="" url="" name
+    local -a names
+    cr_json="$(oc get "${KC_RESOURCE}" "${cr}" -n "${ns}" -o json)" || return 1
+    eff="$(oc get configmap "helm-values-${cr}" -n "${ns}" -o json 2>/dev/null \
+        | jq -c '.data["user-values.json"] // "{}" | fromjson? // {}' 2>/dev/null)"
+    [[ -n "${eff}" ]] || eff='{}'
+    host="$(oc get route "$(kc_fullname "${cr_json}" "${cr}")-route" -n "${ns}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+    [[ -n "${host}" ]] && url="https://${host}"
+    kc_product_key_status "${cr_json}" "${ns}"
+
+    names=("${cr}-smtp" "${cr}-plugins" "${cr}-federated-storage")
+    names+=("${(@f)$(jq -r '.kubecostProductConfigs.smtp.secretname // empty,
+        (.plugins.existingCustomSecret // {} | select(.enabled) | .name // empty),
+        .global.federatedStorage.existingSecret // empty' <<<"${eff}")}")
+    names=(${(u)names:#})
+    local secrets='{}' js
+    for name in "${names[@]}"; do
+        js="$(oc get secret "${name}" -n "${ns}" -o json 2>/dev/null)" || continue
+        secrets="$(jq -c --arg n "${name}" --argjson s "${js}" \
+            '. + {($n): ($s.data // {} | map_values(try @base64d catch ""))}' <<<"${secrets}")"
+    done
+
+    oc get nodes -o json | jq -c \
+        --arg cr "${cr}" --arg ns "${ns}" --arg url "${url}" --argjson key "${KC_KEY_LINKED}" \
+        --argjson spec "$(jq -c '.spec // {}' <<<"${cr_json}")" --argjson eff "${eff}" --argjson secrets "${secrets}" '
+        ($eff + {}) as $v
+        | (if ($v.oidc.enabled // $spec.oidc.enabled // false) then "oidc"
+           elif ($v.saml.enabled // $spec.saml.enabled // false) then "saml" else "" end) as $sso
+        | {instance: $cr, namespace: $ns, url: $url, keyLinked: $key, sso: $sso,
+           ssoRbac: (if $sso == "" then false else ($v[$sso].rbac.enabled // $spec[$sso].rbac.enabled // false) end),
+           ssoGroups: (if $sso == "" then false else (($v[$sso].rbac.groups // $spec[$sso].rbac.groups // []) | length > 0) end),
+           nodes: (.items | length),
+           labelledNodes: ([.items[] | .metadata.labels
+               | select(has("topology.kubernetes.io/region") and has("topology.kubernetes.io/zone"))] | length),
+           crSpec: $spec, effective: $eff, secrets: $secrets}' | _kc_write_private "$3"
+}
+
+# Restarts the Deployments, StatefulSets and DaemonSets in <namespace> whose
+# pods mount <secret> or read it into env (a changed Secret alone does not
+# roll them: the chart's config checksums don't cover named Secrets).
+kc_restart_secret_consumers() {   # <namespace> <secret> <timeout s>
+    local w
+    for w in ${(f)"$(oc get deployments,statefulsets,daemonsets -n "$1" -o json | jq -r --arg s "$2" '
+        .items[] | select([.spec.template.spec
+            | (.volumes[]? | .secret.secretName, (.projected.sources[]? | .secret.name)),
+              ((.containers[]?, .initContainers[]?) | (.env[]?.valueFrom.secretKeyRef.name), (.envFrom[]?.secretRef.name))]
+          | index($s)) | "\(.kind | ascii_downcase)/\(.metadata.name)"')"}; do
+        [[ -n "${w}" ]] || continue
+        oc rollout restart "${w}" -n "$1" >/dev/null
+        echo "[INFO] Restarted ${w} (Secret $2 changed); waiting..."
+        oc rollout status "${w}" -n "$1" --timeout="$3s" 2>&1 | sed 's/^/  /' || return 1
+    done
 }
