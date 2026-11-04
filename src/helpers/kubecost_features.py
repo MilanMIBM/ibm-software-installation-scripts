@@ -16,7 +16,8 @@ converts:
 ctx.json: {"instance", "namespace", "url", "keyLinked", "sso" (oidc|saml|""),
 "ssoRbac", "ssoGroups", "nodes", "labelledNodes", "crSpec", "effective" (helm
 values; {} if unknown), "secrets" ({name: {key: decoded value}} of the Secrets
-the features use)}.
+the features use), "serviceCA" (PEM from the namespace's openshift-service-ca.crt
+ConfigMap; "" if none)}.
 
 Chart facts (kubecost 3.3.1, values.yaml + templates in the operator pod, and
 the aggregator binary): alert-configs / budgets-configs / saved-report-configs
@@ -25,7 +26,11 @@ aggregator; 3.x alerts support only type "health"; SMTP Secret key smtp.json;
 plugin Secret keys <plugin>_config.json; federated storage Secret key
 federated-store.yaml; network-costs needs topology region+zone node labels
 unless its affinity is replaced; teams render only with SAML/OIDC rbac on and
-no rbac groups;
+no rbac groups; the bucket is read by aggregator, cloud-cost, finops-agent
+(extraVolumes), cluster-controller (no extraVolumes; storageConfigSecret is
+mounted as the directory /var/configs/actions/storage) and network-costs (no
+extraVolumes), all via opencost storage (http_config.tls_config.ca_file /
+insecure_skip_verify);
 Actions on free tier needs an RSA signing key, with a product key it doesn't.
 """
 
@@ -42,6 +47,22 @@ DELETE = object()  # drop the override: the chart default applies
 NOCHANGE = object()
 
 MANAGED_LABEL = "kubecost-features/managed"
+
+# federatedStorage.trustServiceCA: the OpenShift service CA (ConfigMap
+# openshift-service-ca.crt, which OpenShift creates and keeps current in every
+# namespace) is mounted into the bucket readers that take extra volumes
+# (aggregator, cloudCost, finopsagent), and the bucket config names it as
+# http_config.tls_config.ca_file. The cluster controller has no extraVolumes in
+# chart 3.3.1; it gets its own copy of the config plus the CA in the Secret
+# clusterController.storageConfigSecret, which is mounted as a directory.
+SERVICE_CA_CONFIGMAP = "openshift-service-ca.crt"
+SERVICE_CA_KEY = "service-ca.crt"
+SERVICE_CA_VOLUME = "kubecost-service-ca"
+SERVICE_CA_DIR = "/var/run/kubecost-service-ca"
+SERVICE_CA_FILE = f"{SERVICE_CA_DIR}/{SERVICE_CA_KEY}"
+ACTIONS_STORE_DIR = "/var/configs/actions/storage"
+ACTIONS_CA_FILE = f"{ACTIONS_STORE_DIR}/{SERVICE_CA_KEY}"
+SERVICE_CA_COMPONENTS = ("aggregator", "cloudCost", "finopsagent")
 
 # Chart 3.3.1 defaults for the scalar settings handled here. A setting equal to
 # its default is dropped from the CR instead of written.
@@ -179,6 +200,62 @@ def csv_list(value):
     return [
         v.strip() for v in str(value or "").replace("\\,", ",").split(",") if v.strip()
     ]
+
+
+# --------------------------------------------------------------------------- bucket TLS
+def bucket_tls(config):
+    """http_config.tls_config of an objstore config {type, config: {...}} ({} if none)."""
+    tls = get_path(config, "config.http_config.tls_config", {})
+    return tls if isinstance(tls, dict) else {}
+
+
+def with_ca_file(config, path):
+    """A copy of the objstore config that verifies the endpoint against path."""
+    out = copy.deepcopy(config)
+    http = out["config"].setdefault("http_config", {})
+    http.setdefault("tls_config", {})["ca_file"] = path
+    return out
+
+
+def without_service_ca(config):
+    """A copy without the ca_file trustServiceCA adds; empty maps it leaves are dropped."""
+    out = copy.deepcopy(config)
+    inner = out.get("config") if isinstance(out, dict) else None
+    http = inner.get("http_config") if isinstance(inner, dict) else None
+    tls = http.get("tls_config") if isinstance(http, dict) else None
+    if not isinstance(tls, dict) or tls.get("ca_file") not in (
+        SERVICE_CA_FILE,
+        ACTIONS_CA_FILE,
+    ):
+        return out
+    del tls["ca_file"]
+    if not tls:
+        del http["tls_config"]
+    if not http:
+        del inner["http_config"]
+    return out
+
+
+def endpoint_host(endpoint):
+    """Host part of an S3 endpoint (host[:port], maybe with a scheme)."""
+    host = re.sub(r"^[a-z]+://", "", str(endpoint or "").strip().lower())
+    return host.split("/")[0].rsplit(":", 1)[0] if host else ""
+
+
+def is_service_host(host):
+    return host.endswith(".svc") or host.endswith(".svc.cluster.local")
+
+
+def volumes_with(cur, item, keep):
+    """cur (a CR list) without entries named item["name"], plus item if keep."""
+    out = [
+        v
+        for v in (cur if isinstance(cur, list) else [])
+        if not (isinstance(v, dict) and v.get("name") == item["name"])
+    ]
+    if keep:
+        out.append(item)
+    return out or DELETE
 
 
 # --------------------------------------------------------------------------- generate
@@ -385,9 +462,20 @@ def current_settings(ctx):
             fed_cfg = yaml.safe_load(fed["config"]) or {}
         except yaml.YAMLError:
             fed_cfg = {}
+    trust_ca = bucket_tls(fed_cfg).get("ca_file") == SERVICE_CA_FILE
+    if trust_ca:
+        fed_cfg = without_service_ca(fed_cfg)
+    # type first, the bucket settings last: the commented http_config example
+    # in the file goes right under them.
+    if isinstance(fed_cfg, dict) and "config" in fed_cfg:
+        fed_cfg = {
+            **{k: v for k, v in fed_cfg.items() if k != "config"},
+            "config": fed_cfg["config"],
+        }
     s["federatedStorage"] = {
         "enabled": bool(fed_existing or fed_cfg),
         "existingSecret": fed_existing,
+        "trustServiceCA": trust_ca,
         "config": fed_cfg,
     }
     s["actions"] = {
@@ -414,6 +502,18 @@ def generate(ctx):
     t = s["turbonomic"]
     pl = s["plugins"]
     fs = s["federatedStorage"]
+    # Commented TLS skip under the bucket settings, unless they already have
+    # an http_config (then it is shown as set).
+    fs_inner = fs["config"].get("config") if isinstance(fs["config"], dict) else None
+    fs_tls_hint = ""
+    if isinstance(fs_inner, dict) and "http_config" not in fs_inner:
+        fs_tls_hint = (
+            "\n      # Self-signed or private-CA endpoint: skip the certificate check"
+            "\n      # (in-cluster .svc endpoint: trustServiceCA: true above verifies it instead)"
+            "\n      # http_config:"
+            "\n      #   tls_config:"
+            "\n      #     insecure_skip_verify: true"
+        )
 
     return f"""\
 # Kubecost optional features for {cr} ({ns})
@@ -642,13 +742,29 @@ plugins:
 #       region: us-east-1
 #       access_key: "..."
 #       secret_key: "..."
+#       # TLS. The Kubecost images only trust public CAs, so an endpoint with a
+#       # self-signed or private-CA certificate fails with "x509: certificate
+#       # signed by unknown authority" (the aggregator then crash-loops). Either
+#       # skip the check:
+#       http_config:
+#         tls_config:
+#           insecure_skip_verify: true
+#       # or, for an endpoint on this cluster, use trustServiceCA below instead.
 # (a flat map with type next to bucket is accepted too)
 # Written to the Secret <instance>-federated-storage, or name an existing
 # Secret with a federated-store.yaml key.
 federatedStorage:
   enabled: {y(fs["enabled"])}
   existingSecret: {y(fs["existingSecret"])}
-  config:{block(fs["config"], 4)}
+  # Verify an in-cluster S3 endpoint (*.svc, e.g. the ODF/NooBaa
+  # s3.openshift-storage.svc) against the OpenShift service CA, instead of
+  # skipping the check. Needs the bucket on this cluster and config below (not
+  # existingSecret). Mounts the namespace's {SERVICE_CA_CONFIGMAP} ConfigMap
+  # (kept current by OpenShift) into the aggregator, cloud-cost and finops-agent pods,
+  # and gives the cluster controller its own copy in the Secret
+  # <instance>-actions-storage (re-apply after a service CA rotation).
+  trustServiceCA: {y(fs["trustServiceCA"])}
+  config:{block(fs["config"], 4)}{fs_tls_hint}
 
 # --- Actions (v2): scheduled rightsizing / turndown run by the cluster controller ------------------
 # Needs the product key. Stores its state in the federated storage (the
@@ -1148,10 +1264,92 @@ def plan_plugins(cfg, p):
     p.summary.append((f, f"on: {', '.join(names) or 'none'} (Secret {secret})"))
 
 
+def plan_service_ca_checks(cfg, config, p):
+    """True if trustServiceCA can be used for this bucket config (errors otherwise)."""
+    f = "federatedStorage"
+    host = endpoint_host(config["config"].get("endpoint"))
+    ok = True
+    if config["type"] != "S3":
+        p.err(f, f"trustServiceCA is for an in-cluster S3 endpoint, not type {config['type']}")
+        ok = False
+    elif not is_service_host(host):
+        p.err(
+            f,
+            f"trustServiceCA needs an in-cluster service endpoint (*.svc or *.svc.cluster.local), "
+            f"not {host or 'none'}: the service CA only signs service certificates. For a route "
+            "or external endpoint with a private CA use http_config.tls_config.insecure_skip_verify",
+        )
+        ok = False
+    if not (p.ctx.get("serviceCA") or "").strip():
+        p.err(
+            f,
+            f"trustServiceCA: no ConfigMap {SERVICE_CA_CONFIGMAP} (key {SERVICE_CA_KEY}) in "
+            f"{p.ctx['namespace']}; OpenShift creates it in every namespace (not OpenShift?)",
+        )
+        ok = False
+    tls = bucket_tls(config)
+    if tls.get("ca_file"):
+        p.err(f, f"trustServiceCA sets http_config.tls_config.ca_file; remove {tls['ca_file']!r}")
+        ok = False
+    if tls.get("insecure_skip_verify") is True or get_path(
+        config, "config.http_config.insecure_skip_verify", False
+    ) is True:
+        p.warn(f, "insecure_skip_verify is also set, so the service CA is never checked; drop it")
+    cc = get_path(p.spec, "clusterController.storageConfigSecret", "")
+    if (cc and cc != f"{p.cr}-actions-storage") or get_path(
+        p.spec, "clusterController.storageConfig", ""
+    ):
+        p.err(
+            f,
+            "trustServiceCA sets clusterController.storageConfigSecret, but the CR already has its own "
+            "cluster controller bucket config",
+        )
+        ok = False
+    nc = cfg.get("networkCosts")
+    if isinstance(nc, dict) and nc.get("enabled") is True:
+        p.warn(
+            f,
+            "network-costs writes to the bucket too, but chart 3.3.1 can't mount the CA into it: "
+            "its uploads will fail TLS (use insecure_skip_verify instead if you need both)",
+        )
+    return ok
+
+
+def plan_service_ca_wiring(p, on):
+    """Mount (or remove) the service CA in the bucket readers, and point the cluster
+    controller at its own config; only our own list entries are touched."""
+    f = "federatedStorage"
+    volume = {
+        "name": SERVICE_CA_VOLUME,
+        "configMap": {
+            "name": SERVICE_CA_CONFIGMAP,
+            "items": [{"key": SERVICE_CA_KEY, "path": SERVICE_CA_KEY}],
+        },
+    }
+    mount = {"name": SERVICE_CA_VOLUME, "mountPath": SERVICE_CA_DIR, "readOnly": True}
+    for comp in SERVICE_CA_COMPONENTS:
+        for key, item in (("extraVolumes", volume), ("extraVolumeMounts", mount)):
+            path = f"{comp}.{key}"
+            cur = get_path(p.spec, path, [])
+            ours = isinstance(cur, list) and any(
+                isinstance(v, dict) and v.get("name") == SERVICE_CA_VOLUME for v in cur
+            )
+            if on or ours:
+                p.set(f, path, volumes_with(cur, item, on))
+    actions = f"{p.cr}-actions-storage"
+    path = "clusterController.storageConfigSecret"
+    if on:
+        p.set(f, path, actions)
+    elif get_path(p.spec, path, "") == actions:
+        p.set(f, path, DELETE)
+
+
 def plan_federated(cfg, p):
     f = "federatedStorage"
     s = section(cfg, f, p)
     on = flag(s, "enabled", p, f)
+    trust = flag(s, "trustServiceCA", p, f) and on
+    use_ca = False  # the service CA wiring below goes in
     if on:
         existing = text(s, "existingSecret", p, f)
         config = s.get("config") or {}
@@ -1166,9 +1364,17 @@ def plan_federated(cfg, p):
             config = {"type": config["type"], "config": flat} if flat else config
         if isinstance(config, dict) and isinstance(config.get("type"), str):
             config = {**config, "type": config["type"].upper()}
+        if isinstance(config, dict) and isinstance(config.get("config"), dict):
+            config = without_service_ca(config)
         if existing and config:
             p.err(f, "set existingSecret or config, not both")
         elif existing:
+            if trust:
+                p.err(
+                    f,
+                    "trustServiceCA needs the bucket settings in config (it adds the CA file to them), "
+                    "not existingSecret",
+                )
             p.set(f, "global.federatedStorage", {"existingSecret": existing})
             p.summary.append((f, f"on: Secret {existing}"))
         elif (
@@ -1177,11 +1383,39 @@ def plan_federated(cfg, p):
             and isinstance(config.get("config"), dict)
         ):
             name = f"{p.cr}-federated-storage"
+            store = config
+            if trust:
+                use_ca = plan_service_ca_checks(cfg, config, p)
+                if use_ca:
+                    store = with_ca_file(config, SERVICE_CA_FILE)
+                    actions = f"{p.cr}-actions-storage"
+                    p.secrets.append(
+                        {
+                            "name": actions,
+                            "data": {
+                                "actions-store.yaml": yaml.safe_dump(
+                                    with_ca_file(config, ACTIONS_CA_FILE),
+                                    sort_keys=False,
+                                ),
+                                SERVICE_CA_KEY: p.ctx["serviceCA"],
+                            },
+                            "purpose": "cluster controller bucket config + service CA",
+                        }
+                    )
+            elif bucket_tls(config).get("insecure_skip_verify") is not True:
+                host = endpoint_host(config["config"].get("endpoint"))
+                if config["type"] == "S3" and is_service_host(host):
+                    p.warn(
+                        f,
+                        f"{host} serves a certificate from the OpenShift service CA, which the Kubecost "
+                        "images don't trust: set trustServiceCA: true, or http_config.tls_config."
+                        "insecure_skip_verify: true in config",
+                    )
             p.secrets.append(
                 {
                     "name": name,
                     "data": {
-                        "federated-store.yaml": yaml.safe_dump(config, sort_keys=False)
+                        "federated-store.yaml": yaml.safe_dump(store, sort_keys=False)
                     },
                     "purpose": "federated storage",
                 }
@@ -1195,7 +1429,11 @@ def plan_federated(cfg, p):
                 or "?"
             )
             p.summary.append(
-                (f, f"on: {config['type']} bucket {bucket} (Secret {name})")
+                (
+                    f,
+                    f"on: {config['type']} bucket {bucket} (Secret {name})"
+                    + (", verified with the service CA" if use_ca else ""),
+                )
             )
         else:
             p.err(
@@ -1209,6 +1447,7 @@ def plan_federated(cfg, p):
     else:
         p.set(f, "global.federatedStorage", DELETE)
         p.summary.append((f, "off"))
+    plan_service_ca_wiring(p, use_ca)
 
     a = "actions"
     if flag(section(cfg, a, p), "enabled", p, a):

@@ -19,5 +19,6 @@ h_steps_parse --strict "$@"
 h_step projects           true "2.0.1 preliminary project setup"       "${CURRENT_DIR}/2.0.1_preliminary_project_setup.sh"
 h_step case-download      true "2.0.2 cluster component CASE download" "${CURRENT_DIR}/2.0.2_cluster_component_case_download.sh"
 h_step cluster-components true "2.1 apply shared cluster CASE packages" "${CURRENT_DIR}/2.1_apply_shared_cluster_CASE_packages.sh"
+h_step pull-secret-linking true "2.2.x pull secret compatibility linking" "${CURRENT_DIR}/2.2.x_pull_secret_compatibility_linking.sh"
 h_steps_plan
 h_steps_run

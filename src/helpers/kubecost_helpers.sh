@@ -521,8 +521,14 @@ kc_features_context() {   # <instance> <namespace> <file>
             '. + {($n): ($s.data // {} | map_values(try @base64d catch ""))}' <<<"${secrets}")"
     done
 
+    # OpenShift's service CA (every namespace has it; federatedStorage.trustServiceCA)
+    local service_ca
+    service_ca="$(oc get configmap openshift-service-ca.crt -n "${ns}" \
+        -o jsonpath='{.data.service-ca\.crt}' 2>/dev/null || true)"
+
     oc get nodes -o json | jq -c \
         --arg cr "${cr}" --arg ns "${ns}" --arg url "${url}" --argjson key "${KC_KEY_LINKED}" \
+        --arg serviceCA "${service_ca}" \
         --argjson spec "$(jq -c '.spec // {}' <<<"${cr_json}")" --argjson eff "${eff}" --argjson secrets "${secrets}" '
         ($eff + {}) as $v
         | (if ($v.oidc.enabled // $spec.oidc.enabled // false) then "oidc"
@@ -533,7 +539,7 @@ kc_features_context() {   # <instance> <namespace> <file>
            nodes: (.items | length),
            labelledNodes: ([.items[] | .metadata.labels
                | select(has("topology.kubernetes.io/region") and has("topology.kubernetes.io/zone"))] | length),
-           crSpec: $spec, effective: $eff, secrets: $secrets}' | _kc_write_private "$3"
+           crSpec: $spec, effective: $eff, secrets: $secrets, serviceCA: $serviceCA}' | _kc_write_private "$3"
 }
 
 # Restarts the Deployments, StatefulSets and DaemonSets in <namespace> whose

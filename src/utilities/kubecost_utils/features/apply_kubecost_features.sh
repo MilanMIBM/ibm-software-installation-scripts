@@ -12,8 +12,8 @@ set -euo pipefail
 #   configs/kubecost_config/<namespace>/<instance>-features.yaml
 #
 # Checks the whole file first, then writes the Secrets it needs
-# (<instance>-smtp, <instance>-plugins, <instance>-federated-storage; labelled
-# kubecost-features/managed), merge-patches the Kubecost CR (a feature turned
+# (<instance>-smtp, <instance>-plugins, <instance>-federated-storage,
+# <instance>-actions-storage; labelled kubecost-features/managed), merge-patches the Kubecost CR (a feature turned
 # off has its settings removed, so the chart default applies), waits for the
 # operator, and restarts the pods that read a Secret whose content changed.
 # Managed Secrets no longer used are deleted. Only the settings in the file are
