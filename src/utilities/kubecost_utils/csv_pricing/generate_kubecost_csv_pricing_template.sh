@@ -34,8 +34,10 @@ set -euo pipefail
 #                    recommends these ('hour' prices can be off by 1-5%)
 #   hour             one price per node-hour per profile
 #
-#   generate_kubecost_csv_pricing_template.sh <kubecost name> [options]
+#   generate_kubecost_csv_pricing_template.sh [<kubecost name>] [options]
 #     -n, --namespace <ns>         default: the namespace holding that Kubecost CR
+#   No name: KUBECOST_INSTANCE_NAME from configs/kubecost_config/kubecost_vars.sh,
+#   else the only instance on the cluster (asks which one when there are several)
 #     --node-units split|hour
 #     --reset                      start from scratch (drop prices already filled in)
 #     -o, --output <file>          default configs/kubecost_config/<ns>/<instance>-pricing.csv
@@ -78,11 +80,10 @@ while [[ $# -gt 0 ]]; do
         *)               [[ -z "${CR_NAME}" ]] || die "Unexpected argument: $1"; CR_NAME="$1"; shift ;;
     esac
 done
-[[ -n "${CR_NAME}" ]] || { usage >&2; die "Name the Kubecost instance (the Kubecost CR)."; }
 [[ "${NODE_UNITS}" == (split|hour) ]] || die "--node-units must be split or hour."
 
 ocu_login
-[[ -n "${NAMESPACE}" ]] || NAMESPACE="$(kc_find_instance_namespace "${CR_NAME}")" || exit 1
+kc_resolve_instance || exit 1
 oc get "${KC_RESOURCE}" "${CR_NAME}" -n "${NAMESPACE}" &>/dev/null \
     || die "Kubecost instance '${CR_NAME}' not found in namespace '${NAMESPACE}'."
 OUTPUT="${OUTPUT:-${KC_CONFIG_DIR}/${NAMESPACE}/${CR_NAME}-pricing.csv}"

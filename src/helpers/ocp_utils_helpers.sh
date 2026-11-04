@@ -141,16 +141,22 @@ htpw_read_lines() {
     done
 }
 
-htpw_new_password() {
-    openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-16
+# Alphanumeric password of <length> characters (default HTPW_PASSWORD_LENGTH,
+# else 16). Draws more random bytes until there are enough after filtering.
+htpw_new_password() {   # [length]
+    local n="${1:-${HTPW_PASSWORD_LENGTH:-16}}" pw=""
+    while (( ${#pw} < n )); do
+        pw+="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9')"
+    done
+    print -r -- "${pw[1,n]}"
 }
 
 # A new password for <user>: bcrypt line in NEW_LINES, plain text in
-# SAVED_PASSWORDS, name added to ISSUED.
+# SAVED_PASSWORDS, name added to ISSUED. bcrypt cost: HTPW_BCRYPT_COST, else 10.
 htpw_issue() {   # <user>
     local pw
     pw="$(htpw_new_password)"
-    NEW_LINES[$1]="$(htpasswd -nbB -C 10 "$1" "${pw}" | head -n 1)"
+    NEW_LINES[$1]="$(htpasswd -nbB -C "${HTPW_BCRYPT_COST:-10}" "$1" "${pw}" | head -n 1)"
     SAVED_PASSWORDS[$1]="${pw}"
     ISSUED+=("$1")
 }
@@ -227,14 +233,14 @@ htpw_remove_users() {
 }
 
 # Waits for the authentication operator to roll the OAuth change out to the
-# login pods.
+# login pods. Timeout in seconds: HTPW_ROLLOUT_TIMEOUT, else 300.
 htpw_wait_auth_rollout() {
-    local i
-    echo "[INFO] Waiting for the authentication operator to roll out (up to ~5 min)..."
+    local i timeout="${HTPW_ROLLOUT_TIMEOUT:-300}"
+    echo "[INFO] Waiting for the authentication operator to roll out (up to ~$(( (timeout + 59) / 60 )) min)..."
     for i in {1..15}; do
         [[ "$(oc get co authentication -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}')" == True ]] && break
         sleep 2
     done
-    oc wait co/authentication --for=condition=Progressing=False --timeout=300s >/dev/null \
+    oc wait co/authentication --for=condition=Progressing=False --timeout="${timeout}s" >/dev/null \
         || echo "[WARN] Still rolling out. Check with: oc get co authentication"
 }

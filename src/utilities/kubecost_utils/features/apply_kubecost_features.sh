@@ -19,8 +19,10 @@ set -euo pipefail
 # Managed Secrets no longer used are deleted. Only the settings in the file are
 # touched: login, product key, pricing, currency and Postgres are left alone.
 #
-#   apply_kubecost_features.sh <kubecost name> [options]
+#   apply_kubecost_features.sh [<kubecost name>] [options]
 #     -n, --namespace <ns>     default: the namespace holding that Kubecost CR
+#   No name: KUBECOST_INSTANCE_NAME from configs/kubecost_config/kubecost_vars.sh,
+#   else the only instance on the cluster (asks which one when there are several)
 #     -f, --file <yaml>        default configs/kubecost_config/<ns>/<instance>-features.yaml
 #     --dry-run                check the file and show the change (Secret values hidden)
 #     --no-wait                don't wait for the operator to roll it out
@@ -66,11 +68,10 @@ while [[ $# -gt 0 ]]; do
         *)               [[ -z "${CR_NAME}" ]] || die "Unexpected argument: $1"; CR_NAME="$1"; shift ;;
     esac
 done
-[[ -n "${CR_NAME}" ]] || { usage >&2; die "Name the Kubecost instance (the Kubecost CR)."; }
 [[ "${TIMEOUT}" == <-> ]] || die "--timeout needs a number of seconds."
 
 ocu_login
-[[ -n "${NAMESPACE}" ]] || NAMESPACE="$(kc_find_instance_namespace "${CR_NAME}")" || exit 1
+kc_resolve_instance || exit 1
 oc get "${KC_RESOURCE}" "${CR_NAME}" -n "${NAMESPACE}" &>/dev/null \
     || die "Kubecost instance '${CR_NAME}' not found in namespace '${NAMESPACE}'."
 echo "[INFO] Kubecost instance: ${NAMESPACE}/${CR_NAME}"

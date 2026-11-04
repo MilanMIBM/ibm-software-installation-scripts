@@ -13,7 +13,8 @@ set -euo pipefail
 # Secret (default name kubecost-product-key, in the instance's namespace):
 #   - a key given (--key or --key-file): the Secret is created, or updated if
 #     it holds another key (via create_kubecost_product_key_secret.sh)
-#   - no key given: the Secret's key is used. Without the Secret, the key in
+#   - no key given: the Secret's key is used. Without the Secret, KUBECOST_PRODUCT_KEY
+#     from configs/kubecost_config/kubecost_vars.sh, else the key in
 #     configs/kubecost_config/<namespace>/<secret>-productkey.json is used to
 #     create it.
 # The key is kept in that local file: written when missing or when a key is
@@ -24,9 +25,12 @@ set -euo pipefail
 # When the CR already points at the Secret and only the key changed, the
 # aggregator is restarted so it reads the new key.
 #
-#   link_kubecost_product_key.sh <kubecost name> [options]
+#   link_kubecost_product_key.sh [<kubecost name>] [options]
 #     -n, --namespace <ns>        default: the namespace holding that Kubecost CR
-#     -s, --secret-name <name>    default kubecost-product-key
+#   No name: KUBECOST_INSTANCE_NAME from configs/kubecost_config/kubecost_vars.sh,
+#   else the only instance on the cluster (asks which one when there are several)
+#     -s, --secret-name <name>    default KUBECOST_PRODUCT_KEY_SECRET (kubecost_vars.sh),
+#                                 else kubecost-product-key
 #     -k, --key <key>             product key
 #     -f, --key-file <file>       file with {"key": "..."} (productkey.json) or the bare
 #                                 key; '-' reads it from stdin
@@ -51,7 +55,7 @@ CREATE_SCRIPT="${SCRIPT_DIR}/create_kubecost_product_key_secret.sh"
 
 CR_NAME=""
 NAMESPACE=""
-SECRET_NAME="kubecost-product-key"
+SECRET_NAME="${KUBECOST_PRODUCT_KEY_SECRET:-kubecost-product-key}"
 PRODUCT_KEY=""
 KEY_FILE=""
 DRY_RUN=false
@@ -83,7 +87,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -n "${CR_NAME}" ]] || { usage >&2; die "Name the Kubecost instance (the Kubecost CR)."; }
 [[ "${TIMEOUT}" == <-> ]] || die "--timeout needs a number of seconds."
 [[ -z "${PRODUCT_KEY}" || -z "${KEY_FILE}" ]] || die "Pass --key or --key-file, not both."
 if [[ -n "${KEY_FILE}" ]]; then
@@ -94,7 +97,7 @@ PRODUCT_KEY="${PRODUCT_KEY//[[:space:]]/}"
 
 ocu_login
 
-[[ -n "${NAMESPACE}" ]] || NAMESPACE="$(kc_find_instance_namespace "${CR_NAME}")" || exit 1
+kc_resolve_instance || exit 1
 CR_JSON="$(oc get "${KC_RESOURCE}" "${CR_NAME}" -n "${NAMESPACE}" -o json 2>/dev/null)" \
     || die "Kubecost instance '${CR_NAME}' not found in namespace '${NAMESPACE}'."
 echo "[INFO] Kubecost instance: ${NAMESPACE}/${CR_NAME}"
@@ -134,17 +137,26 @@ if [[ -n "${PRODUCT_KEY}" ]]; then
     fi
 elif [[ -z "${current_key}" ]]; then
     kc_product_key_file "${NAMESPACE}" "${SECRET_NAME}"; local_file="${REPLY}"
-    [[ -f "${local_file}" ]] && PRODUCT_KEY="$(kc_read_key_file "${local_file}")" || PRODUCT_KEY=""
+    key_from="${local_file#${_CP4D_REPO_ROOT}/}"
+    if [[ -n "${KUBECOST_PRODUCT_KEY:-}" ]]; then
+        PRODUCT_KEY="${KUBECOST_PRODUCT_KEY//[[:space:]]/}"; key_from="KUBECOST_PRODUCT_KEY (${KC_VARS_FILE})"
+    elif [[ -f "${local_file}" ]]; then
+        PRODUCT_KEY="$(kc_read_key_file "${local_file}")"
+    fi
     if [[ -z "${PRODUCT_KEY}" ]]; then
         if [[ "${secret_exists}" == true ]]; then
-            die "Secret '${SECRET_NAME}' in '${NAMESPACE}' has no productkey.json with a 'key' field, and there is no ${local_file#${_CP4D_REPO_ROOT}/}. Pass --key or --key-file."
+            die "Secret '${SECRET_NAME}' in '${NAMESPACE}' has no productkey.json with a 'key' field, and no KUBECOST_PRODUCT_KEY or ${local_file#${_CP4D_REPO_ROOT}/}. Pass --key or --key-file."
         fi
-        die "No Secret '${SECRET_NAME}' in '${NAMESPACE}' and no ${local_file#${_CP4D_REPO_ROOT}/}. Pass --key or --key-file to create it, or -s <existing secret>."
+        die "No Secret '${SECRET_NAME}' in '${NAMESPACE}', no KUBECOST_PRODUCT_KEY and no ${local_file#${_CP4D_REPO_ROOT}/}. Pass --key or --key-file to create it, or -s <existing secret>."
     fi
-    echo "[INFO] Secret '${SECRET_NAME}' $([[ "${secret_exists}" == true ]] && echo "has no key" || echo "does not exist"); using the key in ${local_file#${_CP4D_REPO_ROOT}/} (${PRODUCT_KEY[1,4]}****)."
+    echo "[INFO] Secret '${SECRET_NAME}' $([[ "${secret_exists}" == true ]] && echo "has no key" || echo "does not exist"); using the key in ${key_from} (${PRODUCT_KEY[1,4]}****)."
     apply_key_secret
 else
     echo "[INFO] Using the key in Secret '${SECRET_NAME}' (${current_key[1,4]}****)."
+    if [[ -n "${KUBECOST_PRODUCT_KEY:-}" && "${KUBECOST_PRODUCT_KEY//[[:space:]]/}" != "${current_key}" ]]; then
+        echo "[WARN] KUBECOST_PRODUCT_KEY (${KC_VARS_FILE}, ${KUBECOST_PRODUCT_KEY[1,4]}****) differs from the Secret's key; kept the Secret's."
+        echo "[WARN]   to use the config's key: print -rn -- \"\$KUBECOST_PRODUCT_KEY\" | ${0:t} ${CR_NAME} -f -   (after: source s_env.sh kubecost)"
+    fi
     [[ "${DRY_RUN}" == true ]] || kc_save_product_key_file "${NAMESPACE}" "${SECRET_NAME}" "${current_key}" false
 fi
 

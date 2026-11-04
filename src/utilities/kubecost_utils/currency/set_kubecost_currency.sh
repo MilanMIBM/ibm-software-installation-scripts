@@ -14,8 +14,11 @@ set -euo pipefail
 #   USD AUD BRL CAD CHF CNY DKK EUR GBP IDR INR JPY NOK PLN SEK
 # Without a currency on a terminal, a numbered menu of the presets is shown.
 #
-#   set_kubecost_currency.sh <kubecost name> [<currency>] [options]
+#   set_kubecost_currency.sh [<kubecost name>] [<currency>] [options]
+#   set_kubecost_currency.sh <currency> [options]   instance from kubecost_vars.sh / the cluster
 #     -n, --namespace <ns>     default: the namespace holding that Kubecost CR
+#   No name: KUBECOST_INSTANCE_NAME from configs/kubecost_config/kubecost_vars.sh,
+#   else the only instance on the cluster (asks which one when there are several)
 #     --list                   list the presets and the instance's current currency
 #     --allow-unsupported      accept a 3-letter code that is not a preset
 #     --dry-run                show the change, change nothing
@@ -78,11 +81,16 @@ while [[ $# -gt 0 ]]; do
             shift ;;
     esac
 done
-[[ -n "${CR_NAME}" ]] || { usage >&2; die "Name the Kubecost instance (the Kubecost CR)."; }
 [[ "${TIMEOUT}" == <-> ]] || die "--timeout needs a number of seconds."
 
 ocu_login
-[[ -n "${NAMESPACE}" ]] || NAMESPACE="$(kc_find_instance_namespace "${CR_NAME}")" || exit 1
+# One argument that is a 3-letter code and no instance of that name: it is the
+# currency, and the instance comes from kubecost_vars.sh or the cluster.
+if [[ -z "${CURRENCY}" && "${CR_NAME}" == [A-Za-z][A-Za-z][A-Za-z] ]] \
+   && ! oc get "${KC_RESOURCE}" -A -o json | jq -e --arg n "${CR_NAME}" 'any(.items[]; .metadata.name == $n)' >/dev/null; then
+    CURRENCY="${CR_NAME:u}"; CR_NAME=""
+fi
+kc_resolve_instance || exit 1
 CR_JSON="$(oc get "${KC_RESOURCE}" "${CR_NAME}" -n "${NAMESPACE}" -o json 2>/dev/null)" \
     || die "Kubecost instance '${CR_NAME}' not found in namespace '${NAMESPACE}'."
 CURRENT="$(jq -r '.spec.kubecostProductConfigs.currencyCode // "USD"' <<<"${CR_JSON}")"

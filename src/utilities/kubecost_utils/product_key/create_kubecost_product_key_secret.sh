@@ -23,17 +23,21 @@ set -euo pipefail
 # (gitignored, owner-only), so the key in use can be looked up later.
 #
 # The Secret has to be in the namespace of the Kubecost CR, which is the
-# namespace the operator watches. Without -n, the namespace of the Kubecost
-# operator on the cluster is used (found by its Deployment, else its OLM
+# namespace the operator watches. Without -n, KUBECOST_OPERATOR_NAMESPACE from
+# configs/kubecost_config/kubecost_vars.sh is used, else the namespace of the
+# Kubecost operator on the cluster (found by its Deployment, else its OLM
 # Subscription); if there is more than one, pass -n.
 #
 #   create_kubecost_product_key_secret.sh <key> [options]
-#   create_kubecost_product_key_secret.sh [options]       asks for the key (no echo)
+#   create_kubecost_product_key_secret.sh [options]       KUBECOST_PRODUCT_KEY from kubecost_vars.sh,
+#                                                         else asks for the key (no echo)
 #     -k, --key <key>             product key (or as the first argument)
 #     -f, --key-file <file>       file with {"key": "..."} (productkey.json) or the bare
 #                                 key; '-' reads it from stdin
-#     -s, --secret-name <name>    default kubecost-product-key
-#     -n, --namespace <ns>        default: the Kubecost operator's namespace
+#     -s, --secret-name <name>    default KUBECOST_PRODUCT_KEY_SECRET (kubecost_vars.sh),
+#                                 else kubecost-product-key
+#     -n, --namespace <ns>        default: KUBECOST_OPERATOR_NAMESPACE (kubecost_vars.sh),
+#                                 else the Kubecost operator's namespace
 #     --dry-run                   print the Secret (key masked), change nothing
 #     --server/--token/-u/-p      log in first (see ocu_login); otherwise OC_LOGIN
 #                                 from cpd_vars.sh, else the current oc session
@@ -50,7 +54,7 @@ usage() { sed -n '/^# Creates/,/^#     -h, --help/p' "${SCRIPT_FILE}" | sed 's/^
 
 PRODUCT_KEY=""
 KEY_FILE=""
-SECRET_NAME="kubecost-product-key"
+SECRET_NAME="${KUBECOST_PRODUCT_KEY_SECRET:-kubecost-product-key}"
 NAMESPACE=""
 DRY_RUN=false
 LOGIN_SERVER=""
@@ -85,6 +89,10 @@ if [[ -n "${KEY_FILE}" ]]; then
     fi
     PRODUCT_KEY="$(kc_read_key_file "${KEY_FILE}")" || exit 1
 fi
+if [[ -z "${PRODUCT_KEY}" && -n "${KUBECOST_PRODUCT_KEY:-}" ]]; then
+    PRODUCT_KEY="${KUBECOST_PRODUCT_KEY}"
+    echo "[INFO] No key given; using KUBECOST_PRODUCT_KEY from ${KC_VARS_FILE} (${PRODUCT_KEY[1,4]}****)."
+fi
 if [[ -z "${PRODUCT_KEY}" ]]; then
     if [[ ! -t 0 ]]; then
         echo "[ERROR] No product key given. Pass it as an argument, --key or --key-file." >&2
@@ -115,6 +123,14 @@ find_operator_namespaces() {
     } | sed '/^$/d' | sort -u
 }
 
+if [[ -z "${NAMESPACE}" && -n "${KUBECOST_OPERATOR_NAMESPACE:-}" ]]; then
+    if oc get namespace "${KUBECOST_OPERATOR_NAMESPACE}" &>/dev/null; then
+        NAMESPACE="${KUBECOST_OPERATOR_NAMESPACE}"
+        echo "[INFO] Namespace from KUBECOST_OPERATOR_NAMESPACE (${KC_VARS_FILE}): '${NAMESPACE}'."
+    else
+        echo "[WARN] KUBECOST_OPERATOR_NAMESPACE='${KUBECOST_OPERATOR_NAMESPACE}' (${KC_VARS_FILE}) does not exist; looking for the operator." >&2
+    fi
+fi
 if [[ -z "${NAMESPACE}" ]]; then
     found=("${(@f)$(find_operator_namespaces)}")
     found=(${found:#})

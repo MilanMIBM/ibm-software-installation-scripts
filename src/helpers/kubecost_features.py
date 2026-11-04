@@ -37,8 +37,8 @@ import sys
 
 import yaml
 
-MISSING = object()   # path absent in the CR
-DELETE = object()    # drop the override: the chart default applies
+MISSING = object()  # path absent in the CR
+DELETE = object()  # drop the override: the chart default applies
 NOCHANGE = object()
 
 MANAGED_LABEL = "kubecost-features/managed"
@@ -46,8 +46,11 @@ MANAGED_LABEL = "kubecost-features/managed"
 # Chart 3.3.1 defaults for the scalar settings handled here. A setting equal to
 # its default is dropped from the CR instead of written.
 DEFAULT_LABEL_MAPPING = {
-    "owner_label": "owner", "team_label": "team", "department_label": "dept",
-    "product_label": "product", "environment_label": "env",
+    "owner_label": "owner",
+    "team_label": "team",
+    "department_label": "dept",
+    "product_label": "product",
+    "environment_label": "env",
 }
 DEFAULTS = {
     "networkCosts.port": 3001,
@@ -64,16 +67,50 @@ DEFAULTS = {
     "kubecostProductConfigs.clusterProfile": "production",
     "kubecostProductConfigs.labelMappingConfigs": DEFAULT_LABEL_MAPPING,
 }
-CHART_NC_AFFINITY = {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [
-    {"matchExpressions": [{"key": "topology.kubernetes.io/region", "operator": "Exists"},
-                          {"key": "topology.kubernetes.io/zone", "operator": "Exists"}]}]}}}
+CHART_NC_AFFINITY = {
+    "nodeAffinity": {
+        "requiredDuringSchedulingIgnoredDuringExecution": {
+            "nodeSelectorTerms": [
+                {
+                    "matchExpressions": [
+                        {"key": "topology.kubernetes.io/region", "operator": "Exists"},
+                        {"key": "topology.kubernetes.io/zone", "operator": "Exists"},
+                    ]
+                }
+            ]
+        }
+    }
+}
 # Lists replace in Helm's merge, so this swaps the chart's region/zone term
 # for "any Linux node".
-ANY_NODE_AFFINITY = {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [
-    {"matchExpressions": [{"key": "kubernetes.io/os", "operator": "In", "values": ["linux"]}]}]}}}
+ANY_NODE_AFFINITY = {
+    "nodeAffinity": {
+        "requiredDuringSchedulingIgnoredDuringExecution": {
+            "nodeSelectorTerms": [
+                {
+                    "matchExpressions": [
+                        {
+                            "key": "kubernetes.io/os",
+                            "operator": "In",
+                            "values": ["linux"],
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+}
 CONTROL_PLANE_TOLERATIONS = [
-    {"key": "node-role.kubernetes.io/master", "operator": "Exists", "effect": "NoSchedule"},
-    {"key": "node-role.kubernetes.io/control-plane", "operator": "Exists", "effect": "NoSchedule"},
+    {
+        "key": "node-role.kubernetes.io/master",
+        "operator": "Exists",
+        "effect": "NoSchedule",
+    },
+    {
+        "key": "node-role.kubernetes.io/control-plane",
+        "operator": "Exists",
+        "effect": "NoSchedule",
+    },
 ]
 CLUSTER_PROFILES = ("development", "production", "high-availability")
 BUDGET_TYPES = ("allocations", "asset", "cloud", "collections")
@@ -127,15 +164,21 @@ def block(value, indent):
     """A list/map as block YAML under a key: ' []' / ' {}' or an indented block."""
     if not value:
         return " []" if isinstance(value, list) or value is None else " {}"
-    text = yaml.safe_dump(value, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    text = yaml.safe_dump(
+        value, sort_keys=False, default_flow_style=False, allow_unicode=True
+    )
     pad = " " * indent
-    return "\n" + "".join(pad + line + "\n" for line in text.rstrip("\n").split("\n")).rstrip("\n")
+    return "\n" + "".join(
+        pad + line + "\n" for line in text.rstrip("\n").split("\n")
+    ).rstrip("\n")
 
 
 def csv_list(value):
     if isinstance(value, list):
         return [str(v).strip() for v in value if str(v).strip()]
-    return [v.strip() for v in str(value or "").replace("\\,", ",").split(",") if v.strip()]
+    return [
+        v.strip() for v in str(value or "").replace("\\,", ",").split(",") if v.strip()
+    ]
 
 
 # --------------------------------------------------------------------------- generate
@@ -159,18 +202,38 @@ def current_settings(ctx):
     tolerations = val("networkCosts.tolerations", []) or []
     s["networkCosts"] = {
         "enabled": bool(val("networkCosts.enabled", True)),
-        "scheduleOn": "labelled-nodes" if (affinity or {}) == CHART_NC_AFFINITY else "any-node",
-        "includeControlPlane": any(t.get("key") in ("node-role.kubernetes.io/master", "node-role.kubernetes.io/control-plane")
-                                   for t in tolerations if isinstance(t, dict)),
+        "scheduleOn": "labelled-nodes"
+        if (affinity or {}) == CHART_NC_AFFINITY
+        else "any-node",
+        "includeControlPlane": any(
+            t.get("key")
+            in (
+                "node-role.kubernetes.io/master",
+                "node-role.kubernetes.io/control-plane",
+            )
+            for t in tolerations
+            if isinstance(t, dict)
+        ),
         "port": int(val("networkCosts.port") or 3001),
         "trafficLogging": bool(val("networkCosts.trafficLogging")),
     }
 
     alert_cfg = val("global.notifications.alertConfigs") or {}
-    health = next((a for a in alert_cfg.get("alerts") or [] if a.get("type") == "health"), {})
+    health = next(
+        (a for a in alert_cfg.get("alerts") or [] if a.get("type") == "health"), {}
+    )
     smtp_vals = val("kubecostProductConfigs.smtp") or {}
-    smtp = {"enabled": bool(smtp_vals), "existingSecret": "", "host": "", "port": 587, "senderEmail": "",
-            "authentication": True, "username": "", "password": "", "secure": True}
+    smtp = {
+        "enabled": bool(smtp_vals),
+        "existingSecret": "",
+        "host": "",
+        "port": 587,
+        "senderEmail": "",
+        "authentication": True,
+        "username": "",
+        "password": "",
+        "secure": True,
+    }
     smtp_json = None
     if smtp_vals.get("secretname"):
         name = smtp_vals["secretname"]
@@ -183,9 +246,17 @@ def current_settings(ctx):
     if smtp_json:
         try:
             j = json.loads(smtp_json)
-            smtp.update({"host": j.get("host", ""), "port": j.get("port", 587), "senderEmail": j.get("sender_email", ""),
-                         "authentication": j.get("authentication", True), "username": j.get("username", ""),
-                         "password": j.get("password", ""), "secure": j.get("secure", True)})
+            smtp.update(
+                {
+                    "host": j.get("host", ""),
+                    "port": j.get("port", 587),
+                    "senderEmail": j.get("sender_email", ""),
+                    "authentication": j.get("authentication", True),
+                    "username": j.get("username", ""),
+                    "password": j.get("password", ""),
+                    "secure": j.get("secure", True),
+                }
+            )
         except ValueError:
             pass
     s["alerts"] = {
@@ -195,10 +266,13 @@ def current_settings(ctx):
         "emailSubject": alert_cfg.get("globalEmailSubject") or "",
         "slackWebhookUrl": alert_cfg.get("globalSlackWebhookUrl") or "",
         "msTeamsWebhookUrl": alert_cfg.get("globalMsTeamsWebhookUrl") or "",
-        "health": {"enabled": bool(health) or not alert_cfg, "window": health.get("window", "1h"),
-                   "extraEmails": health.get("ownerContact") or [],
-                   "slackWebhookUrl": health.get("slackWebhookUrl") or "",
-                   "msTeamsWebhookUrl": health.get("msTeamsWebhookUrl") or ""},
+        "health": {
+            "enabled": bool(health) or not alert_cfg,
+            "window": health.get("window", "1h"),
+            "extraEmails": health.get("ownerContact") or [],
+            "slackWebhookUrl": health.get("slackWebhookUrl") or "",
+            "msTeamsWebhookUrl": health.get("msTeamsWebhookUrl") or "",
+        },
         "smtp": smtp,
     }
 
@@ -206,17 +280,27 @@ def current_settings(ctx):
     s["budgets"] = {"enabled": bool(budgets), "budgets": budgets}
 
     s["savedReports"] = {}
-    for key, path in (("allocation", "global.savedReports"), ("assets", "global.assetReports"),
-                      ("cloudCosts", "global.cloudCostReports")):
+    for key, path in (
+        ("allocation", "global.savedReports"),
+        ("assets", "global.assetReports"),
+        ("cloudCosts", "global.cloudCostReports"),
+    ):
         r = val(path) or {}
         on = bool(r.get("enabled"))
         # Off: the chart's example reports are not worth copying.
-        s["savedReports"][key] = {"enabled": on, "reports": (r.get("reports") or []) if on else []}
+        s["savedReports"][key] = {
+            "enabled": on,
+            "reports": (r.get("reports") or []) if on else [],
+        }
 
-    s["dataRetention"] = {"tenMinute": int(val("aggregator.retention10m") or 0),
-                          "hourly": int(val("aggregator.retention1h") or 0),
-                          "daily": int(val("aggregator.retention1d") or 0)}
-    s["carbonEstimates"] = {"enabled": bool(val("kubecostProductConfigs.carbonEstimates", False))}
+    s["dataRetention"] = {
+        "tenMinute": int(val("aggregator.retention10m") or 0),
+        "hourly": int(val("aggregator.retention1h") or 0),
+        "daily": int(val("aggregator.retention1d") or 0),
+    }
+    s["carbonEstimates"] = {
+        "enabled": bool(val("kubecostProductConfigs.carbonEstimates", False))
+    }
     s["costEventsAudit"] = {"enabled": bool(val("costEventsAudit.enabled", False))}
 
     profiles = val("kubecostProductConfigs.savingsProfiles") or {}
@@ -227,41 +311,59 @@ def current_settings(ctx):
         "sharedOverhead": val("kubecostProductConfigs.sharedOverhead") or 0,
         "shareTenancyCosts": bool(val("kubecostProductConfigs.shareTenancyCosts")),
         "defaultIdle": bool(val("kubecostProductConfigs.defaultIdle")),
-        "labelMapping": {**DEFAULT_LABEL_MAPPING, **(val("kubecostProductConfigs.labelMappingConfigs") or {})},
+        "labelMapping": {
+            **DEFAULT_LABEL_MAPPING,
+            **(val("kubecostProductConfigs.labelMappingConfigs") or {}),
+        },
         "clusterProfile": val("kubecostProductConfigs.clusterProfile") or "production",
-        "savingsProfiles": {"requestSizing": profiles.get("requestSizing") or [],
-                            "resourceQuotaSizing": profiles.get("resourceQuotaSizing") or []},
+        "savingsProfiles": {
+            "requestSizing": profiles.get("requestSizing") or [],
+            "resourceQuotaSizing": profiles.get("resourceQuotaSizing") or [],
+        },
     }
 
     teams = val("teams.teamsConfig") or []
     s["teams"] = {"enabled": bool(teams), "teams": teams}
 
     turbo = val("global.integrations.turbonomic") or {}
-    s["turbonomic"] = {"enabled": bool(turbo.get("enabled")), "host": turbo.get("host", ""),
-                       "role": turbo.get("role", ""), "clientId": turbo.get("clientId", ""),
-                       "clientSecret": turbo.get("clientSecret", ""), "insecureClient": bool(turbo.get("insecureClient"))}
+    s["turbonomic"] = {
+        "enabled": bool(turbo.get("enabled")),
+        "host": turbo.get("host", ""),
+        "role": turbo.get("role", ""),
+        "clientId": turbo.get("clientId", ""),
+        "clientSecret": turbo.get("clientSecret", ""),
+        "insecureClient": bool(turbo.get("insecureClient")),
+    }
 
     plugins = val("plugins") or {}
     configs = {}
     existing = ""
-    pl_secret = get_path(plugins, "existingCustomSecret.name", "") if get_path(plugins, "existingCustomSecret.enabled", False) else ""
+    pl_secret = (
+        get_path(plugins, "existingCustomSecret.name", "")
+        if get_path(plugins, "existingCustomSecret.enabled", False)
+        else ""
+    )
     if pl_secret and pl_secret != f"{cr}-plugins":
         existing = pl_secret
     else:
         for k, v in (secrets.get(pl_secret or f"{cr}-plugins") or {}).items():
             if k.endswith("_config.json"):
                 try:
-                    configs[k[:-len("_config.json")]] = json.loads(v)
+                    configs[k[: -len("_config.json")]] = json.loads(v)
                 except ValueError:
-                    configs[k[:-len("_config.json")]] = v
+                    configs[k[: -len("_config.json")]] = v
         for k, v in (plugins.get("configs") or {}).items():
             try:
                 configs.setdefault(k, json.loads(v))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 configs.setdefault(k, v)
-    s["plugins"] = {"enabled": bool(plugins.get("enabled")), "version": plugins.get("version", "") or "",
-                    "plugins": plugins.get("enabledPlugins") or sorted(configs), "existingSecret": existing,
-                    "configs": configs}
+    s["plugins"] = {
+        "enabled": bool(plugins.get("enabled")),
+        "version": plugins.get("version", "") or "",
+        "plugins": plugins.get("enabledPlugins") or sorted(configs),
+        "existingSecret": existing,
+        "configs": configs,
+    }
 
     fed = val("global.federatedStorage") or {}
     fed_cfg = {}
@@ -270,7 +372,12 @@ def current_settings(ctx):
     if fed_existing == f"{cr}-federated-storage":
         fed_existing = ""
         try:
-            fed_cfg = yaml.safe_load(secrets.get(f"{cr}-federated-storage", {}).get(fed_file, "")) or {}
+            fed_cfg = (
+                yaml.safe_load(
+                    secrets.get(f"{cr}-federated-storage", {}).get(fed_file, "")
+                )
+                or {}
+            )
         except yaml.YAMLError:
             fed_cfg = {}
     elif fed.get("config"):
@@ -278,8 +385,14 @@ def current_settings(ctx):
             fed_cfg = yaml.safe_load(fed["config"]) or {}
         except yaml.YAMLError:
             fed_cfg = {}
-    s["federatedStorage"] = {"enabled": bool(fed_existing or fed_cfg), "existingSecret": fed_existing, "config": fed_cfg}
-    s["actions"] = {"enabled": bool(val("kubecostProductConfigs.actions.enabled", False))}
+    s["federatedStorage"] = {
+        "enabled": bool(fed_existing or fed_cfg),
+        "existingSecret": fed_existing,
+        "config": fed_cfg,
+    }
+    s["actions"] = {
+        "enabled": bool(val("kubecostProductConfigs.actions.enabled", False))
+    }
     return s
 
 
@@ -293,8 +406,10 @@ def generate(ctx):
     key = "linked" if ctx.get("keyLinked") else "NOT linked"
     nc_note = ""
     if nc["enabled"] and nc["scheduleOn"] == "labelled-nodes" and labelled < nodes:
-        nc_note = (f"\n# NOW: only {labelled} of {nodes} nodes have both labels, so network-costs runs on"
-                   f"\n# {labelled} node(s). Set scheduleOn: any-node to run it everywhere.")
+        nc_note = (
+            f"\n# NOW: only {labelled} of {nodes} nodes have both labels, so network-costs runs on"
+            f"\n# {labelled} node(s). Set scheduleOn: any-node to run it everywhere."
+        )
     sr = s["savedReports"]
     t = s["turbonomic"]
     pl = s["plugins"]
@@ -449,10 +564,20 @@ costAllocation:
   # Savings recommendations profile: development | production | high-availability
   clusterProfile: {y(ca["clusterProfile"])}
   # Custom rightsizing profiles, e.g.
-  #   requestSizing: [{{name: p95, algorithmCPU: quantileOfAverages, algorithmRAM: quantileOfAverages,
-  #                    quantileCPU: 0.95, quantileRAM: 0.95, targetUtilizationCPU: 0.7, targetUtilizationRAM: 0.7}}]
-  #   resourceQuotaSizing: [{{name: tight, cpuRequestMetric: request.p95, cpuRequestHeadroom: 0.25,
-  #                          ramRequestMetric: request.p95, ramRequestHeadroom: 0.25}}]
+  #   requestSizing:
+  #     - name: p95
+  #       algorithmCPU: quantileOfAverages
+  #       algorithmRAM: quantileOfAverages
+  #       quantileCPU: 0.95
+  #       quantileRAM: 0.95
+  #       targetUtilizationCPU: 0.7
+  #       targetUtilizationRAM: 0.7
+  #   resourceQuotaSizing:
+  #     - name: tight
+  #       cpuRequestMetric: request.p95
+  #       cpuRequestHeadroom: 0.25
+  #       ramRequestMetric: request.p95
+  #       ramRequestHeadroom: 0.25
   savingsProfiles:
     requestSizing:{block(ca["savingsProfiles"]["requestSizing"], 6)}
     resourceQuotaSizing:{block(ca["savingsProfiles"]["resourceQuotaSizing"], 6)}
@@ -461,10 +586,18 @@ costAllocation:
 # Needs SAML or OIDC login with <sso>.rbac.enabled and no <sso>.rbac.groups (the
 # chart won't combine simple RBAC groups with teams); the OpenShift login
 # doesn't pass claims. Replaces teams made in the UI.
-#   - name: team-a
-#     roles: [{{name: viewer, permissions: read, pages: {{showAllocation: true, showBudgets: true}},
-#              allocationFilters: [{{key: namespace, operator: ":", value: team-a}}]}}]
-#     claims: {{NameID: user@example.com}}   # IdP claims that put a user in the team
+#   teams:
+#     - name: team-a
+#       roles:
+#         - name: viewer
+#           permissions: read
+#           pages:
+#             showAllocation: true
+#             showBudgets: true
+#           allocationFilters:
+#             - {{key: namespace, operator: ":", value: team-a}}
+#       claims:                    # IdP claims that put a user in the team
+#         NameID: user@example.com
 teams:
   enabled: {y(s["teams"]["enabled"])}
   teams:{block(s["teams"]["teams"], 4)}
@@ -484,7 +617,10 @@ turbonomic:
 # Downloaded at start-up (needs internet). Each plugin's config goes into the
 # Secret <instance>-plugins as <name>_config.json, e.g.
 #   configs:
-#     datadog: {{datadog_site: datadoghq.com, datadog_api_key: "...", datadog_app_key: "..."}}
+#     datadog:
+#       datadog_site: datadoghq.com
+#       datadog_api_key: "..."
+#       datadog_app_key: "..."
 plugins:
   enabled: {y(pl["enabled"])}
   # empty = latest
@@ -499,9 +635,14 @@ plugins:
 # <instance>-federated-storage-config). On moves the agent's data to a bucket:
 # history in the local store is not carried over. Bucket config as in the IBM docs, e.g.
 #   config:
-#     type: S3
-#     config: {{bucket: kubecost, endpoint: s3.openshift-storage.svc:443, region: us-east-1,
-#               access_key: "...", secret_key: "..."}}
+#     type: S3                  # S3 | GCS | AZURE
+#     config:
+#       bucket: kubecost
+#       endpoint: s3.openshift-storage.svc:443
+#       region: us-east-1
+#       access_key: "..."
+#       secret_key: "..."
+# (a flat map with type next to bucket is accepted too)
 # Written to the Secret <instance>-federated-storage, or name an existing
 # Secret with a federated-store.yaml key.
 federatedStorage:
@@ -523,9 +664,9 @@ class Plan:
         self.ctx = ctx
         self.cr = ctx["instance"]
         self.spec = ctx.get("crSpec") or {}
-        self.settings = []    # (feature, path, desired)
-        self.secrets = []     # {"name", "data", "purpose"}
-        self.summary = []     # (feature, text)
+        self.settings = []  # (feature, path, desired)
+        self.secrets = []  # {"name", "data", "purpose"}
+        self.summary = []  # (feature, text)
         self.warnings = []
         self.errors = []
 
@@ -561,8 +702,16 @@ def flag(sec, key, plan, feature, default=False):
 
 def num(sec, key, plan, feature, default=0, minimum=0, integer=True):
     v = sec.get(key, default)
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or (integer and not isinstance(v, int)) or v < minimum:
-        plan.err(feature, f"{key} must be a{'n integer' if integer else ' number'} >= {minimum}, not {v!r}")
+    if (
+        isinstance(v, bool)
+        or not isinstance(v, (int, float))
+        or (integer and not isinstance(v, int))
+        or v < minimum
+    ):
+        plan.err(
+            feature,
+            f"{key} must be a{'n integer' if integer else ' number'} >= {minimum}, not {v!r}",
+        )
         return default
     return v
 
@@ -581,7 +730,9 @@ def str_list(sec, key, plan, feature):
     v = sec.get(key) or []
     if isinstance(v, str):
         v = csv_list(v)
-    if not isinstance(v, list) or not all(isinstance(i, (str, int)) and not isinstance(i, bool) for i in v):
+    if not isinstance(v, list) or not all(
+        isinstance(i, (str, int)) and not isinstance(i, bool) for i in v
+    ):
         plan.err(feature, f"{key} must be a list of text")
         return []
     return [str(i).strip() for i in v if str(i).strip()]
@@ -612,16 +763,27 @@ def plan_network_costs(cfg, p):
         p.err(f, "port must be 1-65535")
     logging = flag(s, "trafficLogging", p, f, True)
     p.set(f, "networkCosts.enabled", DELETE if on else False)
-    p.set(f, "networkCosts.affinity", ANY_NODE_AFFINITY if where == "any-node" else DELETE)
+    p.set(
+        f, "networkCosts.affinity", ANY_NODE_AFFINITY if where == "any-node" else DELETE
+    )
     p.set(f, "networkCosts.tolerations", CONTROL_PLANE_TOLERATIONS if cp else DELETE)
     p.set(f, "networkCosts.port", port)
-    p.set(f, "finopsagent.agent.collectorDataSource.networkPort", DELETE if port == 3001 else port)
+    p.set(
+        f,
+        "finopsagent.agent.collectorDataSource.networkPort",
+        DELETE if port == 3001 else port,
+    )
     p.set(f, "networkCosts.trafficLogging", logging)
     if on:
         nodes, labelled = p.ctx.get("nodes", 0), p.ctx.get("labelledNodes", 0)
         if where == "labelled-nodes" and labelled < nodes:
-            p.warn(f, f"only {labelled} of {nodes} nodes have the region/zone labels; scheduleOn: any-node runs it on all")
-        p.summary.append((f, f"on, {where}{', incl. control plane' if cp else ''}, port {port}"))
+            p.warn(
+                f,
+                f"only {labelled} of {nodes} nodes have the region/zone labels; scheduleOn: any-node runs it on all",
+            )
+        p.summary.append(
+            (f, f"on, {where}{', incl. control plane' if cp else ''}, port {port}")
+        )
     else:
         p.summary.append((f, "off"))
 
@@ -671,8 +833,18 @@ def plan_alerts(cfg, p):
             if v:
                 a[k] = v
         alerts.append(a)
-        if not (emails or slack or teams or extra or a.get("slackWebhookUrl") or a.get("msTeamsWebhookUrl")):
-            p.err(f, "health alert has nowhere to go: set emails, slackWebhookUrl or msTeamsWebhookUrl")
+        if not (
+            emails
+            or slack
+            or teams
+            or extra
+            or a.get("slackWebhookUrl")
+            or a.get("msTeamsWebhookUrl")
+        ):
+            p.err(
+                f,
+                "health alert has nowhere to go: set emails, slackWebhookUrl or msTeamsWebhookUrl",
+            )
     else:
         p.warn(f, "enabled with no alert; only budgets will notify")
     cfg_out["alerts"] = alerts
@@ -696,21 +868,43 @@ def plan_alerts(cfg, p):
             if not host or not sender:
                 p.err(f, "smtp needs host and senderEmail (or existingSecret)")
             auth = flag(sm, "authentication", p, f + ".smtp", True)
-            user, pw = text(sm, "username", p, f + ".smtp"), text(sm, "password", p, f + ".smtp")
+            user, pw = (
+                text(sm, "username", p, f + ".smtp"),
+                text(sm, "password", p, f + ".smtp"),
+            )
             if auth and not (user and pw):
                 p.err(f, "smtp authentication needs username and password")
-            smtp_json = {"sender_email": sender, "host": host, "port": num(sm, "port", p, f + ".smtp", 587, 1),
-                         "authentication": auth, "username": user, "password": pw,
-                         "secure": flag(sm, "secure", p, f + ".smtp", True)}
+            smtp_json = {
+                "sender_email": sender,
+                "host": host,
+                "port": num(sm, "port", p, f + ".smtp", 587, 1),
+                "authentication": auth,
+                "username": user,
+                "password": pw,
+                "secure": flag(sm, "secure", p, f + ".smtp", True),
+            }
             name = f"{p.cr}-smtp"
-            p.secrets.append({"name": name, "data": {"smtp.json": json.dumps(smtp_json, indent=2)}, "purpose": "SMTP"})
+            p.secrets.append(
+                {
+                    "name": name,
+                    "data": {"smtp.json": json.dumps(smtp_json, indent=2)},
+                    "purpose": "SMTP",
+                }
+            )
             p.set(f, "kubecostProductConfigs.smtp", {"secretname": name})
             smtp_desc = f"SMTP {host}"
     else:
         p.set(f, "kubecostProductConfigs.smtp", DELETE)
         smtp_desc = "Kubecost mail service" if "email" in dest else ""
-    p.summary.append((f, "on: " + (f"health every {alerts[0]['window']}" if alerts else "no alerts")
-                      + (f" -> {', '.join(dest)}" if dest else "") + (f" ({smtp_desc})" if smtp_desc else "")))
+    p.summary.append(
+        (
+            f,
+            "on: "
+            + (f"health every {alerts[0]['window']}" if alerts else "no alerts")
+            + (f" -> {', '.join(dest)}" if dest else "")
+            + (f" ({smtp_desc})" if smtp_desc else ""),
+        )
+    )
 
 
 def plan_budgets(cfg, p):
@@ -721,16 +915,23 @@ def plan_budgets(cfg, p):
         p.set(f, "kubecostProductConfigs.budgets.budgetsConfig", DELETE)
         p.summary.append((f, "off"))
         return
-    items = map_list(s, "budgets", p, f, ("name", "budgetType", "interval", "spendLimit"))
+    items = map_list(
+        s, "budgets", p, f, ("name", "budgetType", "interval", "spendLimit")
+    )
     for i, b in enumerate(items, 1):
         if b.get("budgetType") and b["budgetType"] not in BUDGET_TYPES:
-            p.err(f, f"budgets[{i}].budgetType must be one of {', '.join(BUDGET_TYPES)}")
+            p.err(
+                f, f"budgets[{i}].budgetType must be one of {', '.join(BUDGET_TYPES)}"
+            )
         if b.get("interval") and b["interval"] not in ("weekly", "monthly"):
             p.err(f, f"budgets[{i}].interval must be weekly or monthly")
-        if b.get("spendLimit") not in (None, "") and (isinstance(b["spendLimit"], bool) or not isinstance(b["spendLimit"], (int, float))):
+        if b.get("spendLimit") not in (None, "") and (
+            isinstance(b["spendLimit"], bool)
+            or not isinstance(b["spendLimit"], (int, float))
+        ):
             p.err(f, f"budgets[{i}].spendLimit must be a number")
     if not items:
-        p.err(f, "enabled but no budgets listed")
+        p.warn(f, "enabled with no budgets listed; applied as an empty list")
     p.set(f, "kubecostProductConfigs.budgets.budgetsConfig", items)
     p.summary.append((f, f"on: {len(items)} budget(s)"))
 
@@ -739,8 +940,11 @@ def plan_reports(cfg, p):
     f = "savedReports"
     s = section(cfg, f, p)
     parts = []
-    for key, path in (("allocation", "global.savedReports"), ("assets", "global.assetReports"),
-                      ("cloudCosts", "global.cloudCostReports")):
+    for key, path in (
+        ("allocation", "global.savedReports"),
+        ("assets", "global.assetReports"),
+        ("cloudCosts", "global.cloudCostReports"),
+    ):
         r = s.get(key) or {}
         if not isinstance(r, dict):
             p.err(f, f"{key} must be a map")
@@ -748,7 +952,7 @@ def plan_reports(cfg, p):
         if flag(r, "enabled", p, f"{f}.{key}"):
             reports = map_list(r, "reports", p, f"{f}.{key}", ("title", "window"))
             if not reports:
-                p.err(f, f"{key} enabled but no reports listed")
+                p.warn(f, f"{key} enabled with no reports listed; applied as an empty list")
             p.set(f, path, {"enabled": True, "reports": reports})
             parts.append(f"{key} {len(reports)}")
         else:
@@ -765,12 +969,16 @@ def plan_retention(cfg, p):
     p.set(f, "aggregator.retention10m", ten)
     p.set(f, "aggregator.retention1h", hourly)
     p.set(f, "aggregator.retention1d", daily)
-    p.summary.append((f, f"10-minute {ten} ({ten * 10 // 60} h), hourly {hourly} h, daily {daily} d"))
+    p.summary.append(
+        (f, f"10-minute {ten} ({ten * 10 // 60} h), hourly {hourly} h, daily {daily} d")
+    )
 
 
 def plan_toggles(cfg, p):
-    for f, path in (("carbonEstimates", "kubecostProductConfigs.carbonEstimates"),
-                    ("costEventsAudit", "costEventsAudit.enabled")):
+    for f, path in (
+        ("carbonEstimates", "kubecostProductConfigs.carbonEstimates"),
+        ("costEventsAudit", "costEventsAudit.enabled"),
+    ):
         on = flag(section(cfg, f, p), "enabled", p, f)
         p.set(f, path, True if on else DELETE)
         p.summary.append((f, "on" if on else "off"))
@@ -779,7 +987,10 @@ def plan_toggles(cfg, p):
 def plan_allocation(cfg, p):
     f = "costAllocation"
     s = section(cfg, f, p)
-    names, values = str_list(s, "sharedLabelNames", p, f), str_list(s, "sharedLabelValues", p, f)
+    names, values = (
+        str_list(s, "sharedLabelNames", p, f),
+        str_list(s, "sharedLabelValues", p, f),
+    )
     if len(names) != len(values):
         p.err(f, "sharedLabelNames and sharedLabelValues must pair up (same length)")
     shared = str_list(s, "sharedNamespaces", p, f)
@@ -788,29 +999,49 @@ def plan_allocation(cfg, p):
     p.set(f, "kubecostProductConfigs.sharedLabelValues", ",".join(values))
     overhead = num(s, "sharedOverhead", p, f, 0, 0, integer=False)
     p.set(f, "kubecostProductConfigs.sharedOverhead", overhead)
-    p.set(f, "kubecostProductConfigs.shareTenancyCosts", flag(s, "shareTenancyCosts", p, f, True))
+    p.set(
+        f,
+        "kubecostProductConfigs.shareTenancyCosts",
+        flag(s, "shareTenancyCosts", p, f, True),
+    )
     p.set(f, "kubecostProductConfigs.defaultIdle", flag(s, "defaultIdle", p, f))
     lm = s.get("labelMapping") or {}
     if not isinstance(lm, dict) or set(lm) - set(DEFAULT_LABEL_MAPPING):
         p.err(f, f"labelMapping keys: {', '.join(DEFAULT_LABEL_MAPPING)}")
         lm = {}
-    p.set(f, "kubecostProductConfigs.labelMappingConfigs", {**DEFAULT_LABEL_MAPPING, **{k: str(v) for k, v in lm.items()}})
+    p.set(
+        f,
+        "kubecostProductConfigs.labelMappingConfigs",
+        {**DEFAULT_LABEL_MAPPING, **{k: str(v) for k, v in lm.items()}},
+    )
     profile = s.get("clusterProfile", "production")
     if profile not in CLUSTER_PROFILES:
         p.err(f, f"clusterProfile must be one of {', '.join(CLUSTER_PROFILES)}")
     p.set(f, "kubecostProductConfigs.clusterProfile", profile)
     sp = s.get("savingsProfiles") or {}
-    rs = map_list(sp, "requestSizing", p, f + ".savingsProfiles", ("name",)) if isinstance(sp, dict) else []
-    rq = map_list(sp, "resourceQuotaSizing", p, f + ".savingsProfiles", ("name",)) if isinstance(sp, dict) else []
+    rs = (
+        map_list(sp, "requestSizing", p, f + ".savingsProfiles", ("name",))
+        if isinstance(sp, dict)
+        else []
+    )
+    rq = (
+        map_list(sp, "resourceQuotaSizing", p, f + ".savingsProfiles", ("name",))
+        if isinstance(sp, dict)
+        else []
+    )
     out = {}
     if rs:
         out["requestSizing"] = rs
     if rq:
         out["resourceQuotaSizing"] = rq
     p.set(f, "kubecostProductConfigs.savingsProfiles", out or DELETE)
-    bits = [f"shared ns {len(shared)}"] + ([f"shared labels {len(names)}"] if names else []) \
-        + ([f"overhead {overhead}/month"] if overhead else []) + [f"profile {profile}"] \
+    bits = (
+        [f"shared ns {len(shared)}"]
+        + ([f"shared labels {len(names)}"] if names else [])
+        + ([f"overhead {overhead}/month"] if overhead else [])
+        + [f"profile {profile}"]
         + ([f"{len(rs) + len(rq)} savings profile(s)"] if out else [])
+    )
     p.summary.append((f, ", ".join(bits)))
 
 
@@ -823,15 +1054,21 @@ def plan_teams(cfg, p):
         return
     items = map_list(s, "teams", p, f, ("name",))
     if not items:
-        p.err(f, "enabled but no teams listed")
+        p.warn(f, "enabled with no teams listed; applied as an empty list")
     # Chart: teams render with SSO + <sso>.rbac.enabled and no <sso>.rbac.groups
     # (groups = simple RBAC, which the chart refuses to combine with teams).
     sso = p.ctx.get("sso")
     if not sso:
-        p.err(f, "needs SAML or OIDC login (ui_login/enable_kubecost_ui_login.sh --mode oidc|saml)")
+        p.err(
+            f,
+            "needs SAML or OIDC login (ui_login/enable_kubecost_ui_login.sh --mode oidc|saml)",
+        )
     elif p.ctx.get("ssoGroups"):
-        p.err(f, f"{sso}.rbac.groups is set (simple RBAC, e.g. the admin groups ui_login/enable_kubecost_ui_login.sh adds); "
-                 "the chart can't combine it with teams: remove the groups first")
+        p.err(
+            f,
+            f"{sso}.rbac.groups is set (simple RBAC, e.g. the admin groups ui_login/enable_kubecost_ui_login.sh adds); "
+            "the chart can't combine it with teams: remove the groups first",
+        )
     elif not p.ctx.get("ssoRbac"):
         p.err(f, f"{sso}.rbac.enabled is false; teams need it on")
     if not p.ctx.get("keyLinked"):
@@ -856,7 +1093,10 @@ def plan_turbonomic(cfg, p):
         p.err(f, "host must be an https:// URL")
     out["insecureClient"] = flag(s, "insecureClient", p, f)
     p.set(f, "global.integrations.turbonomic", out)
-    p.warn(f, "clientSecret is stored in the Kubecost CR (the chart has no Secret reference for it)")
+    p.warn(
+        f,
+        "clientSecret is stored in the Kubecost CR (the chart has no Secret reference for it)",
+    )
     p.summary.append((f, f"on: {out['host']}"))
 
 
@@ -875,24 +1115,37 @@ def plan_plugins(cfg, p):
         configs = {}
     names = names or sorted(configs)
     if not names:
-        p.err(f, "enabled but no plugins listed")
+        p.warn(f, "enabled with no plugins listed; applied with none")
     if existing:
         secret = existing
     else:
         secret = f"{p.cr}-plugins"
         missing = [n for n in names if n not in configs]
         if missing:
-            p.err(f, f"no config for {', '.join(missing)} (configs.<name>) and no existingSecret")
-        data = {f"{n}_config.json": (c if isinstance(c, str) else json.dumps(c, indent=2)) for n, c in configs.items()}
+            p.err(
+                f,
+                f"no config for {', '.join(missing)} (configs.<name>) and no existingSecret",
+            )
+        data = {
+            f"{n}_config.json": (c if isinstance(c, str) else json.dumps(c, indent=2))
+            for n, c in configs.items()
+        }
         p.secrets.append({"name": secret, "data": data, "purpose": "plugins"})
-    out = {"enabled": True, "install": {"enabled": True}, "enabledPlugins": names,
-           "existingCustomSecret": {"enabled": True, "name": secret}}
+    out = {
+        "enabled": True,
+        "install": {"enabled": True},
+        "enabledPlugins": names,
+        "existingCustomSecret": {"enabled": True, "name": secret},
+    }
     version = text(s, "version", p, f)
     if version:
         out["version"] = version
     p.set(f, "plugins", out)
-    p.warn(f, "plugins are downloaded when the pods start (curlimages/curl from Docker Hub, files from GitHub): needs internet")
-    p.summary.append((f, f"on: {', '.join(names)} (Secret {secret})"))
+    p.warn(
+        f,
+        "plugins are downloaded when the pods start (curlimages/curl from Docker Hub, files from GitHub): needs internet",
+    )
+    p.summary.append((f, f"on: {', '.join(names) or 'none'} (Secret {secret})"))
 
 
 def plan_federated(cfg, p):
@@ -902,22 +1155,57 @@ def plan_federated(cfg, p):
     if on:
         existing = text(s, "existingSecret", p, f)
         config = s.get("config") or {}
+        # Accept the flat form {type: S3, bucket: ..., ...} as well as the
+        # objstore form {type: S3, config: {bucket: ...}}.
+        if (
+            isinstance(config, dict)
+            and config.get("type")
+            and not isinstance(config.get("config"), dict)
+        ):
+            flat = {k: v for k, v in config.items() if k != "type"}
+            config = {"type": config["type"], "config": flat} if flat else config
+        if isinstance(config, dict) and isinstance(config.get("type"), str):
+            config = {**config, "type": config["type"].upper()}
         if existing and config:
             p.err(f, "set existingSecret or config, not both")
         elif existing:
             p.set(f, "global.federatedStorage", {"existingSecret": existing})
             p.summary.append((f, f"on: Secret {existing}"))
-        elif isinstance(config, dict) and config.get("type") and isinstance(config.get("config"), dict):
+        elif (
+            isinstance(config, dict)
+            and config.get("type")
+            and isinstance(config.get("config"), dict)
+        ):
             name = f"{p.cr}-federated-storage"
-            p.secrets.append({"name": name, "data": {"federated-store.yaml": yaml.safe_dump(config, sort_keys=False)},
-                              "purpose": "federated storage"})
-            p.set(f, "global.federatedStorage", {"existingSecret": name, "config": DELETE})
-            bucket = config["config"].get("bucket") or config["config"].get("container") or "?"
-            p.summary.append((f, f"on: {config['type']} bucket {bucket} (Secret {name})"))
+            p.secrets.append(
+                {
+                    "name": name,
+                    "data": {
+                        "federated-store.yaml": yaml.safe_dump(config, sort_keys=False)
+                    },
+                    "purpose": "federated storage",
+                }
+            )
+            p.set(
+                f, "global.federatedStorage", {"existingSecret": name, "config": DELETE}
+            )
+            bucket = (
+                config["config"].get("bucket")
+                or config["config"].get("container")
+                or "?"
+            )
+            p.summary.append(
+                (f, f"on: {config['type']} bucket {bucket} (Secret {name})")
+            )
         else:
-            p.err(f, "needs existingSecret or config: {type: S3|GCS|AZURE, config: {...}}")
-        p.warn(f, "moves Kubecost's data from the in-cluster local store to the bucket (history there is not "
-                  "carried over); untested with this operator")
+            p.err(
+                f, "needs existingSecret or config: {type: S3|GCS|AZURE, config: {...}}"
+            )
+        p.warn(
+            f,
+            "moves Kubecost's data from the in-cluster local store to the bucket (history there is not "
+            "carried over); untested with this operator",
+        )
     else:
         p.set(f, "global.federatedStorage", DELETE)
         p.summary.append((f, "off"))
@@ -925,7 +1213,11 @@ def plan_federated(cfg, p):
     a = "actions"
     if flag(section(cfg, a, p), "enabled", p, a):
         if not p.ctx.get("keyLinked"):
-            p.err(a, "needs the product key (free tier needs an RSA signing key pair, not handled here)")
+            p.warn(
+                a,
+                "no product key is linked: actions need it (free tier needs an RSA signing key pair, "
+                "not handled here); applying anyway",
+            )
         p.set(a, "kubecostProductConfigs.actions", {"enabled": True})
         p.summary.append((a, "on"))
     else:
@@ -933,11 +1225,37 @@ def plan_federated(cfg, p):
         p.summary.append((a, "off"))
 
 
-PLANNERS = (plan_network_costs, plan_alerts, plan_budgets, plan_reports, plan_retention, plan_toggles,
-            plan_allocation, plan_teams, plan_turbonomic, plan_plugins, plan_federated)
-KNOWN = {"version", "instance", "namespace", "networkCosts", "alerts", "budgets", "savedReports", "dataRetention",
-         "carbonEstimates", "costEventsAudit", "costAllocation", "teams", "turbonomic", "plugins",
-         "federatedStorage", "actions"}
+PLANNERS = (
+    plan_network_costs,
+    plan_alerts,
+    plan_budgets,
+    plan_reports,
+    plan_retention,
+    plan_toggles,
+    plan_allocation,
+    plan_teams,
+    plan_turbonomic,
+    plan_plugins,
+    plan_federated,
+)
+KNOWN = {
+    "version",
+    "instance",
+    "namespace",
+    "networkCosts",
+    "alerts",
+    "budgets",
+    "savedReports",
+    "dataRetention",
+    "carbonEstimates",
+    "costEventsAudit",
+    "costAllocation",
+    "teams",
+    "turbonomic",
+    "plugins",
+    "federatedStorage",
+    "actions",
+}
 
 
 def plan(ctx, path):
@@ -951,7 +1269,11 @@ def plan(ctx, path):
         return {"errors": [f"{path}: expected a map at the top"]}
     # An empty or foreign file would turn every feature off.
     if "version" not in cfg:
-        return {"errors": [f"{path}: no 'version:' line; not a features config (generate_kubecost_features_config.sh makes one)"]}
+        return {
+            "errors": [
+                f"{path}: no 'version:' line; not a features config (generate_kubecost_features_config.sh makes one)"
+            ]
+        }
     unknown = sorted(set(cfg) - KNOWN)
     if unknown:
         p.errors.append(f"unknown section(s): {', '.join(unknown)}")
@@ -973,7 +1295,9 @@ def plan(ctx, path):
     return {
         "patch": {"spec": patch} if patch else {},
         "secrets": p.secrets,
-        "summary": [{"feature": f, "state": s, "changed": f in changed} for f, s in p.summary],
+        "summary": [
+            {"feature": f, "state": s, "changed": f in changed} for f, s in p.summary
+        ],
         "warnings": p.warnings,
         "errors": p.errors,
     }

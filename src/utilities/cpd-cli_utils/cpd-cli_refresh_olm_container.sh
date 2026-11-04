@@ -24,13 +24,16 @@ done
 
 CONTAINER_NAME="olm-utils-play-v4"
 
+# Empty the work dir but keep the directory itself: cpd-cli manage refuses to
+# start ("The work directory was not found.") when it is missing.
 if [[ -d "${CPD_CLI_WORK_PATH}" ]]; then
     echo "[INFO] Cleaning cpd-cli workspace: ${CPD_CLI_WORK_PATH}"
-    rm -rf "${CPD_CLI_WORK_PATH}"
+    find "${CPD_CLI_WORK_PATH}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     echo "[INFO] Workspace cleaned"
 else
-    echo "[INFO] Workspace already clean: ${CPD_CLI_WORK_PATH}"
+    echo "[INFO] Workspace missing, creating: ${CPD_CLI_WORK_PATH}"
 fi
+mkdir -p "${CPD_CLI_WORK_PATH}"
 
 if podman ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     echo "[INFO] Removing existing container: ${CONTAINER_NAME}"

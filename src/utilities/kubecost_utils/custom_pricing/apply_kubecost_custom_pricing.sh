@@ -15,8 +15,10 @@ set -euo pipefail
 # CSV pricing, when also on, prices the assets it matches; custom pricing
 # covers the rest.
 #
-#   apply_kubecost_custom_pricing.sh <kubecost name> [options]
+#   apply_kubecost_custom_pricing.sh [<kubecost name>] [options]
 #     -n, --namespace <ns>          default: the namespace holding that Kubecost CR
+#   No name: KUBECOST_INSTANCE_NAME from configs/kubecost_config/kubecost_vars.sh,
+#   else the only instance on the cluster (asks which one when there are several)
 #     -f, --file <conf>             default configs/kubecost_config/<ns>/<instance>-custom-pricing.conf
 #     --disable                     turn custom pricing off (prices are kept in the CR)
 #     --restart                     also restart the pods that read pricing-configs
@@ -71,11 +73,10 @@ while [[ $# -gt 0 ]]; do
         *)               [[ -z "${CR_NAME}" ]] || die "Unexpected argument: $1"; CR_NAME="$1"; shift ;;
     esac
 done
-[[ -n "${CR_NAME}" ]] || { usage >&2; die "Name the Kubecost instance (the Kubecost CR)."; }
 [[ "${TIMEOUT}" == <-> ]] || die "--timeout needs a number of seconds."
 
 ocu_login
-[[ -n "${NAMESPACE}" ]] || NAMESPACE="$(kc_find_instance_namespace "${CR_NAME}")" || exit 1
+kc_resolve_instance || exit 1
 CR_JSON="$(oc get "${KC_RESOURCE}" "${CR_NAME}" -n "${NAMESPACE}" -o json 2>/dev/null)" \
     || die "Kubecost instance '${CR_NAME}' not found in namespace '${NAMESPACE}'."
 echo "[INFO] Kubecost instance: ${NAMESPACE}/${CR_NAME}"

@@ -43,6 +43,71 @@ kc_find_instance_namespace() {   # <name>
     esac
 }
 
+KC_VARS_FILE="configs/kubecost_config/kubecost_vars.sh"
+
+# Fills the caller's CR_NAME and NAMESPACE with the Kubecost instance to work
+# on. Call it after ocu_login. It tries, in this order:
+#   1. the instance named on the command line (-n, else the namespace that holds it)
+#   2. KUBECOST_INSTANCE_NAME from kubecost_vars.sh, in -n, else
+#      KUBECOST_OPERATOR_NAMESPACE, else wherever it is on the cluster
+#   3. the only instance on the cluster (in -n when given)
+# When there are several instances, it asks which one on a terminal and fails
+# (listing them) otherwise.
+kc_resolve_instance() {
+    local ns line i=0 choice
+    local -a found
+    if [[ -n "${CR_NAME}" ]]; then
+        [[ -n "${NAMESPACE}" ]] || NAMESPACE="$(kc_find_instance_namespace "${CR_NAME}")" || return 1
+        return 0
+    fi
+
+    if [[ -n "${KUBECOST_INSTANCE_NAME:-}" ]]; then
+        ns="${NAMESPACE:-${KUBECOST_OPERATOR_NAMESPACE:-}}"
+        if [[ -n "${ns}" ]] && oc get "${KC_RESOURCE}" "${KUBECOST_INSTANCE_NAME}" -n "${ns}" &>/dev/null; then
+            :
+        elif [[ -z "${NAMESPACE}" ]] && ns="$(kc_find_instance_namespace "${KUBECOST_INSTANCE_NAME}" 2>/dev/null)"; then
+            :
+        else
+            ns=""
+            echo "[WARN] KUBECOST_INSTANCE_NAME='${KUBECOST_INSTANCE_NAME}' (${KC_VARS_FILE}) is not on the cluster${NAMESPACE:+ in '${NAMESPACE}'}; looking for other instances." >&2
+        fi
+        if [[ -n "${ns}" ]]; then
+            CR_NAME="${KUBECOST_INSTANCE_NAME}"; NAMESPACE="${ns}"
+            echo "[INFO] No instance named; using KUBECOST_INSTANCE_NAME from ${KC_VARS_FILE}: ${NAMESPACE}/${CR_NAME}"
+            return 0
+        fi
+    fi
+
+    local -a scope=(-A)
+    [[ -n "${NAMESPACE}" ]] && scope=(-n "${NAMESPACE}")
+    found=("${(@f)$(oc get "${KC_RESOURCE}" "${scope[@]}" -o json \
+        | jq -r '.items[] | "\(.metadata.namespace)\t\(.metadata.name)"')}")
+    found=(${found:#})
+    case ${#found[@]} in
+        0)  echo "[ERROR] No Kubecost instance on the cluster${NAMESPACE:+ in '${NAMESPACE}'}. Install one with install_kubecost_operator.sh." >&2
+            return 1 ;;
+        1)  NAMESPACE="${found[1]%%$'\t'*}"; CR_NAME="${found[1]#*$'\t'}"
+            echo "[INFO] No instance named; using the only Kubecost instance on the cluster: ${NAMESPACE}/${CR_NAME}"
+            return 0 ;;
+    esac
+    if [[ -t 0 && -t 2 ]]; then
+        echo "Kubecost instances on the cluster${NAMESPACE:+ in '${NAMESPACE}'}:" >&2
+        for line in "${found[@]}"; do
+            printf '  %d) %s/%s\n' $(( ++i )) "${line%%$'\t'*}" "${line#*$'\t'}" >&2
+        done
+        while true; do
+            printf 'Which one [1-%d]: ' ${#found[@]} >&2
+            read -r choice || return 1
+            [[ "${choice}" == <-> ]] && (( choice >= 1 && choice <= ${#found[@]} )) && break
+        done
+        NAMESPACE="${found[choice]%%$'\t'*}"; CR_NAME="${found[choice]#*$'\t'}"
+        return 0
+    fi
+    echo "[ERROR] Several Kubecost instances${NAMESPACE:+ in '${NAMESPACE}'}; name one (and -n <namespace> if the name repeats), or set KUBECOST_INSTANCE_NAME in ${KC_VARS_FILE}:" >&2
+    for line in "${found[@]}"; do echo "  ${line%%$'\t'*}/${line#*$'\t'}" >&2; done
+    return 1
+}
+
 # Highest Helm release revision of the instance (0 if none). The operator
 # installs each instance as a Helm release named after the CR.
 kc_release_revision() {   # <name> <namespace>
