@@ -41,11 +41,17 @@ if [[ -z "${_CP4D_PREP_DONE:-}" ]]; then
         _prep_needed=1
     elif [[ "$(uname -s)" == "Darwin" ]]; then
         _pm_state="$(podman machine inspect --format '{{.State}}' 2>/dev/null || true)"
-        [[ "${_pm_state}" != "running" ]] && _prep_needed=1
+        if [[ "${_pm_state}" != "running" ]]; then
+            _prep_needed=1
+        elif ! podman info >/dev/null 2>&1; then
+            # "running" but the API socket is dead (stale VM after sleep):
+            # 0.0_make_executable.sh bounces the machine.
+            _prep_needed=1
+        fi
         unset _pm_state
     fi
     if [[ -n "${_prep_needed}" ]]; then
-        echo "[INFO] Running scripts/0.0_make_executable.sh (scripts not executable or podman machine not running)"
+        echo "[INFO] Running scripts/0.0_make_executable.sh (scripts not executable or podman machine not running/unresponsive)"
         zsh "${_CP4D_REPO_ROOT}/scripts/0.0_make_executable.sh" \
             || echo "[WARN] 0.0_make_executable.sh failed; continuing" >&2
     fi
