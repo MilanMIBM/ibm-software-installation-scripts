@@ -20,10 +20,12 @@ When this file exists those scripts load it instead of cpd_vars.sh (cluster
 login, install source, private registry). Without it they keep using
 cpd_vars.sh (OC_LOGIN, CPD_IMAGE_SOURCE, PRIVATE_REGISTRY_*).
 
+  generate_kubecost_config.sh [options]
   generate_kubecost_config.sh --empty   [options]
   generate_kubecost_config.sh --from-cpd [CPD_VARS_FILE] [options]
 
-Modes:
+Modes (none given: --from-cpd if configs/cp4d_config/cpd_vars.sh exists,
+otherwise --empty):
   --empty               Defaults everywhere; cluster login and registry left
                         blank for you to fill in.
   --from-cpd [FILE]     Take the cluster login (OCP_URL, OCP_USERNAME/OCP_PASSWORD
@@ -95,9 +97,15 @@ while (( $# )); do
     esac
 done
 
+# No mode given: --from-cpd when the default CP4D config exists, else --empty.
 if [[ -z "${MODE}" ]]; then
-    [[ "${FROM_CLUSTER}" == true ]] || { echo "[ERROR] Pick --empty, --from-cpd or --from-cluster." >&2; usage >&2; exit 1; }
-    MODE=empty
+    if [[ -f "${CPD_FILE}" ]]; then
+        MODE=cpd
+        echo "[INFO] No mode given: found ${CPD_FILE#${REPO_ROOT}/}, using --from-cpd (pass --empty to skip it)."
+    else
+        MODE=empty
+        echo "[INFO] No mode given and no ${CPD_FILE#${REPO_ROOT}/}: using --empty."
+    fi
 fi
 [[ -z "${SOURCE}" || "${SOURCE}" == (auto|marketplace|private|local) ]] \
     || { echo "[ERROR] --source must be auto, marketplace, private or local." >&2; exit 1; }

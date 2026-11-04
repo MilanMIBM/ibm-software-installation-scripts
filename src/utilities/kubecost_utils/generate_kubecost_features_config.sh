@@ -16,7 +16,7 @@ set -euo pipefail
 # carbon estimates, cost events audit, cost allocation (shared namespaces,
 # overhead, idle, label mapping, savings profiles), teams, Turbonomic,
 # plugins, federated storage and Actions. Each section has its own
-# "enabled:"; edit the file, then apply it with apply_kubecost_features.sh.
+# "enabled:"; edit the file, then apply it with features/apply_kubecost_features.sh.
 #
 # An existing file is kept unless --force (then the old one is saved as
 # .bak), so edits not applied yet are not lost.
@@ -76,7 +76,7 @@ OUTPUT="${OUTPUT:-${REPLY}}"
 
 if [[ "${STDOUT}" != true && -f "${OUTPUT}" && "${FORCE}" != true ]]; then
     echo "[OK] ${OUTPUT#${_CP4D_REPO_ROOT}/} already exists; kept (--force pulls the cluster's settings again)."
-    echo "Apply it: apply_kubecost_features.sh ${CR_NAME}"
+    echo "Apply it: features/apply_kubecost_features.sh ${CR_NAME}"
     exit 0
 fi
 
@@ -95,4 +95,4 @@ echo "[OK] Features config: ${OUTPUT#${_CP4D_REPO_ROOT}/}"
 # What is on now, from the file just written.
 kc_python plan --ctx "${CTX}" --file "${OUTPUT}" \
     | jq -r '.summary[]? | "     \(.feature): \(.state)"' || true
-echo "Edit it, then apply: apply_kubecost_features.sh ${CR_NAME} [--dry-run]"
+echo "Edit it, then apply: features/apply_kubecost_features.sh ${CR_NAME} [--dry-run]"

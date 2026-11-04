@@ -7,7 +7,7 @@ if [ -z "${ZSH_VERSION:-}" ]; then exec zsh "$0" "$@"; fi
 set -euo pipefail
 
 # Applies a Kubecost instance's optional-features config (made with
-# generate_kubecost_features_config.sh) to the cluster:
+# ../generate_kubecost_features_config.sh) to the cluster:
 #
 #   configs/kubecost_config/<namespace>/<instance>-features.yaml
 #
@@ -77,7 +77,7 @@ echo "[INFO] Kubecost instance: ${NAMESPACE}/${CR_NAME}"
 kc_features_file "${NAMESPACE}" "${CR_NAME}"
 CONF_FILE="${CONF_FILE:-${REPLY}}"
 [[ -r "${CONF_FILE}" ]] \
-    || die "No file at ${CONF_FILE#${_CP4D_REPO_ROOT}/}. Make one with generate_kubecost_features_config.sh ${CR_NAME}."
+    || die "No file at ${CONF_FILE#${_CP4D_REPO_ROOT}/}. Make one with src/utilities/kubecost_utils/generate_kubecost_features_config.sh ${CR_NAME}."
 echo "[INFO] Features: ${CONF_FILE#${_CP4D_REPO_ROOT}/}"
 
 CTX="$(mktemp "${${TMPDIR:-/tmp}%/}/kc-features-ctx.XXXXXX")"

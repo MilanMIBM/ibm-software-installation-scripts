@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kubecost optional features <-> configs/kubecost_config/<ns>/<cr>-features.yaml.
 
-Used by features/generate_kubecost_features_config.sh and features/apply_kubecost_features.sh
+Used by generate_kubecost_features_config.sh and features/apply_kubecost_features.sh
 (src/utilities/kubecost_utils/); they do the cluster work, this file only
 converts:
 
@@ -302,7 +302,7 @@ def generate(ctx):
 
     return f"""\
 # Kubecost optional features for {cr} ({ns})
-# Pulled from the cluster by features/generate_kubecost_features_config.sh; edit, then
+# Pulled from the cluster by generate_kubecost_features_config.sh; edit, then
 # apply: features/apply_kubecost_features.sh {cr}   (--dry-run shows the change first)
 #
 # Every section is applied as written: "enabled: false" turns a feature off and
@@ -951,7 +951,7 @@ def plan(ctx, path):
         return {"errors": [f"{path}: expected a map at the top"]}
     # An empty or foreign file would turn every feature off.
     if "version" not in cfg:
-        return {"errors": [f"{path}: no 'version:' line; not a features config (features/generate_kubecost_features_config.sh makes one)"]}
+        return {"errors": [f"{path}: no 'version:' line; not a features config (generate_kubecost_features_config.sh makes one)"]}
     unknown = sorted(set(cfg) - KNOWN)
     if unknown:
         p.errors.append(f"unknown section(s): {', '.join(unknown)}")
