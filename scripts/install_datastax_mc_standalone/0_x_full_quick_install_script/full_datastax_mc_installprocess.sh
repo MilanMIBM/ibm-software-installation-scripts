@@ -13,6 +13,7 @@ export ENV_TARGET="${ENV_TARGET:-datastax_mc}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/datastax_mc_helpers.sh"
+ir_dispatch "$@"
 mc_require_config
 
 # This script lives in scripts/install_datastax_mc_standalone/0_x_full_quick_install_script/,

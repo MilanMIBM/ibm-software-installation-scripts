@@ -1,0 +1,590 @@
+#!/bin/zsh
+# =============================================================================
+# install_runner_helpers.sh - run install chains in cluster (ir_*)
+# -----------------------------------------------------------------------------
+# Workstation side of the in-cluster install runner. ir_dispatch (common_helpers.sh)
+# loads this when INSTALL_RUN_MODE=cluster; scripts/install_runner/x_install_runner.sh
+# loads it for attach, status, stop, resume, collect and teardown.
+#
+# A slot is one independently runnable install, with its own namespace, pod, volume
+# and config, so several can run at once. Core code here never names a product:
+# what is specific lives in src/install_runner/installs/<id>.{conf,sh}.
+#
+# Never use CPDM_OC_LOGIN or `cpd-cli manage` here: they recreate the local
+# olm-utils container, which may be running something. OC_LOGIN only.
+#
+# Plan: .claude/plans/in-cluster-install-runner-plan.md
+# =============================================================================
+
+[[ -n "${_IR_HELPERS_LOADED:-}" ]] && return 0
+_IR_HELPERS_LOADED=1
+
+source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+
+IR_SRC="${_CP4D_REPO_ROOT}/src/install_runner"
+IR_SYSTEM_NS="install-runner-system"
+IR_POD="install-runner-0"
+IR_BIN_IN_POD="/opt/install-runner/bin"
+IR_LABEL="app.kubernetes.io/managed-by=install-runner"
+
+ir_info() { h_info "$@"; }
+ir_warn() { h_warn "$@"; }
+ir_die()  { h_die "$@"; }
+
+# =============================================================================
+# Install modules
+# =============================================================================
+ir_conf() {   # <id> <key>  -> value on stdout (empty when absent)
+    local f="${IR_SRC}/installs/$1.conf"
+    [[ -f "${f}" ]] || ir_die "No install module: $1 (${f})"
+    awk -F= -v k="$2" '$1 == k { v = substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", v); print v; exit }' "${f}"
+}
+
+ir_install_ids() {   # every module, without the template
+    local f
+    for f in "${IR_SRC}"/installs/*.conf(N); do
+        [[ "${f:t:r}" == _template ]] || print -r -- "${f:t:r}"
+    done
+}
+
+ir_install_for_chain() {   # <repo-relative chain> -> REPLY = install id
+    local id
+    REPLY=""
+    for id in $(ir_install_ids); do
+        if (( ${${(s: :)$(ir_conf "${id}" RUNNER_ENTRYPOINTS)}[(Ie)$1]} )); then
+            REPLY="${id}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ir_hook() {   # <id> <verb> - run a module hook when the module has one
+    local f="${IR_SRC}/installs/$1.sh"
+    [[ -f "${f}" ]] || return 0
+    zsh "${f}" "$2"
+}
+
+# =============================================================================
+# Names
+# =============================================================================
+# Kubernetes names: lowercase alphanumerics and '-', at most 63 characters. A cut
+# name keeps a hash of the whole, so two long ones can't collide.
+_ir_dns_name() {   # <text> <max length> -> REPLY
+    local name="${${(L)1}//[^a-z0-9-]/-}"
+    if (( ${#name} > $2 )); then
+        local hash="$(print -rn -- "$1" | _ir_sha | cut -c1-6)"
+        name="${name[1,$(( $2 - 7 ))]}-${hash}"
+    fi
+    REPLY="${${name##-#}%%-#}"
+}
+
+_ir_sha() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+    else shasum -a 256 | awk '{print $1}'
+    fi
+}
+
+ir_slot() {   # <id> -> REPLY = slot
+    local var instance=""
+    var="$(ir_conf "$1" RUNNER_INSTANCE_VAR)"
+    [[ -n "${var}" ]] && instance="${(P)var:-}"
+    _ir_dns_name "$1${instance:+-${instance}}" 48
+}
+
+ir_namespace() { REPLY="install-runner-$1"; }
+ir_admin_binding() { REPLY="install-runner-$1-admin"; }
+
+# =============================================================================
+# Manifests
+# =============================================================================
+# Fills @KEY@ placeholders; one left over means a template and its caller disagree.
+ir_render() {   # <template file name> KEY=value...
+    local text pair
+    text="$(<"${IR_SRC}/manifests/$1")"
+    shift
+    for pair in "$@"; do
+        text="${text//@${pair%%=*}@/${pair#*=}}"
+    done
+    if [[ "${text}" =~ '@[A-Z_]+@' ]]; then
+        ir_die "Unfilled placeholder in a manifest: ${MATCH}"
+    fi
+    print -r -- "${text}"
+}
+
+ir_apply() {   # <template> KEY=value...
+    ir_render "$@" | oc apply -f - >/dev/null
+}
+
+# =============================================================================
+# Runner image
+# =============================================================================
+ir_image_source() {
+    if [[ -n "${INSTALL_RUNNER_IMAGE_SOURCE:-}" ]]; then print -r -- "${INSTALL_RUNNER_IMAGE_SOURCE}"
+    elif [[ -n "${INSTALL_RUNNER_IMAGE:-}" ]]; then print -r -- prebuilt
+    else print -r -- build-in-cluster
+    fi
+}
+
+# <base tag>-<hash of what goes into the image>: an unchanged image is never rebuilt,
+# and two instances on different patches get different images by themselves.
+_ir_image_tag() {   # <base image> -> REPLY
+    local base="$1" hash
+    hash="$( { print -r -- "${base}"
+               ( cd "${IR_SRC}/image" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do print -r -- "${f}"; cat "${f}"; done )
+             } | _ir_sha | cut -c1-10)"
+    REPLY="${base##*:}-${hash}"
+}
+
+_ir_cpd_cli_url() {   # -> stdout; empty when the install needs no cpd-cli
+    [[ "$(ir_conf "$1" RUNNER_NEEDS_CPD_CLI)" == true ]] || return 0
+    if [[ -n "${INSTALL_RUNNER_CPD_CLI_URL:-}" ]]; then
+        print -r -- "${INSTALL_RUNNER_CPD_CLI_URL}"
+        return 0
+    fi
+    source "${_CP4D_REPO_ROOT}/src/helpers/resolve_cpd_cli_release.sh"
+    cpd_cli_resolve_release "${VERSION}" linux "${CPD_CLI_EDITION:-EE}" | awk -F'\t' '$1 == "URL" { print $2 }'
+}
+
+ir_image_ensure() {   # <id> -> REPLY = image reference
+    local id="$1" var base tag source url
+    source="$(ir_image_source)"
+    if [[ "${source}" == prebuilt ]]; then
+        [[ -n "${INSTALL_RUNNER_IMAGE:-}" ]] || ir_die "INSTALL_RUNNER_IMAGE_SOURCE=prebuilt needs INSTALL_RUNNER_IMAGE."
+        ir_info "Runner image (prebuilt): ${INSTALL_RUNNER_IMAGE}"
+        REPLY="${INSTALL_RUNNER_IMAGE}"
+        return 0
+    fi
+
+    var="$(ir_conf "${id}" RUNNER_BASE_IMAGE_VAR)"
+    base="${(P)var:-}"
+    [[ -n "${base}" ]] || ir_die "${var:-RUNNER_BASE_IMAGE_VAR} is not set: no base image for the runner."
+    _ir_image_tag "${base}"; tag="${REPLY}"
+
+    case "${source}" in
+        build-in-cluster)
+            local ref="image-registry.openshift-image-registry.svc:5000/${IR_SYSTEM_NS}/install-runner:${tag}"
+            if oc get istag "install-runner:${tag}" -n "${IR_SYSTEM_NS}" >/dev/null 2>&1; then
+                ir_info "Runner image is up to date (${tag})."
+                REPLY="${ref}"
+                return 0
+            fi
+            url="$(_ir_cpd_cli_url "${id}")" || ir_die "Could not resolve the Linux cpd-cli download. Set INSTALL_RUNNER_CPD_CLI_URL."
+            _ir_dns_name "install-runner-${tag}" 63; local build="${REPLY}"
+            ir_apply build.yaml.tmpl SYSTEM_NAMESPACE="${IR_SYSTEM_NS}" BUILD_NAME="${build}" \
+                BASE_IMAGE="${base}" CPD_CLI_URL="${url}" IMAGE_TAG="${tag}"
+            ir_info "Building the runner image in cluster (${tag})..."
+            oc start-build "${build}" -n "${IR_SYSTEM_NS}" --from-dir="${IR_SRC}/image" --follow --wait \
+                || ir_die "Runner image build failed. See: oc logs -n ${IR_SYSTEM_NS} bc/${build}"
+            REPLY="${ref}"
+            ;;
+        build-local-push)
+            h_missing_vars PRIVATE_REGISTRY_LOCATION PRIVATE_REGISTRY_PUSH_USER PRIVATE_REGISTRY_PUSH_PASSWORD \
+                || ir_die "build-local-push needs: ${REPLY}"
+            local ref="${PRIVATE_REGISTRY_LOCATION}/install-runner/install-runner:${tag}"
+            url="$(_ir_cpd_cli_url "${id}")" || ir_die "Could not resolve the Linux cpd-cli download. Set INSTALL_RUNNER_CPD_CLI_URL."
+            ir_info "Building ${ref} here (linux/amd64)..."
+            podman build --platform linux/amd64 -f "${IR_SRC}/image/Containerfile" -t "${ref}" \
+                --build-arg "BASE_IMAGE=${base}" --build-arg "CPD_CLI_URL=${url}" "${IR_SRC}/image"
+            print -r -- "${PRIVATE_REGISTRY_PUSH_PASSWORD}" \
+                | podman login --username "${PRIVATE_REGISTRY_PUSH_USER}" --password-stdin "${PRIVATE_REGISTRY_LOCATION%%/*}" >/dev/null
+            podman push "${ref}"
+            REPLY="${ref}"
+            ;;
+        *) ir_die "Unknown INSTALL_RUNNER_IMAGE_SOURCE=${source}" ;;
+    esac
+}
+
+# =============================================================================
+# Preflight
+# =============================================================================
+ir_storage_class() {   # <id> -> stdout
+    local var
+    var="$(ir_conf "$1" RUNNER_STORAGE_CLASS_VAR)"
+    print -r -- "${INSTALL_RUNNER_STORAGE_CLASS:-${(P)var:-}}"
+}
+
+# Prints every problem before stopping, so one run shows all that needs fixing.
+ir_preflight() {   # <id>
+    local id="$1" rc=0 sc source state
+    ir_info "Preflight for $(ir_conf "${id}" INSTALL_LABEL)"
+
+    if [[ "$(oc auth can-i '*' '*' 2>/dev/null)" != yes ]]; then
+        h_error "This login is not cluster-admin: it can't create the runner's namespace and binding."
+        rc=1
+    fi
+    sc="$(ir_storage_class "${id}")"
+    if [[ -z "${sc}" ]]; then
+        h_error "No storage class for the runner's volume: set INSTALL_RUNNER_STORAGE_CLASS."
+        rc=1
+    elif ! oc get storageclass "${sc}" >/dev/null 2>&1; then
+        h_error "Storage class ${sc} does not exist on this cluster."
+        rc=1
+    fi
+    source="$(ir_image_source)"
+    if [[ "${source}" == build-in-cluster ]]; then
+        state="$(oc get configs.imageregistry.operator.openshift.io cluster -o jsonpath='{.spec.managementState}' 2>/dev/null || true)"
+        if [[ "${state}" != Managed ]]; then
+            h_error "The internal image registry is '${state:-unknown}', not Managed. Set INSTALL_RUNNER_IMAGE_SOURCE=build-local-push or prebuilt."
+            rc=1
+        fi
+    fi
+    # A registry on this machine stops serving images when the machine goes off.
+    if [[ -n "${LOCAL_REGISTRY_HOST:-}" || "${CPD_IMAGE_SOURCE:-}" == local ]]; then
+        if [[ "${INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY:-false}" != true ]]; then
+            h_error "A local registry can't outlive this machine. Set INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY=true if it runs elsewhere."
+            rc=1
+        fi
+    fi
+    ir_hook "${id}" preflight || rc=1
+    (( rc == 0 )) || ir_die "Preflight failed: nothing was changed."
+
+    local active
+    active="$(ir_active_slots)"
+    [[ -z "${active}" ]] || ir_warn "Also running on this cluster: ${(j:, :)${(f)active}}. Cluster-wide steps are not locked against each other yet."
+    ir_info "Preflight passed."
+}
+
+ir_active_slots() {   # slots with a live run, one per line
+    oc get configmap -A -l "${IR_LABEL}" -o json 2>/dev/null \
+        | jq -r '.items[] | select(.metadata.name == "ir-status")
+                 | select(.data.state | IN("staged", "running", "interrupted")) | .data.slot' 2>/dev/null || true
+}
+
+# =============================================================================
+# Slot resources
+# =============================================================================
+ir_grant_admin() {   # <slot>
+    local ns binding
+    ir_namespace "$1"; ns="${REPLY}"
+    ir_admin_binding "$1"; binding="${REPLY}"
+    ir_apply admin-binding.yaml.tmpl ADMIN_BINDING="${binding}" SLOT="$1" NAMESPACE="${ns}"
+}
+
+ir_slot_status_value() {   # <namespace> <key>
+    oc get configmap ir-status -n "$1" -o jsonpath="{.data.$2}" 2>/dev/null || true
+}
+
+ir_slot_apply() {   # <id> <slot> <image>
+    local id="$1" slot="$2" image="$3" ns binding size selector="{}"
+    ir_namespace "${slot}"; ns="${REPLY}"
+    ir_admin_binding "${slot}"; binding="${REPLY}"
+    size="${INSTALL_RUNNER_PVC_SIZE:-$(ir_conf "${id}" RUNNER_PVC_SIZE)}"
+    if [[ -n "${INSTALL_RUNNER_NODE_SELECTOR:-}" ]]; then
+        selector="{\"${INSTALL_RUNNER_NODE_SELECTOR%%=*}\": \"${INSTALL_RUNNER_NODE_SELECTOR#*=}\"}"
+    fi
+
+    ir_apply system.yaml.tmpl SYSTEM_NAMESPACE="${IR_SYSTEM_NS}"
+    ir_apply slot.yaml.tmpl NAMESPACE="${ns}" SLOT="${slot}" IMAGE="${image}" NODE_SELECTOR="${selector}" \
+        OCP_URL="${OCP_URL:-}" ADMIN_BINDING="${binding}" \
+        AUTO_RESUME="${INSTALL_RUNNER_AUTO_RESUME:-true}" MAX_RESUMES="${INSTALL_RUNNER_MAX_RESUMES:-3}" \
+        KEEP_ADMIN="${INSTALL_RUNNER_KEEP_ADMIN:-false}" TTY_SIZE="${INSTALL_RUNNER_TTY_SIZE:-120x50}" \
+        CPU_REQUEST="$(ir_conf "${id}" RUNNER_CPU_REQUEST)" \
+        MEMORY_REQUEST="$(ir_conf "${id}" RUNNER_MEMORY_REQUEST)" \
+        MEMORY_LIMIT="$(ir_conf "${id}" RUNNER_MEMORY_LIMIT)"
+    # A PVC's size can't be applied over an existing one.
+    if ! oc get pvc install-runner-work -n "${ns}" >/dev/null 2>&1; then
+        ir_apply pvc.yaml.tmpl NAMESPACE="${ns}" STORAGE_CLASS="$(ir_storage_class "${id}")" PVC_SIZE="${size}"
+    fi
+    if [[ "${image}" == image-registry.openshift-image-registry.svc:* ]]; then
+        ir_apply image-puller.yaml.tmpl NAMESPACE="${ns}" SYSTEM_NAMESPACE="${IR_SYSTEM_NS}"
+    fi
+    ir_grant_admin "${slot}"
+}
+
+ir_wait_pod() {   # <namespace> [timeout-s, default 900]
+    local ns="$1" timeout="${2:-900}" start=${SECONDS} phase="" last=-30
+    while (( SECONDS - start < timeout )); do
+        if oc exec -n "${ns}" "${IR_POD}" -- true >/dev/null 2>&1; then
+            return 0
+        fi
+        if (( SECONDS - last >= 15 )); then
+            phase="$(oc get pod "${IR_POD}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            ir_info "Waiting for the runner pod (${phase:-not created yet}, $(( SECONDS - start ))s)..."
+            last=${SECONDS}
+        fi
+        sleep 3
+    done
+    ir_die "Runner pod not ready after ${timeout}s. See: oc describe pod ${IR_POD} -n ${ns}"
+}
+
+# =============================================================================
+# Snapshot and run
+# =============================================================================
+# Repo code the way it is right now, including uncommitted work, plus the module's
+# git-ignored paths. Nothing else: no other product's config, no .venv.
+_ir_snapshot_files() {   # <id> -> NUL-separated paths, repo-relative
+    local id="$1" p f
+    ( cd "${_CP4D_REPO_ROOT}" || exit 1
+      git ls-files -z -c -o --exclude-standard | while IFS= read -r -d '' f; do
+          [[ -f "${f}" ]] && print -rn -- "${f}"$'\0'
+      done
+      for p in ${(s: :)$(ir_conf "${id}" RUNNER_STAGE_PATHS)}; do
+          [[ -e "${p}" ]] || continue
+          find "${p}" -type f ! -name '.DS_Store' ! -name '*.bak' ! -name '*.bak.*' -print0
+      done ) | LC_ALL=C sort -zu
+}
+
+# Toggles the user may have set for this run. Never anything credential-shaped.
+_ir_run_env_toggles() {
+    local name
+    for name in ${(k)parameters[(R)*export*]}; do
+        [[ "${name}" == (DO_*|PREP_*|SKIP_*|CP4D_PREREQ_*|INSTALL_OPERATORS_IN_PARALLEL) ]] || continue
+        [[ "${name}" == *(KEY|PASSWORD|TOKEN|SECRET)* ]] && continue
+        print -r -- "export ${name}=${(qq)${(P)name}}"
+    done
+}
+
+ir_stage() {   # <id> <namespace> <chain> <run id> [chain args...] - needs a ready pod
+    local id="$1" ns="$2" chain="$3" run="$4" count
+    shift 4
+    ir_info "Staging run ${run}"
+    count="$(_ir_snapshot_files "${id}" | tr -cd '\0' | wc -c | tr -d ' ')"
+    (( count > 0 )) || ir_die "Nothing to stage: is this a git checkout?"
+    # shellcheck disable=SC2016
+    _ir_snapshot_files "${id}" \
+        | ( cd "${_CP4D_REPO_ROOT}" && COPYFILE_DISABLE=1 tar --null -T - -cf - 2>/dev/null ) \
+        | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c \
+            "mkdir -p /work/snapshots/${run} /work/runs/${run} && tar -xf - --no-same-owner --warning=no-unknown-keyword -C /work/snapshots/${run}"
+    {
+        print -r -- "IR_RUN_ID=${(qq)run}"
+        print -r -- "IR_CHAIN=${(qq)chain}"
+        print -r -- "IR_INSTALL_ID=${(qq)id}"
+        print -r -- "IR_ARGS=(${(j: :)${(qq)@}})"
+        print -r -- "export ENV_TARGET=${(qq)$(ir_conf "${id}" INSTALL_ENV_TARGET)}"
+        _ir_run_env_toggles
+    } | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c "cat > /work/runs/${run}/run.env"
+    oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/finalize-stage.sh" "${run}"
+    ir_info "Staged ${count} files."
+}
+
+# =============================================================================
+# Hand-off (ir_dispatch lands here)
+# =============================================================================
+ir_handoff() {   # <chain args...>
+    local arg
+    # Questions about the chain are answered here, not in a pod.
+    for arg in "$@"; do
+        [[ "${arg}" == (--list-steps|--list_steps|-h|--help) ]] && return 0
+    done
+
+    # Both sides resolved: :A follows symlinks, and the repo may sit behind one.
+    local chain="${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}" id slot ns state
+    ir_install_for_chain "${chain}" \
+        || ir_die "INSTALL_RUN_MODE=cluster, but ${chain} has no install module. Use INSTALL_RUN_MODE=local, or see src/install_runner/installs/_template.conf."
+    id="${REPLY}"
+    ir_slot "${id}"; slot="${REPLY}"
+    ir_namespace "${slot}"; ns="${REPLY}"
+
+    eval "${OC_LOGIN}"
+    ir_refuse_busy_slot "${ns}" "${slot}"
+    ir_preflight "${id}"
+    ir_image_ensure "${id}"
+    ir_slot_apply "${id}" "${slot}" "${REPLY}"
+    ir_wait_pod "${ns}"
+
+    local run="$(date -u +%Y%m%dT%H%M%SZ)"
+    ir_stage "${id}" "${ns}" "${chain}" "${run}" "$@"
+    ir_info "Run ${run} is in slot ${slot}. You can close this terminal: the install keeps going."
+    ir_info "Watch it again with: scripts/install_runner/x_watch_install.sh --install ${id}"
+    ir_attach "${slot}" --from-start
+    exit $?
+}
+
+# One run per slot, and a finished run's results must be home before the next
+# replaces them.
+ir_refuse_busy_slot() {   # <namespace> <slot>
+    local ns="$1" slot="$2" state collected tool="scripts/install_runner/x_install_runner.sh"
+    state="$(ir_slot_status_value "${ns}" state)"
+    collected="$(ir_slot_status_value "${ns}" collected)"
+    case "${state}" in
+        ""|idle) return 0 ;;
+        staged|running|interrupted)
+            ir_die "Slot ${slot} already has a run (${state}). Watch it: ${tool} attach --slot ${slot}" ;;
+    esac
+    [[ "${INSTALL_RUNNER_NEW_RUN:-false}" == true ]] && return 0
+    case "${state}" in
+        failed|stopped)
+            ir_die "Slot ${slot} has a ${state} run. Continue it (${tool} resume --slot ${slot}), or set INSTALL_RUNNER_NEW_RUN=true to start over." ;;
+    esac
+    [[ "${collected}" == yes ]] || ir_die "Slot ${slot} has a finished run that isn't collected. Run ${tool} collect --slot ${slot}, or set INSTALL_RUNNER_NEW_RUN=true."
+}
+
+# =============================================================================
+# Tap-in
+# =============================================================================
+# Read-only: Ctrl-C ends this viewer and nothing else. The stream carries the raw
+# terminal bytes; a dropped connection or a replaced pod just means reconnecting
+# at the same byte. Returns the run's result: 0 when it finished clean.
+ir_attach() {   # <slot> [--plain] [--from-start] [--last N]
+    local slot="$1" ns log=terminal position="last:200" offset_file state offset=""
+    shift
+    while (( $# )); do
+        case "$1" in
+            --plain)      log=plain ;;
+            --from-start) position=start ;;
+            --last)       h_need_value "$1" "${2:-}"; position="last:$2"; shift ;;
+            *) ir_die "Unknown attach option: $1" ;;
+        esac
+        shift
+    done
+    ir_namespace "${slot}"; ns="${REPLY}"
+    offset_file="$(mktemp "${TMPDIR:-/tmp}/ir-attach.XXXXXX")"
+
+    local detached=false said_lost=false
+    trap 'detached=true' INT
+    while ! ${detached}; do
+        if [[ -z "${offset}" ]]; then
+            offset="$(oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/follow.sh" "${log}" "${position}" resolve 2>/dev/null || true)"
+        fi
+        if [[ "${offset}" != <-> ]]; then
+            offset=""
+            if oc exec -n "${ns}" "${IR_POD}" -- true >/dev/null 2>&1; then
+                rm -f "${offset_file}"
+                trap - INT
+                h_error "Slot ${slot} has no run to watch."
+                return 1
+            fi
+            ${said_lost} || print -r -- "[attach] Runner pod not reachable; retrying..." >&2
+            said_lost=true
+            sleep 5
+            continue
+        fi
+        print -r -- "${offset}" > "${offset_file}"
+        said_lost=false
+        oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/follow.sh" "${log}" "offset:${offset}" 2>/dev/null \
+            | python3 -I "${IR_SRC}/stream_counter.py" "${offset_file}" "${offset}" || true
+        ${detached} && break
+        offset="$(<"${offset_file}")"
+        state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
+        case "${state}" in
+            completed)               rm -f "${offset_file}"; trap - INT; ir_info "Run finished: ${state}. Next: x_install_runner.sh collect --slot ${slot}"; return 0 ;;
+            completed-with-warnings) rm -f "${offset_file}"; trap - INT; ir_warn "Run finished: ${state}. See x_install_runner.sh status, then collect."; return 0 ;;
+            failed|stopped)          rm -f "${offset_file}"; trap - INT; ir_error_state "${slot}" "${state}"; return 1 ;;
+        esac
+        ${said_lost} || print -r -- "[attach] Connection lost (run state: ${state:-unknown}); reconnecting..." >&2
+        said_lost=true
+        sleep 5
+    done
+    rm -f "${offset_file}"
+    trap - INT
+    print -r -- ""
+    ir_info "Detached. The install keeps running in slot ${slot}."
+    return 0
+}
+
+ir_error_state() {   # <slot> <state>
+    h_error "Run ${2} in slot ${1}. Fix the cause, then: x_install_runner.sh resume --slot ${1}"
+}
+
+# =============================================================================
+# Status and control
+# =============================================================================
+ir_status() {
+    local now="$(date +%s)"
+    oc get configmap -A -l "${IR_LABEL}" -o json 2>/dev/null \
+        | jq -r --argjson now "${now}" '
+            ["SLOT", "STATE", "STEP", "ATTEMPT", "COLLECTED", "SEEN"],
+            (.items[] | select(.metadata.name == "ir-status") | .data
+             | [.slot, .state, ((.step // "-") | split("/") | last), .attempts, .collected,
+                (($now - (.heartbeat | tonumber)) | tostring + "s ago")])
+            | @tsv' \
+        | column -t -s $'\t'
+    local line slot ns seen state
+    oc get configmap -A -l "${IR_LABEL}" -o json 2>/dev/null \
+        | jq -r '.items[] | select(.metadata.name == "ir-status")
+                 | [.metadata.namespace, .data.slot, .data.state, .data.heartbeat, (.data.warned // "-")] | @tsv' \
+        | while IFS=$'\t' read -r ns slot state seen line; do
+            [[ "${line}" == - ]] || ir_warn "${slot}: finished with warnings in ${line}"
+            # A live run reports at least every minute; silence means the pod is in trouble.
+            if [[ "${state}" == (running|staged|interrupted) ]] && (( now - seen > 180 )); then
+                ir_warn "${slot}: no report for $(( now - seen ))s. If its node is gone, the pod stays stuck until:"
+                ir_warn "  oc delete pod ${IR_POD} -n ${ns} --grace-period=0 --force   (only once the node is really down)"
+            fi
+        done
+    return 0
+}
+
+ir_stop() {   # <slot>
+    local ns; ir_namespace "$1"; ns="${REPLY}"
+    oc exec -n "${ns}" "${IR_POD}" -- sh -c 'touch /work/current/control.stop'
+    ir_info "Stop requested for slot $1."
+}
+
+ir_resume() {   # <slot> [--retry-warned]
+    local slot="$1" ns state content=""
+    [[ "${2:-}" == --retry-warned ]] && content=retry-warned
+    ir_namespace "${slot}"; ns="${REPLY}"
+    state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
+    [[ "${state}" == (failed|stopped|completed-with-warnings) ]] \
+        || ir_die "Slot ${slot} is '${state:-unreachable}': nothing to resume."
+    ir_grant_admin "${slot}"
+    print -r -- "${content}" | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c 'cat > /work/current/control.resume'
+    ir_info "Resuming slot ${slot}."
+}
+
+# =============================================================================
+# Collect and teardown
+# =============================================================================
+# Brings back what the run changed, from any machine. A local file changed since
+# launch is never overwritten: the pod's copy lands next to it instead.
+ir_collect() {   # <id> <slot> [--force]
+    local id="$1" slot="$2" force="${3:-}" ns state run list tmp
+    ir_namespace "${slot}"; ns="${REPLY}"
+    state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
+    [[ -n "${state}" ]] || ir_die "Slot ${slot} has no reachable run."
+    if [[ "${state}" == (staged|running|interrupted) && "${force}" != --force ]]; then
+        ir_die "Run is still ${state}. Wait for it, or use --force for what exists so far."
+    fi
+    run="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'basename "$(readlink -f /work/current)"')"
+    list="$(oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/collect-list.sh" ${(s: :)$(ir_conf "${id}" RUNNER_COLLECT_PATHS)})"
+    if [[ -z "${list}" ]]; then
+        ir_info "Nothing changed under the collect paths."
+    else
+        tmp="$(h_private_tmpdir "${TMPDIR:-/tmp}")"
+        print -r -- "${list}" | cut -f3 \
+            | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c "cd /work/snapshots/${run} && tar -cf - -T -" \
+            | tar -xf - -C "${tmp}"
+        # (not "path": in zsh that is PATH)
+        local base hash file target lhash taken=0 kept=0
+        while IFS=$'\t' read -r base hash file; do
+            target="${_CP4D_REPO_ROOT}/${file}"
+            lhash=-
+            [[ -f "${target}" ]] && lhash="$(_ir_sha < "${target}")"
+            if [[ "${lhash}" == "${hash}" ]]; then
+                continue
+            elif [[ "${lhash}" == "${base}" ]]; then
+                mkdir -p "${target:h}"
+                cp -p "${tmp}/${file}" "${target}"
+                (( ++taken ))
+            else
+                cp -p "${tmp}/${file}" "${target}.in-cluster-${run}"
+                ir_warn "Kept your local ${file}; the pod's copy is ${file}.in-cluster-${run}"
+                (( ++kept ))
+            fi
+        done <<< "${list}"
+        rm -rf "${tmp}"
+        ir_info "Collected ${taken} file(s); ${kept} kept back because they changed here too."
+    fi
+    oc exec -n "${ns}" "${IR_POD}" -- sh -c 'touch /work/current/collected'
+    ir_hook "${id}" post-collect
+    return 0
+}
+
+ir_teardown() {   # <slot> [--discard]
+    local slot="$1" discard="${2:-}" ns binding collected
+    ir_namespace "${slot}"; ns="${REPLY}"
+    ir_admin_binding "${slot}"; binding="${REPLY}"
+    case "$(ir_slot_status_value "${ns}" state)" in
+        staged|running|interrupted) ir_die "Slot ${slot} has a live run. Stop it first." ;;
+    esac
+    collected="$(ir_slot_status_value "${ns}" collected)"
+    if [[ "${collected}" != yes && "${discard}" != --discard ]]; then
+        ir_die "Slot ${slot} isn't collected. Collect it, or use --discard to lose its results."
+    fi
+    ir_info "Deleting slot ${slot} (namespace, volume, credentials)..."
+    oc delete clusterrolebinding "${binding}" --ignore-not-found >/dev/null
+    oc delete rolebinding "image-puller-${ns}" -n "${IR_SYSTEM_NS}" --ignore-not-found >/dev/null 2>&1 || true
+    oc delete namespace "${ns}" --ignore-not-found --wait=true >/dev/null
+    ir_info "Slot ${slot} is gone."
+}

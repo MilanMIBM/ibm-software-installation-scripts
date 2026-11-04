@@ -19,6 +19,7 @@ The Cloud Pak for Data workflow has two stages:
 | `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README) |
 | `scripts/install_ibm_concert/` | IBM Concert install steps (0 → 4) around IBM's own installer, data store provisioning, optional Concert Optimize / Turbonomic (5), plus cleanup/debug scripts under `x_clean_or_debug_concert/` |
 | `scripts/install_datastax_mc_standalone/` | DataStax Mission Control on OpenShift with Helm, independent of CP4D: config generator (0), cluster prep (1), install (2), internode NetworkPolicy (3), uninstall under `x_clean_or_debug_datastax_mc/`. DataStax's OpenShift Helm values templates are in `src/helpers/datastax_mc_helm_values_templates/` |
+| `scripts/install_runner/` | Watches and controls installs that run in the cluster (`INSTALL_RUN_MODE=cluster`): `x_watch_install.sh` taps into a run, `x_install_runner.sh` does status, stop, resume, collect and teardown. The image, manifests and per-install modules are in `src/install_runner/`. |
 | `scripts/private_registry_mirroring/` | Mirrors the images, operator catalogs, charts and files of the installs above into a private registry (cloud, or local/air-gapped), and points the cluster and the installs at it: config generator and registry tools (0), mapping (1), mirroring and the stop-over bundle (2), cluster configuration (3), plus cleanup/listing under `x_clean_or_debug_registry/` |
 | `registry_mirror_workspace/` | The mirroring track's inventory, tools, local registry and default stop-over bundle (gitignored) |
 | `concert_workspace/` | IBM Concert installer archives, the extracted installer, runner build context and copied logs (gitignored) |
@@ -130,6 +131,41 @@ Scripts run `./scripts/0.0_make_executable.sh` on their own if any `.sh` isn't e
 
 ---
 
+### Running an install in the cluster
+
+To start an install and walk away, set this in `cpd_vars.sh` and run the chain as usual:
+
+```bash
+export INSTALL_RUN_MODE="cluster"
+```
+
+The chain moves to a pod on the cluster, and your terminal shows it as if it ran here. Once it starts you can press Ctrl-C, close the terminal or turn the machine off: the install keeps going. Each install gets its own namespace, pod, volume and copy of its config.
+
+```bash
+scripts/install_runner/x_watch_install.sh                 # the live terminal; Ctrl-C only stops watching
+scripts/install_runner/x_watch_install.sh --from-start    # the whole run so far
+scripts/install_runner/x_watch_install.sh --plain         # no colours or cursor moves, for narrow terminals
+scripts/install_runner/x_install_runner.sh status         # every install on the cluster
+scripts/install_runner/x_install_runner.sh collect        # bring results back when it's done
+scripts/install_runner/x_install_runner.sh teardown       # delete the pod, volume and the credentials in them
+```
+
+**If the pod is lost** (a node drain, for example), a new one continues by itself: finished steps are skipped and the interrupted step runs again.
+
+**If a step really fails**, the run stops and waits for you. Fix the cause, then run `x_install_runner.sh resume`. `resume --retry-warned` also repeats steps that only warned.
+
+**Collect** only brings back files the run changed. If you changed the same file here during the run, yours stays and the pod's copy lands next to it as `<file>.in-cluster-<run>`.
+
+Good to know:
+
+- It needs a cluster-admin login, a storage class for the runner's volume (`STG_CLASS_BLOCK` by default, or `INSTALL_RUNNER_STORAGE_CLASS`), and the internal image registry. Without that registry, set `INSTALL_RUNNER_IMAGE_SOURCE` to `build-local-push` or `prebuilt`. The first run builds a runner image of about 2.5 GB.
+- Only CP4D with `CPD_IMAGE_SOURCE=entitled` is supported so far. Other chains stop with a clear message if you set `cluster` for them.
+- The pod has cluster-admin during a run and holds your config, including passwords, until teardown. It removes its own cluster-admin when the run ends.
+- Installs running at the same time are not yet locked against each other on cluster-wide steps such as the global pull secret.
+- Scripts other than the chains, such as `x_*` utilities, still run on this machine.
+
+Optional settings: `INSTALL_RUNNER_PVC_SIZE`, `INSTALL_RUNNER_AUTO_RESUME` (`true`), `INSTALL_RUNNER_MAX_RESUMES` (`3`), `INSTALL_RUNNER_KEEP_ADMIN` (`false`), `INSTALL_RUNNER_NODE_SELECTOR` (`key=value`), `INSTALL_RUNNER_TTY_SIZE` (`120x50`).
+
 ## Useful extras
 
 ```bash
@@ -215,6 +251,8 @@ Scripts in `src/utilities/redhat_openshift_utils/` and `src/utilities/softwarehu
 `set_dynamic_user_group.sh` is the live alternative to `grant_softwarehub_admin_to_ocp_admins.sh`. It creates a Software Hub *dynamic* user group whose membership is re-evaluated at every login. The default creates `tzadmin`: users from the OpenShift identity provider who hold `cluster-admin` get Administrator. Flags select another IdP/realm (`--idp`, `--ocp-idp`), another permission (`--cluster-role`, `--namespace-role`, `--ocp-group`, `--rule`) and other roles (`--role`). It deploys a small OpenShift-RBAC attribute provider in the instance namespace for this. `--check-user=<name>` shows how a user would be evaluated, `--status` lists the provider and dynamic groups, and `--uninstall` removes the provider.
 
 Pull secrets: `set_default_pull_secret.sh` and `set_namespace_pull_secret.sh`. Software Hub checks: `get_instance_addon_list.sh` and `wxo-prereq-check.sh`.
+
+Multitenancy (Software Hub Premium), in `src/utilities/softwarehub_utils/`: `enable_softwarehub_multitenancy.sh` turns on Accounts and shows a progress bar with time left until the ZenService reconcile finishes. `enable_wxo_multitenancy.sh` checks watsonx Orchestrate, runs the first script if multitenancy is not on yet, checks Orchestrate again and lists the steps left for the web client. Both take `--status` and `--dry-run`; enabling needs `--accept-license`. Accounts separate data, administrators and tokens, but share pods and databases.
 
 ---
 

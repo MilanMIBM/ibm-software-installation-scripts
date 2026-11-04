@@ -525,6 +525,8 @@ _ppanel_watch_loop() {   # <probe> <title> <units> <refresh> <parent pid>
         fi
         ppanel_bar "${d}" "${t}" 20
         row="${title}  ${REPLY} ${cnt} ${PPANEL_UNITS:-${unit}}${pct}"
+        # Units "%": done / total are weights, so show only the percentage.
+        [[ "${PPANEL_UNITS:-${unit}}" == "%" ]] && (( t > 0 )) && row="${title}  ${REPLY} $(( d * 100 / t ))%"
         ppanel_duration $(( EPOCHSECONDS - t0 ))
         row+=" · ${REPLY}${left}${PPANEL_DETAIL:+ · ${PPANEL_DETAIL}}"
         ppanel_row 1 "${row}"

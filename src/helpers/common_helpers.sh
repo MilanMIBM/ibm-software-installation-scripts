@@ -16,6 +16,7 @@
 #   - waits (generic, MachineConfigPools)
 #   - chained installs (h_run_step)
 #   - step selection for chains (h_steps_parse, h_step, h_steps_plan, h_steps_run)
+#   - in-cluster runner hand-off (ir_dispatch)
 #
 # Notes:
 #   - Must be SOURCED, not executed. Guarded via _COMMON_HELPERS_LOADED.
@@ -436,12 +437,19 @@ h_step_run() {
     (( ${H_STEPS[(Ie)${name}]} )) || h_die "h_step_run: unknown step '${name}'"
     local on=false rc=0
     h_step_on "${name}" && on=true
+    # In-cluster runner only: skip what an earlier attempt finished (see below).
+    if ${on} && [[ -n "${IR_JOURNAL_FILE:-}" ]]; then
+        ir_step_begin "${name}" || return 0
+    fi
     if (( $# )); then
         h_run_step "${on}" "${H_STEP_LABEL[$name]}" "$@" || rc=$?
     elif [[ -z "${H_STEP_CMD[$name]}" ]]; then
         h_die "h_step_run: step '${name}' has no command (declare one with h_step, or pass it here)"
     else
         eval "h_run_step \"\${on}\" \"\${H_STEP_LABEL[\$name]}\" ${H_STEP_CMD[$name]}" || rc=$?
+    fi
+    if ${on} && [[ -n "${IR_JOURNAL_FILE:-}" ]]; then
+        ir_step_end "${name}" "${rc}" "${H_STEP_MODE[$name]}"
     fi
     (( rc == 0 )) && return 0
     if [[ "${H_STEP_MODE[$name]}" == warn ]]; then
@@ -459,3 +467,26 @@ h_steps_run() {
     local s
     for s in "${H_STEPS[@]}"; do h_step_run "${s}"; done
 }
+
+# =============================================================================
+# In-cluster runner hand-off
+# =============================================================================
+# ir_dispatch "$@" sits right after the env load of every chain entry point. With
+# INSTALL_RUN_MODE unset or "local" it does nothing. With "cluster" the run moves
+# to a pod (src/helpers/install_runner_helpers.sh) and this process only watches
+# it. Inside a runner pod IR_IN_RUNNER is set, so the chain just runs.
+ir_dispatch() {
+    [[ -z "${IR_IN_RUNNER:-}" ]] || return 0
+    case "${INSTALL_RUN_MODE:-local}" in
+        local)   return 0 ;;
+        cluster) ;;
+        *)       h_die "INSTALL_RUN_MODE must be local or cluster (got '${INSTALL_RUN_MODE}')." ;;
+    esac
+    source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_helpers.sh"
+    ir_handoff "$@"
+}
+
+# The step journal only exists inside a runner pod (run-attempt.sh sets the file).
+if [[ -n "${IR_JOURNAL_FILE:-}" ]]; then
+    source "${${(%):-%x}:A:h}/install_runner_journal.sh"
+fi

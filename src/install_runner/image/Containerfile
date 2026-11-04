@@ -1,0 +1,51 @@
+# =============================================================================
+# In-cluster install runner image
+# -----------------------------------------------------------------------------
+# olm-utils already carries oc, kubectl, helm, yq, jq, skopeo, ansible and IBM's
+# `cpd-cli manage` commands, so every product shares this one image family. This
+# adds what the repo's zsh scripts need, the Linux cpd-cli for its non-`manage`
+# verbs, the shims that replace podman, and the supervisor.
+#
+# Built by src/helpers/install_runner_helpers.sh (ir_image_ensure) with a context
+# holding this directory. See .claude/plans/in-cluster-install-runner-plan.md.
+# =============================================================================
+ARG BASE_IMAGE=icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8
+FROM ${BASE_IMAGE}
+
+ARG CPD_CLI_URL=""
+
+USER 0
+
+RUN microdnf -y install --nodocs --setopt=install_weak_deps=0 \
+        zsh rsync git-core gettext procps-ng util-linux \
+    && microdnf clean all
+
+# HOME stays /opt/ansible (.ansible.cfg is a symlink there). source_env_setup.sh
+# puts ${HOME}/cpd-cli first on PATH, so the shim named cpd-cli wins with no edit.
+# The real binary keeps its plugins/ next to it.
+RUN mkdir -p /opt/ansible/cpd-cli \
+    && if [ -n "${CPD_CLI_URL}" ]; then \
+           curl -fsSL "${CPD_CLI_URL}" -o /tmp/cpd-cli.tgz \
+           && tar -xzf /tmp/cpd-cli.tgz -C /opt/ansible/cpd-cli --strip-components=1 \
+           && mv /opt/ansible/cpd-cli/cpd-cli /opt/ansible/cpd-cli/cpd-cli.real \
+           && rm -f /tmp/cpd-cli.tgz; \
+       fi
+
+COPY bin/ /opt/install-runner/bin/
+COPY shims/podman /opt/install-runner/bin/podman
+COPY shims/cpd-cli /opt/ansible/cpd-cli/cpd-cli
+
+# Everything that outlives the pod sits on the /work volume, which the supervisor
+# fills in at start. These links resolve once it has.
+RUN ln -sfn /work/cpd-work /tmp/work \
+    && ln -sfn /work/cpd-work /opt/ansible/cpd-cli/work \
+    && ln -sfn /work/cpd-cli-workspace /opt/ansible/cpd-cli/cpd-cli-workspace \
+    && ln -sfn /work/airgap /opt/ansible/.airgap \
+    && chmod -R a+rx /opt/install-runner /opt/ansible/cpd-cli/cpd-cli \
+    && chgrp -R 0 /opt/ansible/cpd-cli \
+    && chmod -R g=u /opt/ansible/cpd-cli
+
+ENV PATH=/opt/install-runner/bin:${PATH}
+
+USER 1001
+ENTRYPOINT ["/opt/install-runner/bin/supervisor.sh"]

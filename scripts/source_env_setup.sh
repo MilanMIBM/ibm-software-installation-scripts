@@ -199,6 +199,14 @@ if [[ -n "${CPDM_OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
     export CPDM_OC_LOGIN
 fi
 
+# In an in-cluster runner pod the session is the pod's own (a kubeconfig on its
+# rotating service account token, written by the supervisor) and there is no
+# container to log in to, so logging in means checking that session.
+if [[ -n "${IR_IN_RUNNER:-}" ]]; then
+    export OC_LOGIN="oc whoami >/dev/null" CPDM_OC_LOGIN="oc whoami >/dev/null"
+    export OC_LOGIN_FORCE="${OC_LOGIN}" CPDM_OC_LOGIN_FORCE="${CPDM_OC_LOGIN}"
+fi
+
 export CPD_CLI_MANAGE_WORKSPACE="$HOME/cpd-cli"
 export PATH="$HOME/cpd-cli:$PATH"
 export CPD_CLI_WORK_PATH="$HOME/cpd-cli/work"
@@ -210,7 +218,7 @@ _CONFIG_WORK_DIR="${CPD_CLI_WORK_PATH}/cp4d_config"
 mkdir -p "${_CONFIG_WORK_DIR}"
 # Top-level files only: subdirs (e.g. certs/) are host-side outputs and plain cp would fail on them.
 _cfg_copy_ok=1
-for _cfg_f in "${CONFIG_DIR}/"*; do
+for _cfg_f in "${CONFIG_DIR}/"*(N); do
     [ -f "${_cfg_f}" ] || continue
     cp "${_cfg_f}" "${_CONFIG_WORK_DIR}/" 2>/dev/null || _cfg_copy_ok=0
 done

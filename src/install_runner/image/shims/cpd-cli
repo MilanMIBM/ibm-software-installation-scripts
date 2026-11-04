@@ -1,0 +1,40 @@
+#!/bin/bash
+# =============================================================================
+# cpd-cli shim for the in-cluster install runner
+# -----------------------------------------------------------------------------
+# On a workstation `cpd-cli manage <cmd> <args>` ends as
+#     podman exec -it olm-utils-play-v4 <cmd> <args>
+# This pod IS that container, so the command runs directly, from the same working
+# directory. Verbs the cpd-cli binary implements on the host have no such command.
+# Every other cpd-cli verb goes to the real Linux binary next to this file.
+# =============================================================================
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${1:-}" != manage ]]; then
+    if [[ -x "${here}/cpd-cli.real" ]]; then
+        exec "${here}/cpd-cli.real" "$@"
+    fi
+    echo "[ERROR] cpd-cli $* needs the real Linux binary, and this runner image has none." >&2
+    exit 3
+fi
+shift
+cmd="${1:-}"
+[[ -n "${cmd}" ]] || { echo "[ERROR] cpd-cli manage: no command given." >&2; exit 2; }
+shift
+
+case "${cmd}" in
+    # The session comes from the pod's kubeconfig; there is no container to restart.
+    login-to-ocp|restart-container)
+        echo "[INFO] cpd-cli manage ${cmd}: nothing to do in the in-cluster runner."
+        exit 0 ;;
+    # Implemented on the host by cpd-cli, and they belong to mirroring or cleanup.
+    clean-workspace|save-image|load-image)
+        echo "[ERROR] cpd-cli manage ${cmd} runs on a workstation only, not in the in-cluster runner." >&2
+        exit 3 ;;
+esac
+
+export EXTERNAL_WORK_ROOT="${EXTERNAL_WORK_ROOT:-/tmp/work}"
+export CMD_PREFIX="${CMD_PREFIX:-cpd-cli manage}"
+cd /opt/ansible || exit 1
+# Same lookup `podman exec` does: an unknown command fails with 127 as it would there.
+exec "${cmd}" "$@"

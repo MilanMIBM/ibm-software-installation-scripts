@@ -26,6 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+ir_dispatch "$@"
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # This script lives in scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/,

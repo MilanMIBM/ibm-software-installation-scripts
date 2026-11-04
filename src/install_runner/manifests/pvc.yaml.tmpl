@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: install-runner-work
+  namespace: @NAMESPACE@
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: @STORAGE_CLASS@
+  resources:
+    requests:
+      storage: @PVC_SIZE@
