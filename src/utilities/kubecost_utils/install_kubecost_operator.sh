@@ -23,7 +23,8 @@ set -euo pipefail
 #
 # Re-running is safe: an installed operator is kept (images: re-applied, which
 # also upgrades to a newer mirrored version), an existing instance is kept
-# (images: its image settings are refreshed).
+# (images: its image settings are refreshed; KUBECOST_REFRESH_INTERVAL and
+# KUBECOST_REFRESH_DYNAMIC, when set, are applied to it as well as to a new one).
 #
 #   install_kubecost_operator.sh [options]
 #     --source <src>           auto | marketplace | private | local
@@ -40,6 +41,8 @@ set -euo pipefail
 #     --no-instance            operator only
 #     --cluster-id <id>        default KUBECOST_CLUSTER_ID, else the infrastructure name
 #     --storage-class <sc>     default KUBECOST_STORAGE_CLASS, else the cluster default
+#     --refresh-interval <d>   how often the UI data is published, e.g. 15m, or default
+#                              (default KUBECOST_REFRESH_INTERVAL, else left as it is)
 #     --registry <location>    private: host[:port][/path] the cluster pulls from
 #     --redirect <mode>        private: explicit | idms | both (default KUBECOST_IMAGE_REDIRECT)
 #     --dry-run                decide and show what would be done, change nothing
@@ -71,6 +74,7 @@ CATALOG=""
 INSTANCE="${KUBECOST_INSTANCE_NAME-kubecost}"
 CLUSTER_ID=""
 STORAGE_CLASS=""
+REFRESH_INTERVAL=""
 REGISTRY_OPT=""
 REDIRECT_OPT=""
 DRY_RUN=false
@@ -92,6 +96,7 @@ while [[ $# -gt 0 ]]; do
         --no-instance)     INSTANCE=""; shift ;;
         --cluster-id)      CLUSTER_ID="${2:?$1 needs a value}"; shift 2 ;;
         --storage-class)   STORAGE_CLASS="${2:?$1 needs a value}"; shift 2 ;;
+        --refresh-interval) REFRESH_INTERVAL="${2:?$1 needs a duration like 15m, or default}"; shift 2 ;;
         --registry)        REGISTRY_OPT="${2:?$1 needs host[:port][/path]}"; shift 2 ;;
         --redirect)        REDIRECT_OPT="${2:?$1 needs explicit, idms or both}"; shift 2 ;;
         --dry-run)         DRY_RUN=true; shift ;;
@@ -122,6 +127,27 @@ CATALOG="${CATALOG:-${KUBECOST_CATALOG_SOURCE:-certified-operators}}"
 CATALOG_NS="${KUBECOST_CATALOG_SOURCE_NAMESPACE:-openshift-marketplace}"
 CLUSTER_ID="${CLUSTER_ID:-${KUBECOST_CLUSTER_ID:-}}"
 STORAGE_CLASS="${STORAGE_CLASS:-${KUBECOST_STORAGE_CLASS:-}}"
+REFRESH_INTERVAL="${REFRESH_INTERVAL:-${KUBECOST_REFRESH_INTERVAL:-}}"
+REFRESH_DYNAMIC="${KUBECOST_REFRESH_DYNAMIC:-}"
+
+# Data refresh settings against an instance's spec -> REFRESH_VALUES (spec values
+# to merge in, {} when none are asked for or they are already there).
+REFRESH_VALUES='{}'
+refresh_values() {   # <spec json> [quiet]
+    REFRESH_VALUES='{}'
+    [[ -n "${REFRESH_INTERVAL}${REFRESH_DYNAMIC}" ]] || return 0
+    local plan
+    plan="$(jq -cn --arg i "${INSTANCE}" --arg ns "${NAMESPACE}" --argjson spec "$1" --arg ri "${REFRESH_INTERVAL}" --arg rd "${REFRESH_DYNAMIC}" \
+        '{instance: $i, namespace: $ns, crSpec: $spec, refreshVars: {interval: $ri, dynamic: $rd}}' \
+        | kc_python refresh --ctx /dev/stdin)" || die "Could not work out the data refresh settings."
+    (( $(jq '.errors | length' <<<"${plan}") == 0 )) || die "$(jq -r '.errors | join("; ")' <<<"${plan}")"
+    if [[ -z "${2:-}" ]]; then
+        jq -r '.warnings[]? | "[WARN] \(.)"' <<<"${plan}" >&2
+        jq -r '.summary[]? | "[INFO] Data refresh: \(.state)"' <<<"${plan}"
+    fi
+    REFRESH_VALUES="$(jq -c '.patch.spec // {}' <<<"${plan}")"
+}
+refresh_values '{}' quiet   # a bad value stops here, before anything is installed
 
 ocu_login
 ocu_require_cluster_admin
@@ -424,16 +450,19 @@ link_license() {
 }
 
 if oc get "${KC_RESOURCE}" "${INSTANCE}" -n "${NAMESPACE}" &>/dev/null; then
-    if [[ "${IMAGE_VALUES}" == "{}" ]]; then
+    refresh_values "$(oc get "${KC_RESOURCE}" "${INSTANCE}" -n "${NAMESPACE}" -o json | jq -c '.spec // {}')"
+    UPDATE_VALUES="$(jq -cn --argjson a "${IMAGE_VALUES}" --argjson b "${REFRESH_VALUES}" '$a * $b')"
+    if [[ "${UPDATE_VALUES}" == "{}" ]]; then
         echo "[OK] Instance ${INSTANCE} exists; left as is."
     else
         START_REV="$(kc_release_revision "${INSTANCE}" "${NAMESPACE}")"; START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         if [[ "${DRY_RUN}" == true ]]; then
-            echo "[DRY-RUN] Would refresh the image settings of ${INSTANCE}: ${IMAGE_VALUES}"
+            echo "[DRY-RUN] Would update the settings of ${INSTANCE}: ${UPDATE_VALUES}"
         else
-            oc patch "${KC_RESOURCE}" "${INSTANCE}" -n "${NAMESPACE}" --type merge -p "$(jq -c '{spec: .}' <<<"${IMAGE_VALUES}")" >/dev/null
-            echo "[OK] Image settings of ${INSTANCE} refreshed."
+            oc patch "${KC_RESOURCE}" "${INSTANCE}" -n "${NAMESPACE}" --type merge -p "$(jq -c '{spec: .}' <<<"${UPDATE_VALUES}")" >/dev/null
+            echo "[OK] Settings of ${INSTANCE} updated."
             kc_wait_for_release "${INSTANCE}" "${NAMESPACE}" "${START_REV}" "${START_TS}" "${TIMEOUT}" || true
+            [[ "${REFRESH_VALUES}" == "{}" ]] || kc_check_refresh "${INSTANCE}" "${NAMESPACE}" "${TIMEOUT}"
         fi
     fi
 else
@@ -451,10 +480,11 @@ else
     fi
     # Rendered unquoted into an env value by the chart: all digits breaks the release.
     [[ "${CLUSTER_ID}" == <-> ]] && CLUSTER_ID="ocp-${CLUSTER_ID}"
+    refresh_values "$(jq -c '.spec // {}' <<<"${EXAMPLE}")"
     CR="$(jq -c --arg n "${INSTANCE}" --arg ns "${NAMESPACE}" --arg id "${CLUSTER_ID}" --arg sc "${STORAGE_CLASS}" \
-        --argjson img "${IMAGE_VALUES}" '
+        --argjson img "${IMAGE_VALUES}" --argjson refresh "${REFRESH_VALUES}" '
         {apiVersion: "charts.kubecost.com/v1", kind: "Kubecost", metadata: {name: $n, namespace: $ns},
-         spec: ((.spec // {}) * {global: ({clusterId: $id} + (if $sc == "" then {} else {defaultStorageClass: $sc} end))} * $img)}' <<<"${EXAMPLE}")"
+         spec: ((.spec // {}) * {global: ({clusterId: $id} + (if $sc == "" then {} else {defaultStorageClass: $sc} end))} * $img * $refresh)}' <<<"${EXAMPLE}")"
     if [[ "${DRY_RUN}" == true ]]; then
         echo "[DRY-RUN] Would create:"; jq '.spec' <<<"${CR}"
         link_license
@@ -468,6 +498,7 @@ else
     echo "[INFO] Waiting for the aggregator..."
     oc rollout status "statefulset/${INSTANCE}-aggregator" -n "${NAMESPACE}" --timeout="${TIMEOUT}s" 2>&1 | sed 's/^/  /' \
         || echo "[WARN] The aggregator is not ready yet: oc get pods -n ${NAMESPACE}"
+    [[ "${REFRESH_VALUES}" == "{}" ]] || kc_check_refresh "${INSTANCE}" "${NAMESPACE}" "${TIMEOUT}"
 fi
 
 link_license

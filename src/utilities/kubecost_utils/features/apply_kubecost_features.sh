@@ -18,6 +18,8 @@ set -euo pipefail
 # operator, and restarts the pods that read a Secret whose content changed.
 # Managed Secrets no longer used are deleted. Only the settings in the file are
 # touched: login, product key, pricing, currency and Postgres are left alone.
+# KUBECOST_REFRESH_INTERVAL and KUBECOST_REFRESH_DYNAMIC in kubecost_vars.sh win
+# over the file's dataRefresh section when set.
 #
 #   apply_kubecost_features.sh [<kubecost name>] [options]
 #     -n, --namespace <ns>     default: the namespace holding that Kubecost CR
@@ -169,6 +171,9 @@ if [[ "${WAIT}" == true ]]; then
         oc rollout status "daemonset/${ds}" -n "${NAMESPACE}" --timeout="${TIMEOUT}s" >/dev/null 2>&1 || true
         echo "[INFO] Network costs: $(oc get daemonset "${ds}" -n "${NAMESPACE}" \
             -o jsonpath='{.status.numberReady}/{.status.desiredNumberScheduled}') pods ready."
+    fi
+    if [[ "$(jq -r '[.summary[]? | select(.feature == "dataRefresh" and .changed)] | length' <<<"${PLAN}")" != 0 ]]; then
+        kc_check_refresh "${CR_NAME}" "${NAMESPACE}" "${TIMEOUT}"
     fi
 else
     (( ${#SECRET_CHANGED} == 0 )) || echo "[WARN] --no-wait: restart the pods using ${SECRET_CHANGED[*]} yourself once the operator is done."

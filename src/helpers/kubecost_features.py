@@ -7,17 +7,24 @@ converts:
 
   generate --ctx ctx.json   -> commented features YAML on stdout, filled from
                                the instance's effective Helm values
+  add-missing --ctx ctx.json --file features.yaml
+                            -> JSON on stdout: {"added", "text", "errors"}; the
+                               file's text with the sections it lacks put in
+                               their usual place, the rest untouched
   plan --ctx ctx.json --file features.yaml
                             -> JSON on stdout: {"patch", "secrets", "summary",
                                "warnings", "errors"}; the patch is an RFC 7386
                                merge patch for the Kubecost CR (null = drop the
                                override, so the chart default applies)
+  refresh --ctx ctx.json    -> the same JSON for the data refresh settings alone,
+                               from refreshVars (the install has no features file)
 
 ctx.json: {"instance", "namespace", "url", "keyLinked", "sso" (oidc|saml|""),
 "ssoRbac", "ssoGroups", "nodes", "labelledNodes", "crSpec", "effective" (helm
 values; {} if unknown), "secrets" ({name: {key: decoded value}} of the Secrets
 the features use), "serviceCA" (PEM from the namespace's openshift-service-ca.crt
-ConfigMap; "" if none)}.
+ConfigMap; "" if none), "refreshVars" ({"interval", "dynamic"}: KUBECOST_REFRESH_*
+from kubecost_vars.sh; "" = not set)}.
 
 Chart facts (kubecost 3.3.1, values.yaml + templates in the operator pod, and
 the aggregator binary): alert-configs / budgets-configs / saved-report-configs
@@ -32,6 +39,11 @@ mounted as the directory /var/configs/actions/storage) and network-costs (no
 extraVolumes), all via opencost storage (http_config.tls_config.ca_file /
 insecure_skip_verify);
 Actions on free tier needs an RSA signing key, with a product key it doesn't.
+The aggregator ingests every 10 minutes into its write database and publishes
+to the one the UI reads every DB_BUCKET_REFRESH_INTERVAL (default 1h). With
+DYNAMIC_REFRESH_INTERVAL_ENABLED on (the default) it changes that itself. Neither
+is a chart value, so both go in aggregator.extraEnv, a list; GET /debug/orchestrator
+on port 9004 reports the interval in use (currentBucketRefreshInterval, minutes).
 """
 
 import argparse
@@ -136,6 +148,14 @@ CONTROL_PLANE_TOLERATIONS = [
 CLUSTER_PROFILES = ("development", "production", "high-availability")
 BUDGET_TYPES = ("allocations", "asset", "cloud", "collections")
 DURATION = re.compile(r"^[0-9]+[mhd]$")
+
+# dataRefresh: aggregator environment, see the module docstring.
+REFRESH_INTERVAL_ENV = "DB_BUCKET_REFRESH_INTERVAL"
+REFRESH_DYNAMIC_ENV = "DYNAMIC_REFRESH_INTERVAL_ENABLED"
+REFRESH_ENV_PATH = "aggregator.extraEnv"
+REFRESH_DEFAULT = "default"  # no override: the chart's 1h
+REFRESH_INGEST_MINUTES = 10  # publishing more often finds nothing new
+REFRESH_DURATION = re.compile(r"^(?:([0-9]+)h)?(?:([0-9]+)m)?$")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -258,6 +278,70 @@ def volumes_with(cur, item, keep):
     return out or DELETE
 
 
+def refresh_minutes(value):
+    """Minutes in a duration like 15m, 2h or 1h30m; None if it is not one, or 0."""
+    m = REFRESH_DURATION.match(value) if isinstance(value, str) else None
+    return (int(m[1] or 0) * 60 + int(m[2] or 0)) or None if m else None
+
+
+def refresh_from_env(env):
+    """(interval, dynamic) an aggregator.extraEnv list sets."""
+    found = {
+        e.get("name"): e.get("value")
+        for e in (env if isinstance(env, list) else [])
+        if isinstance(e, dict)
+    }
+    interval = found.get(REFRESH_INTERVAL_ENV) or REFRESH_DEFAULT
+    return str(interval), str(found.get(REFRESH_DYNAMIC_ENV, "true")).lower() != "false"
+
+
+def refresh_env(cur, interval, dynamic):
+    """cur (a CR list) with the refresh settings replaced; other entries are kept."""
+    out = [
+        e
+        for e in (cur if isinstance(cur, list) else [])
+        if not (
+            isinstance(e, dict)
+            and e.get("name") in (REFRESH_INTERVAL_ENV, REFRESH_DYNAMIC_ENV)
+        )
+    ]
+    if interval != REFRESH_DEFAULT:
+        out.append({"name": REFRESH_INTERVAL_ENV, "value": interval})
+    if not dynamic:
+        out.append({"name": REFRESH_DYNAMIC_ENV, "value": "false"})
+    return out or DELETE
+
+
+def resolve_refresh(sec, refresh_vars, cur):
+    """(interval, dynamic, problems) wanted, or None when nothing asks for a change.
+
+    A set variable wins over the file, the file over what cur (the instance's
+    (interval, dynamic)) has. Unless told otherwise a fixed interval stays fixed:
+    the self-adjustment would otherwise be free to raise it.
+    """
+    var_interval = str(refresh_vars.get("interval") or "")
+    var_dynamic = str(refresh_vars.get("dynamic") or "")
+    if not (sec or var_interval or var_dynamic):
+        return None
+    problems = []
+    interval = var_interval or sec.get("interval") or cur[0]
+    if interval != REFRESH_DEFAULT and not refresh_minutes(interval):
+        problems.append(
+            f"interval must be a duration like 15m, 1h or 1h30m, or {REFRESH_DEFAULT}, not {interval!r}"
+        )
+    if var_dynamic:
+        if var_dynamic not in ("true", "false"):
+            problems.append(f"KUBECOST_REFRESH_DYNAMIC must be true or false, not {var_dynamic!r}")
+        dynamic = var_dynamic == "true"
+    elif "dynamic" in sec and not var_interval:
+        dynamic = sec["dynamic"]
+        if not isinstance(dynamic, bool):
+            problems.append(f"dynamic must be true or false, not {dynamic!r}")
+    else:
+        dynamic = interval == REFRESH_DEFAULT
+    return interval, dynamic, problems
+
+
 # --------------------------------------------------------------------------- generate
 def current_settings(ctx):
     """Feature settings now in force, from the effective values (CR spec as fallback)."""
@@ -375,6 +459,11 @@ def current_settings(ctx):
         "hourly": int(val("aggregator.retention1h") or 0),
         "daily": int(val("aggregator.retention1d") or 0),
     }
+    now = refresh_from_env(val(REFRESH_ENV_PATH))
+    wanted = resolve_refresh({}, ctx.get("refreshVars") or {}, now)
+    # A bad variable is reported by the apply; the file keeps what is in force.
+    interval, dynamic = wanted[:2] if wanted and not wanted[2] else now
+    s["dataRefresh"] = {"interval": interval, "dynamic": dynamic}
     s["carbonEstimates"] = {
         "enabled": bool(val("kubecostProductConfigs.carbonEstimates", False))
     }
@@ -636,6 +725,20 @@ dataRetention:
   # days
   daily: {y(s["dataRetention"]["daily"])}
 
+# --- Data refresh (how fresh the UI is) ------------------------------------------------
+# Data is collected every minute and ingested every 10, but the UI only sees it
+# when the aggregator publishes it. UI lag is at worst about interval + 20 minutes.
+# interval: 15m, 30m, 1h, 1h30m ...; default = the chart's 1h. Below 10m adds
+#   work but no new data. A cycle costs under a minute on a small cluster and
+#   grows with the history kept, so allow more on a big one.
+# dynamic: true lets the aggregator change the interval itself (the chart's
+#   default; it can raise it, e.g. 1h to 2h). Keep it false with a fixed interval.
+# A change restarts the aggregator. KUBECOST_REFRESH_INTERVAL and
+# KUBECOST_REFRESH_DYNAMIC in kubecost_vars.sh win over this section when set.
+dataRefresh:
+  interval: {y(s["dataRefresh"]["interval"])}
+  dynamic: {y(s["dataRefresh"]["dynamic"])}
+
 # --- Beta views -----------------------------------------------------------------------------
 # Carbon estimates (assets/allocations carbon). Uses cloud region data, so
 # on-prem nodes may show little.
@@ -772,6 +875,55 @@ federatedStorage:
 actions:
   enabled: {y(s["actions"]["enabled"])}
 """
+
+
+def section_starts(lines):
+    """{top-level key: first line of its block}, in file order. A block starts at the
+    comment lines right above its key."""
+    starts = {}
+    for i, line in enumerate(lines):
+        m = re.match(r"^([A-Za-z][A-Za-z0-9_]*):", line)
+        if m:
+            while i > 0 and lines[i - 1].startswith("#"):
+                i -= 1
+            starts[m[1]] = i
+    return starts
+
+
+def add_missing(ctx, path):
+    """The file with the sections generate() writes and it lacks. Only text is
+    added, so the user's edits and comments stay as they are."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        before = yaml.safe_load(text) or {}
+    except (OSError, yaml.YAMLError) as e:
+        return {"added": [], "errors": [f"cannot read {path}: {e}"]}
+    if not isinstance(before, dict) or "version" not in before:
+        return {"added": [], "errors": [f"{path}: not a features config (no 'version:' line)"]}
+
+    new = generate(ctx).split("\n")
+    new_starts = section_starts(new)
+    order = list(new_starts)
+    lines = text.split("\n")
+    added = [k for k in order if k not in section_starts(lines)]
+    # Last first, so each one finds the section that follows it already in place.
+    for key in reversed(added):
+        at = order.index(key)
+        end = new_starts[order[at + 1]] if at + 1 < len(order) else len(new)
+        have = section_starts(lines)
+        after = next((have[k] for k in order[at + 1 :] if k in have), None)
+        if after is None:
+            lines = lines[:-1] if lines[-1] == "" else lines
+            lines += ["", *new[new_starts[key] : end]]
+        else:
+            lines[after:after] = new[new_starts[key] : end]
+    merged = "\n".join(lines)
+
+    after_load = yaml.safe_load(merged)
+    if {k: after_load.get(k) for k in before} != before or set(after_load) - set(before) != set(added):
+        return {"added": [], "errors": [f"{path}: could not add {added} without changing the rest; use --force"]}
+    return {"added": added, "text": merged, "errors": []}
 
 
 # --------------------------------------------------------------------------- plan
@@ -1088,6 +1240,33 @@ def plan_retention(cfg, p):
     p.summary.append(
         (f, f"10-minute {ten} ({ten * 10 // 60} h), hourly {hourly} h, daily {daily} d")
     )
+
+
+def plan_refresh(cfg, p):
+    f = "dataRefresh"
+    s = section(cfg, f, p)
+    cur = get_path(p.spec, REFRESH_ENV_PATH, [])
+    refresh_vars = p.ctx.get("refreshVars") or {}
+    wanted = resolve_refresh(s, refresh_vars, refresh_from_env(cur))
+    if wanted is None:
+        p.summary.append((f, "not in the file: left as is"))
+        return
+    interval, dynamic, problems = wanted
+    for problem in problems:
+        p.err(f, problem)
+    if problems:
+        return
+    var_interval = refresh_vars.get("interval")
+    if var_interval and s.get("interval") not in (None, var_interval):
+        p.warn(f, f"KUBECOST_REFRESH_INTERVAL={var_interval} overrides interval: {s['interval']} in the file")
+    minutes = refresh_minutes(interval)
+    if minutes and minutes < REFRESH_INGEST_MINUTES:
+        p.warn(f, f"interval {interval}: data is ingested every {REFRESH_INGEST_MINUTES}m, so this adds work but no new data")
+    if minutes and dynamic:
+        p.warn(f, f"interval {interval} with dynamic on: the aggregator may change it on its own")
+    p.set(f, REFRESH_ENV_PATH, refresh_env(cur, interval, dynamic))
+    every = "the chart's 1h" if interval == REFRESH_DEFAULT else interval
+    p.summary.append((f, f"every {every}, {'self-adjusting' if dynamic else 'fixed'}"))
 
 
 def plan_toggles(cfg, p):
@@ -1470,6 +1649,7 @@ PLANNERS = (
     plan_budgets,
     plan_reports,
     plan_retention,
+    plan_refresh,
     plan_toggles,
     plan_allocation,
     plan_teams,
@@ -1486,6 +1666,7 @@ KNOWN = {
     "budgets",
     "savedReports",
     "dataRetention",
+    "dataRefresh",
     "carbonEstimates",
     "costEventsAudit",
     "costAllocation",
@@ -1523,7 +1704,17 @@ def plan(ctx, path):
             p.warnings.append(f"file is for {k} {cfg[k]!r}, applying to {ctx[k]!r}")
     for planner in PLANNERS:
         planner(cfg, p)
+    return result(p)
 
+
+def refresh_plan(ctx):
+    """The refresh settings from refreshVars alone (the install has no features file)."""
+    p = Plan(ctx)
+    plan_refresh({}, p)
+    return result(p)
+
+
+def result(p):
     patch, changed = {}, set()
     for feature, path_, desired in p.settings:
         cur = get_path(p.spec, path_)
@@ -1544,7 +1735,7 @@ def plan(ctx, path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("command", choices=("generate", "plan"))
+    ap.add_argument("command", choices=("generate", "add-missing", "plan", "refresh"))
     ap.add_argument("--ctx", required=True)
     ap.add_argument("--file")
     a = ap.parse_args()
@@ -1552,11 +1743,15 @@ def main():
         ctx = json.load(fh)
     if a.command == "generate":
         sys.stdout.write(generate(ctx))
+        return
+    if a.command in ("plan", "add-missing") and not a.file:
+        ap.error(f"{a.command} needs --file")
+    if a.command == "add-missing":
+        out = add_missing(ctx, a.file)
     else:
-        if not a.file:
-            ap.error("plan needs --file")
-        json.dump(plan(ctx, a.file), sys.stdout, indent=1)
-        sys.stdout.write("\n")
+        out = plan(ctx, a.file) if a.command == "plan" else refresh_plan(ctx)
+    json.dump(out, sys.stdout, indent=1)
+    sys.stdout.write("\n")
 
 
 if __name__ == "__main__":

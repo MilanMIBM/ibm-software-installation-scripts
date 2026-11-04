@@ -529,6 +529,7 @@ kc_features_context() {   # <instance> <namespace> <file>
     oc get nodes -o json | jq -c \
         --arg cr "${cr}" --arg ns "${ns}" --arg url "${url}" --argjson key "${KC_KEY_LINKED}" \
         --arg serviceCA "${service_ca}" \
+        --arg refreshInterval "${KUBECOST_REFRESH_INTERVAL:-}" --arg refreshDynamic "${KUBECOST_REFRESH_DYNAMIC:-}" \
         --argjson spec "$(jq -c '.spec // {}' <<<"${cr_json}")" --argjson eff "${eff}" --argjson secrets "${secrets}" '
         ($eff + {}) as $v
         | (if ($v.oidc.enabled // $spec.oidc.enabled // false) then "oidc"
@@ -539,7 +540,39 @@ kc_features_context() {   # <instance> <namespace> <file>
            nodes: (.items | length),
            labelledNodes: ([.items[] | .metadata.labels
                | select(has("topology.kubernetes.io/region") and has("topology.kubernetes.io/zone"))] | length),
-           crSpec: $spec, effective: $eff, secrets: $secrets, serviceCA: $serviceCA}' | _kc_write_private "$3"
+           crSpec: $spec, effective: $eff, secrets: $secrets, serviceCA: $serviceCA,
+           refreshVars: {interval: $refreshInterval, dynamic: $refreshDynamic}}' | _kc_write_private "$3"
+}
+
+# Reports the interval the aggregator really uses after a data refresh change,
+# and warns when a fixed one was not taken. Never fails the caller: the change
+# itself is done by now.
+kc_check_refresh() {   # <instance> <namespace> <timeout s>
+    local cr="$1" ns="$2" timeout="$3" env interval dynamic have="" want i
+    oc rollout status "statefulset/${cr}-aggregator" -n "${ns}" --timeout="${timeout}s" >/dev/null 2>&1 \
+        || { echo "[WARN] The aggregator is not ready yet, so its refresh interval was not checked." >&2; return 0; }
+    for i in {1..12}; do
+        have="$(oc exec -n "${ns}" "${cr}-aggregator-0" -c aggregator -- curl -s -m 5 http://localhost:9004/debug/orchestrator 2>/dev/null \
+            | jq -r '.currentBucketRefreshInterval // empty' 2>/dev/null || true)"
+        [[ -n "${have}" ]] && break
+        sleep 5
+    done
+    [[ -n "${have}" ]] || { echo "[WARN] Could not read the aggregator's refresh interval (/debug/orchestrator)." >&2; return 0; }
+    env="$(oc get "${KC_RESOURCE}" "${cr}" -n "${ns}" -o json | jq -c '.spec.aggregator.extraEnv // []')"
+    interval="$(jq -r 'map(select(.name == "DB_BUCKET_REFRESH_INTERVAL").value) | first // "1h"' <<<"${env}")"
+    dynamic="$(jq -r 'map(select(.name == "DYNAMIC_REFRESH_INTERVAL_ENABLED").value) | first // "true"' <<<"${env}")"
+    if [[ "${dynamic}" != false ]]; then
+        echo "[INFO] The aggregator publishes every ${have}m now (it may change that itself)."
+        return 0
+    fi
+    want=0
+    [[ "${interval}" =~ '([0-9]+)h' ]] && want=$(( want + match[1] * 60 ))
+    [[ "${interval}" =~ '([0-9]+)m' ]] && want=$(( want + match[1] ))
+    if (( have == want )); then
+        echo "[OK] The aggregator publishes every ${have}m."
+    else
+        echo "[WARN] The aggregator publishes every ${have}m, not ${interval}: it did not take the setting. Check its log for 'refresh interval'." >&2
+    fi
 }
 
 # Restarts the Deployments, StatefulSets and DaemonSets in <namespace> whose

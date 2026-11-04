@@ -38,7 +38,8 @@ otherwise --empty):
   --from-cluster [NAME] Also take, from a Kubecost instance on the logged-in
                         cluster (NAME, else the first one): its product key
                         (linked Secret), namespace, instance name, cluster ID,
-                        storage class and the installed operator version.
+                        storage class, data refresh settings and the installed
+                        operator version.
                         Combine with --empty or --from-cpd; flags still win.
 
 Options:
@@ -53,6 +54,8 @@ Options:
                         OperatorHub offers, else the newest mirrored one)
   --cluster-id ID       Kubecost cluster ID (default: the one an instance on the
                         logged-in cluster has, else a generated ocp-<6 chars>)
+  --refresh-interval D  How often the UI data is published, e.g. 15m, or default
+                        (default: empty = leave the instance as it is)
   --out FILE            Write somewhere else (default:
                         configs/kubecost_config/kubecost_vars.sh)
   --force               Overwrite an existing file (a timestamped .bak is kept)
@@ -72,6 +75,8 @@ REGISTRY_OPT=""
 IMAGES="all"
 VERSION=""
 CLUSTER_ID=""
+REFRESH_INTERVAL=""
+REFRESH_DYNAMIC=""
 FORCE=false
 
 while (( $# )); do
@@ -90,6 +95,7 @@ while (( $# )); do
         --images)      IMAGES="${2:?--images needs all or required}"; shift 2 ;;
         --version)     VERSION="${${2:?--version needs X.Y.Z}#v}"; shift 2 ;;
         --cluster-id)  CLUSTER_ID="${2:?--cluster-id needs a value}"; shift 2 ;;
+        --refresh-interval) REFRESH_INTERVAL="${2:?--refresh-interval needs a duration like 15m, or default}"; shift 2 ;;
         --out)         OUT_FILE="${2:?--out needs a path}"; shift 2 ;;
         --force)       FORCE=true; shift ;;
         -h|--help)     usage; exit 0 ;;
@@ -166,6 +172,11 @@ if [[ "${FROM_CLUSTER}" == true ]]; then
     fi
     _sc="$(jq -r '.spec.global.defaultStorageClass // empty' <<<"${_cr}")"
     [[ -n "${_sc}" ]] && { STORAGE_CLASS="${_sc}"; _taken+=("storage class ${_sc}"); }
+    if [[ -z "${REFRESH_INTERVAL}" ]]; then
+        REFRESH_INTERVAL="$(jq -r '.spec.aggregator.extraEnv // [] | map(select(.name == "DB_BUCKET_REFRESH_INTERVAL").value) | first // empty' <<<"${_cr}")"
+        [[ -n "${REFRESH_INTERVAL}" ]] && _taken+=("refresh interval ${REFRESH_INTERVAL}")
+    fi
+    REFRESH_DYNAMIC="$(jq -r '.spec.aggregator.extraEnv // [] | map(select(.name == "DYNAMIC_REFRESH_INTERVAL_ENABLED").value) | first // empty' <<<"${_cr}")"
     if [[ -z "${VERSION}" ]]; then
         VERSION="$(oc get csv -n "${_ns}" -o json 2>/dev/null | jq -r '[.items[] | select(.metadata.name | startswith("kubecost-operator.v")) | .spec.version] | first // empty')"
         [[ -n "${VERSION}" ]] && { VERSION_FROM_CLUSTER=true; _taken+=("installed version ${VERSION}"); }
@@ -294,6 +305,20 @@ export KUBECOST_INSTANCE_NAME=$(q "${INSTANCE}")
 export KUBECOST_CLUSTER_ID=$(q "${CLUSTER_ID}")
 # Storage class for the aggregator/local-store PVCs; empty = the cluster default
 export KUBECOST_STORAGE_CLASS=$(q "${STORAGE_CLASS}")
+
+# ------------------------------------------------------------------------------
+# Data refresh (how fresh the UI is)
+# ------------------------------------------------------------------------------
+# How often the aggregator publishes ingested data to the UI: 15m, 30m, 1h ...
+# UI lag is at worst about this + 20 minutes; below 10m adds work but no new data.
+# Empty = leave the instance as it is (a new one gets the chart's 1h, which can
+# adjust itself); default = back to the chart's. When set, the install and
+# features/apply_kubecost_features.sh apply it, over the features file. Re-run
+# either to update a running instance (the aggregator restarts).
+export KUBECOST_REFRESH_INTERVAL=$(q "${REFRESH_INTERVAL}")
+# Let the aggregator change the interval itself: true | false. Empty = false
+# with a fixed interval, true with default.
+export KUBECOST_REFRESH_DYNAMIC=$(q "${REFRESH_DYNAMIC}")
 
 # ------------------------------------------------------------------------------
 # License (Kubecost Enterprise product key)

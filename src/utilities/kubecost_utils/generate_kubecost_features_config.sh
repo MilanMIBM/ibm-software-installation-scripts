@@ -12,14 +12,16 @@ set -euo pipefail
 #
 #   configs/kubecost_config/<namespace>/<instance>-features.yaml
 #
-# Network costs, alerts (+ SMTP), budgets, saved reports, data retention,
-# carbon estimates, cost events audit, cost allocation (shared namespaces,
+# Network costs, alerts (+ SMTP), budgets, saved reports, data retention, data
+# refresh, carbon estimates, cost events audit, cost allocation (shared namespaces,
 # overhead, idle, label mapping, savings profiles), teams, Turbonomic,
 # plugins, federated storage and Actions. Each section has its own
 # "enabled:"; edit the file, then apply it with features/apply_kubecost_features.sh.
 #
-# An existing file is kept unless --force (then the old one is saved as
-# .bak), so edits not applied yet are not lost.
+# An existing file keeps its settings, so edits not applied yet are not lost:
+# only sections it lacks (added by a newer version of these scripts) are put in,
+# filled from the instance, with the old file saved as .bak. --force rewrites the
+# whole file from the cluster instead.
 #
 #   generate_kubecost_features_config.sh [<kubecost name>] [options]
 #     -n, --namespace <ns>         default: the namespace holding that Kubecost CR
@@ -75,15 +77,25 @@ oc get "${KC_RESOURCE}" "${CR_NAME}" -n "${NAMESPACE}" &>/dev/null \
 kc_features_file "${NAMESPACE}" "${CR_NAME}"
 OUTPUT="${OUTPUT:-${REPLY}}"
 
-if [[ "${STDOUT}" != true && -f "${OUTPUT}" && "${FORCE}" != true ]]; then
-    echo "[OK] ${OUTPUT#${_CP4D_REPO_ROOT}/} already exists; kept (--force pulls the cluster's settings again)."
-    echo "Apply it: features/apply_kubecost_features.sh ${CR_NAME}"
-    exit 0
-fi
-
 CTX="$(mktemp "${${TMPDIR:-/tmp}%/}/kc-features-ctx.XXXXXX")"
 trap 'rm -f "${CTX}"' EXIT
 kc_features_context "${CR_NAME}" "${NAMESPACE}" "${CTX}"
+
+if [[ "${STDOUT}" != true && -f "${OUTPUT}" && "${FORCE}" != true ]]; then
+    MERGED="$(kc_python add-missing --ctx "${CTX}" --file "${OUTPUT}")" || die "Could not read ${OUTPUT}."
+    (( $(jq '.errors | length' <<<"${MERGED}") == 0 )) || die "$(jq -r '.errors | join("; ")' <<<"${MERGED}")"
+    ADDED="$(jq -r '.added | join(", ")' <<<"${MERGED}")"
+    if [[ -z "${ADDED}" ]]; then
+        echo "[OK] ${OUTPUT#${_CP4D_REPO_ROOT}/} already exists and has every section; kept (--force pulls the cluster's settings again)."
+    else
+        cp -p "${OUTPUT}" "${OUTPUT}.$(date -u +%Y%m%dT%H%M%SZ).bak"
+        jq -rj '.text' <<<"${MERGED}" | _kc_write_private "${OUTPUT}"
+        echo "[OK] ${OUTPUT#${_CP4D_REPO_ROOT}/}: added ${ADDED}; your settings are unchanged (old file saved as .bak)."
+    fi
+    echo "Apply it: features/apply_kubecost_features.sh ${CR_NAME} [--dry-run]"
+    exit 0
+fi
+
 CONTENT="$(kc_python generate --ctx "${CTX}")" || die "Could not generate the features config."
 
 if [[ "${STDOUT}" == true ]]; then
