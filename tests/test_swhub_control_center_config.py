@@ -101,7 +101,7 @@ def test_notebook_can_set_every_autodetect_variable():
     template = (render.TEMPLATE_DIR / render.TEMPLATE_NAME).read_text()
     wanted = {line.split("=")[0].split()[1] for line in template.splitlines()
               if line.startswith(("export CONTROL_AUTODETECT_", "export CONTROL_CLUSTER_DISPLAY_NAME", "export CONTROL_ADMIN_"))}
-    assert len(wanted) == 10 and wanted <= keys
+    assert len(wanted) == 12 and wanted <= keys
 
 
 def test_cluster_admins_are_on_by_default():
@@ -218,7 +218,9 @@ print -r -- "$SWHCC_CPU $SWHCC_MEMORY_GI"
 
 
 def test_cluster_capacity_is_the_room_left_plus_what_the_account_holds():
+    # set -e as in the real scripts: (( x += 0 )) counts as a failure and ends them.
     script = """
+set -euo pipefail
 export _CP4D_REPO_ROOT="$1"
 source "$1/src/helpers/swhub_control_center_api_helpers.sh"
 cpdapi() {
@@ -235,3 +237,37 @@ print -r -- "$SWHCC_CPU $SWHCC_MEMORY_GI $SWHCC_GPU"
 """
     result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
     assert result.stdout.split("\n")[:2] == ["160 661 0", "83 448 0"]
+
+
+def test_instance_quota_tracks_without_enforcing():
+    script = """
+export _CP4D_REPO_ROOT="$1"
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+cpdapi() { print -r -- "$3"; }
+swhcc_set_instance_quota i1 77 213
+"""
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
+    body = __import__("json").loads(result.stdout)
+    assert body["Enforce"] is False and body["InstanceID"] == "i1"
+    assert body["Policies"]["Quota"]["CPU"]["Maximum"] == 77
+    assert body["Policies"]["Quota"]["Memory"]["Maximum"] == 213
+
+
+def test_other_workloads_leave_out_software_hub_and_masters():
+    script = """
+export _CP4D_REPO_ROOT="$1" PROJECT_CPD_INST_OPERANDS=cpd CONTROL_PROJECT_OPERATORS=cc CONTROL_PROJECT_OPERANDS=cco
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+pod() { print -r -- "{\\"metadata\\":{\\"namespace\\":\\"$1\\"},\\"status\\":{\\"phase\\":\\"Running\\"},\\"spec\\":{\\"nodeName\\":\\"$2\\",\\"containers\\":[{\\"resources\\":{\\"requests\\":{\\"cpu\\":\\"$3\\",\\"memory\\":\\"1Gi\\"}}}]}}"; }
+oc() {
+    case "$*" in
+        "get zenservice"*) print -r -- '{"items":[{"metadata":{"namespace":"cpd"}}]}' ;;
+        "get commonservice"*) print -r -- '{"items":[{"metadata":{"namespace":"ops"}}]}' ;;
+        "get nodes"*) print -r -- '{"items":[{"metadata":{"name":"m1"}}]}' ;;
+        "get pods"*) print -r -- "{\\"items\\":[$(pod storage w1 1500m),$(pod monitoring w2 1),$(pod storage m1 50),$(pod cpd w1 50),$(pod ops w1 50),$(pod cco w1 50)]}" ;;
+    esac
+}
+swhcc_other_reserved_capacity
+print -r -- "$SWHCC_OTHER_CPU $SWHCC_OTHER_MEMORY_GI"
+"""
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
+    assert result.stdout.strip().splitlines()[-1] == "3 2"

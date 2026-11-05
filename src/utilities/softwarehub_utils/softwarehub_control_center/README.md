@@ -68,6 +68,10 @@ Auto-detected instances go into `CONTROL_AUTODETECT_ACCOUNT_NAME`, and each run 
 
 `CONTROL_AUTODETECT_ACCOUNT_CPU` and `CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI` override either one. An allocation changed in the web client is overwritten on the next run unless you set these.
 
+A second account, `CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME`, holds what workloads outside Software Hub have reserved on the workers, such as `openshift-storage` and monitoring, rounded up. It uses `workload_kind: OTHER_WL`, and each run updates it. The first account gets the rest, so the two add up to the cluster. Software Hub operators, the License Service, the scheduling service and Control Center itself count as Software Hub. Leave the variable empty to turn this off.
+
+Each instance also gets a quota, because the two pages count different things: Resource groups shows what accounts hold of the cluster, and an account's page shows what its instances hold of the account. With `CONTROL_AUTODETECT_INSTANCE_QUOTA=reserved`, the default, each run sets the quota to the instance's requests, rounded up. With `none` the instance stays unlimited, and the account page shows 0 allocated and a negative unused figure. The quota only tracks: enforcement stays off, so nothing is limited.
+
 ## Not an IBM-published API
 
 IBM documents these tasks only as web client steps. These scripts make the same calls as the web client, under `/zen-data/v1/management/platform` and `/zen-watchdog/v1/adminhubmon`, worked out from the zen 6.10.8 images. A future release can change them without notice, and IBM support may not help with them. If a script fails after an upgrade, the web client still works. All the calls are in `src/helpers/swhub_control_center_api_helpers.sh`.

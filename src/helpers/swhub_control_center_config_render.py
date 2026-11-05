@@ -49,6 +49,8 @@ SWHCC_DEFAULTS = {
     "account_name": "software-hub-instances",
     "account_allocation": "cluster",
     "account_cpu": "",
+    "other_account_name": "other-reserved-workloads",
+    "instance_quota": "reserved",
     "account_memory_gi": "",
     "rotate_api_keys": "false",
     "verify_wait_seconds": "600",

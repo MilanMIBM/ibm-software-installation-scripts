@@ -71,6 +71,16 @@ rotated_key() {   # <project> <url>
     print -r -- "${user}"$'\t'"$(print -r -- "${API_BODY}" | jq -r '.apiKey // empty')"
 }
 
+# Track an instance against what it has reserved, rounded up. This is what fills in
+# the account page; it limits nothing. Runs for new and registered instances alike.
+apply_instance_quota() {   # <project> <instance id>
+    [[ "${CONTROL_AUTODETECT_INSTANCE_QUOTA:-reserved}" == reserved ]] || return 0
+    swhcc_reserved_capacity "$1"
+    h_info "'$1' quota: ${SWHCC_CPU} vCPU, ${SWHCC_MEMORY_GI} Gi memory"
+    swhcc_set_instance_quota "$2" "${SWHCC_CPU}" "${SWHCC_MEMORY_GI}"
+    swhcc_api_ok || h_warn "Could not set the quota for '$1' ($(swhcc_api_error))."
+}
+
 DETECTED=("${(@f)$(swhcc_detect_instances)}")
 [[ -n "${DETECTED[1]:-}" ]] || { h_info "No Software Hub instances found on this cluster."; exit 0; }
 
@@ -91,27 +101,55 @@ if ! swhcc_wait_cluster_verified "${CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS:-600}
     exit 1
 fi
 
-# The account gets the whole cluster by default, so Control Center shows usage, requests
-# and limits as a share of it. reserved sizes it to the instances instead. Explicit
-# CPU and memory values win over both.
-GPU=0
+# By default the accounts split the whole cluster, so Control Center shows usage,
+# requests and limits as a share of it: the other account gets what non-Software Hub
+# workloads have reserved, and this one the rest. reserved sizes this one to the
+# instances instead. Explicit CPU and memory values win over both.
+OTHER_ACCOUNT="${CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME-other-reserved-workloads}"
+OTHER_ID=""; OTHER_CPU=0; OTHER_MEMORY=0; GPU=0
+SWHCC_ACCOUNT_ID=""; swhcc_find_account "${ACCOUNT}" || true
+ACCOUNT_ID="${SWHCC_ACCOUNT_ID}"
+if [[ -n "${OTHER_ACCOUNT}" ]]; then
+    SWHCC_ACCOUNT_ID=""; swhcc_find_account "${OTHER_ACCOUNT}" || true
+    OTHER_ID="${SWHCC_ACCOUNT_ID}"
+    swhcc_other_reserved_capacity
+    OTHER_CPU="${SWHCC_OTHER_CPU}"; OTHER_MEMORY="${SWHCC_OTHER_MEMORY_GI}"
+fi
+swhcc_cluster_capacity "${SWHCC_CLUSTER_ID}" "${ACCOUNT_ID}" "${OTHER_ID}"
+HELD_CPU="${SWHCC_FIRST_CPU}"; HELD_MEMORY="${SWHCC_FIRST_MEMORY_GI}"
 if [[ "${CONTROL_AUTODETECT_ACCOUNT_ALLOCATION:-cluster}" == reserved ]]; then
     swhcc_reserved_capacity "${DETECTED[@]%%$'\t'*}"
 else
-    SWHCC_ACCOUNT_ID=""
-    swhcc_find_account "${ACCOUNT}" || true
-    swhcc_cluster_capacity "${SWHCC_CLUSTER_ID}" "${SWHCC_ACCOUNT_ID}"
     GPU="${SWHCC_GPU}"
+    SWHCC_CPU=$(( SWHCC_CPU - OTHER_CPU ))
+    SWHCC_MEMORY_GI=$(( SWHCC_MEMORY_GI - OTHER_MEMORY ))
 fi
 CPU="${CONTROL_AUTODETECT_ACCOUNT_CPU:-${SWHCC_CPU}}"
 MEMORY="${CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI:-${SWHCC_MEMORY_GI}}"
+(( CPU >= 0 && MEMORY >= 0 )) || h_die "Other workloads have reserved more than the cluster has left."
+
+# Shrink first and grow last, so the accounts never add up to more than the cluster.
+if [[ -n "${ACCOUNT_ID}" ]]; then
+    swhcc_allocate "${ACCOUNT_ID}" "${SWHCC_CLUSTER_ID}" $(( CPU < HELD_CPU ? CPU : HELD_CPU )) \
+        $(( MEMORY < HELD_MEMORY ? MEMORY : HELD_MEMORY )) "${GPU}"
+fi
+if [[ -n "${OTHER_ACCOUNT}" ]]; then
+    swhcc_ensure_account "${OTHER_ACCOUNT}" "Reserved by workloads outside Software Hub, such as storage and monitoring" \
+        "${SWHCC_CLUSTER_ID}" "${OTHER_CPU}" "${OTHER_MEMORY}" 0 OTHER_WL
+    OTHER_ID="${SWHCC_ACCOUNT_ID}"
+    h_info "Account '${OTHER_ACCOUNT}' allocation: ${OTHER_CPU} vCPU, ${OTHER_MEMORY} Gi memory"
+    swhcc_allocate "${OTHER_ID}" "${SWHCC_CLUSTER_ID}" "${OTHER_CPU}" "${OTHER_MEMORY}" 0
+fi
 swhcc_ensure_account "${ACCOUNT}" "Software Hub instances found by autodetect_instances.sh" \
     "${SWHCC_CLUSTER_ID}" "${CPU}" "${MEMORY}" "${GPU}"
 ACCOUNT_ID="${SWHCC_ACCOUNT_ID}"
 h_info "Account '${ACCOUNT}' allocation: ${CPU} vCPU, ${MEMORY} Gi memory, ${GPU} GPU"
 swhcc_allocate "${ACCOUNT_ID}" "${SWHCC_CLUSTER_ID}" "${CPU}" "${MEMORY}" "${GPU}"
 swhcc_ensure_instance_rights
-swhcc_sync_account_admins "${ACCOUNT_ID}" || h_warn "Some users or groups could not be made account administrators."
+for account_id in "${ACCOUNT_ID}" "${OTHER_ID}"; do
+    [[ -z "${account_id}" ]] || swhcc_sync_account_admins "${account_id}" \
+        || h_warn "Some users or groups could not be made account administrators."
+done
 
 added=0; present=0; skipped=0; failed=0
 for line in "${DETECTED[@]}"; do
@@ -122,6 +160,7 @@ for line in "${DETECTED[@]}"; do
     fi
     if swhcc_find_instance "${url}"; then
         h_info "'${project}' is already registered."
+        apply_instance_quota "${project}" "${REPLY}"
         (( ++present )); continue
     fi
 
@@ -141,6 +180,7 @@ for line in "${DETECTED[@]}"; do
 
     if swhcc_register_instance "${project}" "${url}" "${user}" "${key}" "${ACCOUNT_ID}"; then
         h_info "Added '${project}' to account '${ACCOUNT}'."
+        swhcc_find_instance "${url}" && apply_instance_quota "${project}" "${REPLY}"
         (( ++added ))
     else
         (( ++failed ))

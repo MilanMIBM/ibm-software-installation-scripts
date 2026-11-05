@@ -47,6 +47,11 @@ Options:
                             the instances have reserved, rounded up)
   --account-cpu CORES       vCPU for that account, overriding --account-allocation
   --account-memory-gi GI    Memory for that account, overriding --account-allocation
+  --other-account-name N    Account for what non-Software Hub workloads reserve
+                            (default: other-reserved-workloads)
+  --no-other-account        Do not create that account
+  --instance-quota M        reserved (track each instance against its requests,
+                            rounded up, default) or none (unlimited)
   --rotate-api-keys         Let auto-detect generate new API keys, which revokes the
                             current ones (default: off)
   --verify-wait SECONDS     How long to wait if verifying falls back to a browser
@@ -80,6 +85,9 @@ AUTODETECT=true
 CLUSTER_DISPLAY_NAME=""
 ACCOUNT_NAME=""
 ACCOUNT_ALLOCATION=""
+INSTANCE_QUOTA=""
+OTHER_ACCOUNT_SET=false
+OTHER_ACCOUNT_NAME=""
 ACCOUNT_CPU=""
 ACCOUNT_MEMORY_GI=""
 ROTATE_API_KEYS=false
@@ -112,6 +120,9 @@ while (( $# )); do
         --account-allocation) need_value "$1" "${2:-}"; ACCOUNT_ALLOCATION="$2"; shift 2 ;;
         --account-cpu)       need_value "$1" "${2:-}"; ACCOUNT_CPU="$2"; shift 2 ;;
         --account-memory-gi) need_value "$1" "${2:-}"; ACCOUNT_MEMORY_GI="$2"; shift 2 ;;
+        --other-account-name) need_value "$1" "${2:-}"; OTHER_ACCOUNT_SET=true; OTHER_ACCOUNT_NAME="$2"; shift 2 ;;
+        --no-other-account)  OTHER_ACCOUNT_SET=true; OTHER_ACCOUNT_NAME=""; shift ;;
+        --instance-quota)    need_value "$1" "${2:-}"; INSTANCE_QUOTA="$2"; shift 2 ;;
         --rotate-api-keys)   ROTATE_API_KEYS=true; shift ;;
         --verify-wait)       need_value "$1" "${2:-}"; VERIFY_WAIT="$2"; shift 2 ;;
         --no-cluster-admins) CLUSTER_ADMINS=false; shift ;;
@@ -165,6 +176,8 @@ args+=(--set "cluster_mode=${CLUSTER_MODE}" --set "patch_id=${PATCH_VALUE}" --se
 [[ -n "${OAUTH_CLIENT_ID}" ]]   && args+=(--set "oauth_client_id=${OAUTH_CLIENT_ID}")
 [[ -n "${CLUSTER_DISPLAY_NAME}" ]] && args+=(--set "cluster_display_name=${CLUSTER_DISPLAY_NAME}")
 [[ -n "${ACCOUNT_NAME}" ]]      && args+=(--set "account_name=${ACCOUNT_NAME}")
+[[ "${OTHER_ACCOUNT_SET}" == true ]] && args+=(--set "other_account_name=${OTHER_ACCOUNT_NAME}")
+[[ -n "${INSTANCE_QUOTA}" ]]    && args+=(--set "instance_quota=${INSTANCE_QUOTA}")
 [[ -n "${ACCOUNT_ALLOCATION}" ]] && args+=(--set "account_allocation=${ACCOUNT_ALLOCATION}")
 [[ -n "${ACCOUNT_CPU}" ]]       && args+=(--set "account_cpu=${ACCOUNT_CPU}")
 [[ -n "${ACCOUNT_MEMORY_GI}" ]] && args+=(--set "account_memory_gi=${ACCOUNT_MEMORY_GI}")

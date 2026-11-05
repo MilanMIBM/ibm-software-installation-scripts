@@ -574,6 +574,8 @@ def _(
         "account_allocation": _setup.get("CONTROL_AUTODETECT_ACCOUNT_ALLOCATION"),
         "account_cpu": _setup.get("CONTROL_AUTODETECT_ACCOUNT_CPU"),
         "account_memory_gi": _setup.get("CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI"),
+        "other_account_name": _setup.get("CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME"),
+        "instance_quota": _setup.get("CONTROL_AUTODETECT_INSTANCE_QUOTA"),
         "rotate_api_keys": _setup.get("CONTROL_AUTODETECT_ROTATE_API_KEYS"),
         "verify_wait_seconds": _setup.get("CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS"),
         "add_cluster_admins": str(swhcc_cluster_admins_checkbox.value).lower(),

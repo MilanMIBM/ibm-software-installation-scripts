@@ -115,6 +115,11 @@ export CONTROL_OAUTH_SECRET="{{ oauth_secret | sh }}"
 # run sets its allocation. ACCOUNT_ALLOCATION is cluster, for the whole cluster less
 # what other accounts hold, or reserved, for what the instances have reserved, rounded
 # up. CPU and memory (cores, Gi) override it with your own values.
+# OTHER_ACCOUNT_NAME is a second account for what workloads outside Software Hub have
+# reserved on the workers, rounded up. Empty turns it off.
+# INSTANCE_QUOTA is reserved, to track each instance against what it has reserved,
+# rounded up, or none for unlimited. The account page shows the sum of these as
+# allocated. It only tracks: nothing is enforced.
 # Instances need an API key. Generating one revokes the admin's current key and
 # breaks anything using it, so this only happens with ROTATE_API_KEYS=true; the
 # instance in cpd_vars.sh reuses CPD_APIKEY from cpd_instance_details.sh.
@@ -128,6 +133,8 @@ export CONTROL_AUTODETECT_ACCOUNT_NAME="{{ account_name | sh }}"
 export CONTROL_AUTODETECT_ACCOUNT_ALLOCATION="{{ account_allocation | sh }}"
 export CONTROL_AUTODETECT_ACCOUNT_CPU="{{ account_cpu | sh }}"
 export CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI="{{ account_memory_gi | sh }}"
+export CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME="{{ other_account_name | sh }}"
+export CONTROL_AUTODETECT_INSTANCE_QUOTA="{{ instance_quota | sh }}"
 export CONTROL_AUTODETECT_ROTATE_API_KEYS="{{ rotate_api_keys | sh }}"
 export CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS="{{ verify_wait_seconds | sh }}"
 

@@ -1099,6 +1099,8 @@ default_swhub_control_center_setup = [
     {"key": "CONTROL_AUTODETECT_ACCOUNT_ALLOCATION", "value": "cluster"},
     {"key": "CONTROL_AUTODETECT_ACCOUNT_CPU", "value": ""},
     {"key": "CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI", "value": ""},
+    {"key": "CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME", "value": "other-reserved-workloads"},
+    {"key": "CONTROL_AUTODETECT_INSTANCE_QUOTA", "value": "reserved"},
     {"key": "CONTROL_AUTODETECT_ROTATE_API_KEYS", "value": "false"},
     {"key": "CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS", "value": "600"},
     {"key": "CONTROL_ADMIN_USERS", "value": ""},

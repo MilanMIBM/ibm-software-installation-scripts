@@ -189,33 +189,42 @@ print(int(sum(cores(n["cpu"]) for n in nodes)), int(sum(size(n["memory"]) for n 
     SWHCC_MEMORY_GI="${totals##* }"
 }
 
-# The cluster as Control Center sees it, less what other accounts hold: SWHCC_CPU,
-# SWHCC_MEMORY_GI and SWHCC_GPU, rounded up. These are its own capacity figures, not
-# OpenShift's allocatable ones, so the account's bar fills the whole cluster.
-swhcc_cluster_capacity() {   # <cluster id> [account id]
+# The cluster as Control Center sees it, less what accounts other than the given ones
+# hold: SWHCC_CPU, SWHCC_MEMORY_GI and SWHCC_GPU, rounded up. These are its own capacity
+# figures, not OpenShift's allocatable ones, so accounts can fill the whole cluster.
+# SWHCC_FIRST_CPU and SWHCC_FIRST_MEMORY_GI are what the first account holds now.
+swhcc_cluster_capacity() {   # <cluster id> [account id]...
+    local cluster="$1" free account held totals
+    shift
     cpdapi GET "${SWHCC_WATCHDOG}/cluster/resources"
     swhcc_api_ok || h_die "Could not read the cluster capacity ($(swhcc_api_error))."
-    local free own='{}' totals
-    free="$(print -r -- "${API_BODY}" | jq -c --arg id "$1" '[.requestObj.Resources[] | select(.ClusterID == $id)][0].Resources // empty')"
-    [[ -n "${free}" ]] || h_die "Control Center reports no capacity for cluster $1."
-    if [[ -n "${2:-}" ]]; then
-        cpdapi GET "${SWHCC_WATCHDOG}/resource_group/resources/policies/$2"
-        swhcc_api_ok || h_die "Could not read the account's allocation ($(swhcc_api_error))."
-        own="$(print -r -- "${API_BODY}" | jq -c --arg id "$1" '[.requestObj.Resources[]? | select(.ClusterID == $id)][0].Resources // {}')"
-    fi
-    totals="$(jq -nr --argjson free "${free}" --argjson own "${own}" '
-        def room($k): ($free[$k].AvailableCapacity + ([$own[$k].Allocated // 0, 0] | max)) | ceil;
-        "\(room("CPU")) \(room("Memory")) \(room("GPU"))"')"
-    read -r SWHCC_CPU SWHCC_MEMORY_GI SWHCC_GPU <<< "${totals}"
+    free="$(print -r -- "${API_BODY}" | jq -c --arg id "${cluster}" '[.requestObj.Resources[] | select(.ClusterID == $id)][0].Resources // empty')"
+    [[ -n "${free}" ]] || h_die "Control Center reports no capacity for cluster ${cluster}."
+    read -r SWHCC_CPU SWHCC_MEMORY_GI SWHCC_GPU <<< "$(print -r -- "${free}" \
+        | jq -r '[.CPU, .Memory, .GPU] | map(.AvailableCapacity | ceil) | join(" ")')"
+    SWHCC_FIRST_CPU=0; SWHCC_FIRST_MEMORY_GI=0
+    local first=true
+    for account in "$@"; do
+        if [[ -n "${account}" ]]; then
+            cpdapi GET "${SWHCC_WATCHDOG}/resource_group/resources/policies/${account}"
+            swhcc_api_ok || h_die "Could not read an account's allocation ($(swhcc_api_error))."
+            held="$(print -r -- "${API_BODY}" | jq -r --arg id "${cluster}" \
+                '[.requestObj.Resources[]? | select(.ClusterID == $id)][0].Resources // {}
+                 | [.CPU, .Memory, .GPU] | map([.Allocated // 0, 0] | max | ceil) | join(" ")')"
+            totals=(${=held})
+            SWHCC_CPU=$(( SWHCC_CPU + totals[1] ))
+            SWHCC_MEMORY_GI=$(( SWHCC_MEMORY_GI + totals[2] ))
+            SWHCC_GPU=$(( SWHCC_GPU + totals[3] ))
+            [[ "${first}" == true ]] && { SWHCC_FIRST_CPU="${totals[1]}"; SWHCC_FIRST_MEMORY_GI="${totals[2]}"; }
+        fi
+        first=false
+    done
 }
 
-# What the instances have reserved: the requests of their running and pending pods,
-# rounded up to SWHCC_CPU (whole cores) and SWHCC_MEMORY_GI (whole Gi). This matches
-# the requests Control Center reports for an instance, and works before it has
-# collected any metrics. Operator projects are not part of that figure.
-swhcc_reserved_capacity() {   # <project>...
-    local project totals
-    totals="$(for project in "$@"; do oc get pods -n "${project}" -o json; done | jq -s '[.[].items[]]' | python3 -c '
+# Reads a JSON array of pods. Prints the CPU and memory requests of the running and
+# pending ones, rounded up to whole cores and Gi.
+swhcc_sum_requests() {
+    python3 -c '
 import json, math, sys
 UNITS = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "m": 1e-3}
 def quantity(value):
@@ -231,7 +240,35 @@ for pod in json.load(sys.stdin):
         requests = container.get("resources", {}).get("requests", {})
         cpu += quantity(requests.get("cpu", "0"))
         memory += quantity(requests.get("memory", "0"))
-print(math.ceil(round(cpu, 6)), math.ceil(round(memory / 2**30, 6)))')"
+print(math.ceil(round(cpu, 6)), math.ceil(round(memory / 2**30, 6)))'
+}
+
+# What everything outside Software Hub has reserved on the workers, such as storage,
+# monitoring and third-party agents: SWHCC_OTHER_CPU and SWHCC_OTHER_MEMORY_GI. Masters
+# are left out because Control Center's cluster capacity only counts workers.
+swhcc_other_reserved_capacity() {
+    local -a software_hub=("${(@f)$( { oc get zenservice -A -o json; oc get commonservice -A -o json; } \
+        | jq -r '.items[].metadata.namespace')}")
+    software_hub+=("${PROJECT_CPD_INST_OPERATORS:-}" "${PROJECT_CPD_INST_OPERANDS:-}" "${PROJECT_LICENSE_SERVICE:-}"
+                   "${PROJECT_SCHEDULING_SERVICE:-}" "${PROJECT_IBM_EVENTS:-}" "${PROJECT_PRIVILEGED_MONITORING_SERVICE:-}"
+                   "${CONTROL_PROJECT_OPERATORS}" "${CONTROL_PROJECT_OPERANDS}")
+    local masters totals
+    masters="$(oc get nodes -l '!node-role.kubernetes.io/worker' -o json | jq -c '[.items[].metadata.name]')"
+    totals="$(oc get pods -A -o json \
+        | jq --argjson masters "${masters}" '$ARGS.positional as $skip | [.items[]
+            | select((.metadata.namespace | IN($skip[])) | not)
+            | select((.spec.nodeName // "") as $node | ($masters | index($node)) == null)]' --args ${software_hub:#} \
+        | swhcc_sum_requests)"
+    SWHCC_OTHER_CPU="${totals%% *}"
+    SWHCC_OTHER_MEMORY_GI="${totals##* }"
+}
+
+# What the instances have reserved, rounded up: SWHCC_CPU and SWHCC_MEMORY_GI. This
+# matches the requests Control Center reports for an instance, and works before it has
+# collected any metrics. Operator projects are not part of that figure.
+swhcc_reserved_capacity() {   # <project>...
+    local project totals
+    totals="$(for project in "$@"; do oc get pods -n "${project}" -o json; done | jq -s '[.[].items[]]' | swhcc_sum_requests)"
     SWHCC_CPU="${totals%% *}"
     SWHCC_MEMORY_GI="${totals##* }"
 }
@@ -261,7 +298,7 @@ swhcc_allocate() {   # <account id> <cluster id> <cpu> <memory gi> <gpu>
 
 # Create the account if needed, administered by the signed-in user, and make sure it
 # has the cluster. An account that already has the cluster keeps its allocation.
-swhcc_ensure_account() {   # <name> <description> <cluster id> <cpu> <memory gi> <gpu>
+swhcc_ensure_account() {   # <name> <description> <cluster id> <cpu> <memory gi> <gpu> [workload kind]
     if swhcc_find_account "$1"; then
         (( ${${(s: :)SWHCC_ACCOUNT_CLUSTERS}[(Ie)$3]} )) && { h_info "Account '$1' already has this cluster."; return 0; }
         cpdapi PUT "${SWHCC_PLATFORM}/resource_groups/${SWHCC_ACCOUNT_ID}/clusters" \
@@ -274,9 +311,9 @@ import base64, json, sys
 part = sys.stdin.read().split(".")[1]
 claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
 print(json.dumps({"uid": str(claims["uid"]), "username": claims["username"]}))')"
-        body="$(jq -n --arg name "$1" --arg desc "$2" --arg cluster "$3" --argjson user "${user}" \
+        body="$(jq -n --arg name "$1" --arg desc "$2" --arg cluster "$3" --argjson user "${user}" --arg kind "${7:-SW_CORE_WL}" \
             '{resource_group_name: $name, description: $desc, clusters: [$cluster],
-              members: {users: [$user]}, workload_kind: "SW_CORE_WL"}')"
+              members: {users: [$user]}, workload_kind: $kind}')"
         h_info "Creating account '$1'"
         cpdapi POST "${SWHCC_PLATFORM}/resource_groups" "${body}"
         swhcc_api_ok || h_die "Could not create account '$1' ($(swhcc_api_error))."
@@ -355,10 +392,21 @@ swhcc_find_instance() {   # <url>
     [[ -n "${REPLY}" ]]
 }
 
+# An instance quota, in cores and Gi; -1 is unlimited. Control Center's account page
+# shows the sum of these as "allocated", so unlimited instances show as 0 there. It
+# only tracks usage: Enforce stays false, so nothing is limited.
+swhcc_set_instance_quota() {   # <instance id> <cpu> <memory gi>
+    cpdapi POST "${SWHCC_WATCHDOG}/instance/resources/policies" \
+        "$(jq -n --arg id "$1" --argjson cpu "$2" --argjson memory "$3" '{InstanceID: $id, ID: "platform",
+            Enforce: false, EnforcementSupported: false, Enable: true, Alert: false, Policies: {Quota: {
+                CPU: {Maximum: $cpu, Warning: -1, Unit: "c"}, Memory: {Maximum: $memory, Warning: -1, Unit: "Gi"},
+                GPU: {Maximum: -1, Warning: -1, Unit: "GPU"}, PolicyType: "limit"}}}')"
+}
+
 # Validate, save, then set the unlimited quota the web client sets by default. The
 # web client removes the instance when that last call fails, so this does too.
 swhcc_register_instance() {   # <display name> <url> <username> <api key> <account id>
-    local project="${${${2#https://}%%.*}#cpd-}" check body id quota
+    local project="${${${2#https://}%%.*}#cpd-}" check body id
     check="$(NAME="${project}" URL="$2" USER_NAME="$3" KEY="$4" ACCOUNT="$5" \
         jq -n '{namespace_name: env.NAME, resource_group_id: env.ACCOUNT, instance_connection: {url: env.URL},
                 instance_credentials: {api_key: env.KEY, username: env.USER_NAME}}')"
@@ -378,11 +426,7 @@ swhcc_register_instance() {   # <display name> <url> <username> <api key> <accou
         return 1
     fi
     id="$(print -r -- "${API_BODY}" | jq -r '.namespace_id // empty')"
-    quota="$(jq -n --arg id "${id}" '{InstanceID: $id, ID: "platform", Enforce: false, EnforcementSupported: false,
-        Enable: true, Alert: false, Policies: {Quota: {
-            CPU: {Maximum: -1, Warning: -1, Unit: "c"}, Memory: {Maximum: -1, Warning: -1, Unit: "Gi"},
-            GPU: {Maximum: -1, Warning: -1, Unit: "GPU"}, PolicyType: "limit"}}}')"
-    cpdapi POST "${SWHCC_WATCHDOG}/instance/resources/policies" "${quota}"
+    swhcc_set_instance_quota "${id}" -1 -1
     if ! swhcc_api_ok; then
         h_error "Could not set the quota for '$1' ($(swhcc_api_error)); removing it again."
         cpdapi DELETE "${SWHCC_PLATFORM}/namespaces/${id}"
