@@ -15,6 +15,7 @@ The Cloud Pak for Data workflow has two stages:
 | --- | --- |
 | `*_vars_generation*.py` | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options. |
 | `configs/` | Your generated configs live here (gitignored), one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts. `openshift_config/` holds the credential files written by the user/service ID utilities, `kubecost_config/<namespace>/` the Kubecost instance details, product keys, pricing files, Postgres settings and features config, plus `kubecost_vars.sh` and the image mirror records. |
+| `docs/` | Optional setup guidance and integration notes |
 | `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), service instance provisioning (`4.5_service_instance_setups/`), the live CR state dashboard under `check_cr_status/`, plus cleanup/debug scripts under `x_clean_or_debug_cp4d/` |
 | `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README) |
 | `scripts/install_ibm_concert/` | IBM Concert install steps (0 → 4) around IBM's own installer, data store provisioning, optional Concert Optimize / Turbonomic (5), plus cleanup/debug scripts under `x_clean_or_debug_concert/` |
@@ -150,6 +151,7 @@ After the base install is up:
 - `scripts/install_cloud_pak_for_data/4.5_service_instance_setups/` provisions service instances: Db2, EDB Postgres, Databand Postgres, Informix, DataStax HCD, OpenPages and Planning Analytics.
   - `x_service_instance_manager.sh` lists the add-ons that can create service instances and every existing instance with its state (read-only; `--once`, `--explain <type>`, `--storage-report`, `--help`). It discovers each type's fields from the cluster rather than hardcoding them.
   - `x_repair_cpd_cli_profile.sh` checks that the `cpd-cli` profile points at this cluster and authenticates, and repairs it only when it doesn't (`--check` to only report).
+- Optional data lineage: see [products and integration support](docs/data-lineage.md) for `datalineage` and `mantaflow`.
 - `scripts/install_cloud_pak_for_data/5_component_specific_scripts/` holds per-service follow-ups:
   - `cp4d_databases/`, `cp4d_informix/` - Db2 SCC prep, EDB Postgres and Informix prep
   - `cp4d_general/` - Software Hub admins on a project, CPD projects, service routes, watsonx.data premium UI features
