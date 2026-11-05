@@ -29,7 +29,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 #   DO_SWHCC_OAUTH=false ./full_installprocess-swhub_control_center.sh
 # CONTROL_ADD_CLUSTER_ADMINS in the vars file (default true) turns on the
 # cluster-admins step. AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES (default true) turns
-# on the last step, which stops for one browser approval and then adds the instances.
+# on the last step, which verifies the cluster and adds the instances.
 # A failure in either only warns, and both can be re-run on their own.
 #
 # Or pick steps by name: --from <step> resumes there, --skip <step>[,...] leaves

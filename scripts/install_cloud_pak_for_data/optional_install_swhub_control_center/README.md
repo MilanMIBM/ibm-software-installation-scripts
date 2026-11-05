@@ -28,7 +28,7 @@ The full install takes `--from <step>`, `--skip <step>[,...]`, `--only <step>` a
 | `instance-details` | `1.3` | Writes the URL and admin login to `swhub_control_center_instance_details.sh` |
 | `oauth` | `1.4` | Creates the OAuth client and prints the values for registering the cluster |
 | `cluster-admins` | utility | Gives OpenShift cluster-admins the Control Center admin role; a failure only warns |
-| `autodetect-instances` | utility | Registers the cluster and adds every instance on it; one browser approval; a failure only warns |
+| `autodetect-instances` | utility | Registers the cluster and adds every instance on it; a failure only warns |
 
 The last two steps run while `CONTROL_ADD_CLUSTER_ADMINS` and `AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES` are true, which is the default. They and the other Day 1 scripts are in [softwarehub_control_center](../../../src/utilities/softwarehub_utils/softwarehub_control_center/README.md).
 
@@ -50,6 +50,12 @@ Both can run at the same time without one recreating the other's container. On a
 The premium image is published under the release tag (`5.4.0.amd64`), which moves with each patch. The numbered patch tags stop early, so don't read them as the newest. The scripts always pass `--patch_id=${PATCH_ID}`: without it, `setup-control-center` installs the base release and re-applies older shared CRDs over your patched instance.
 
 Keep `PATCH_ID` the same as the instances. `UPDATE=true` runs `setup-control-center --upgrade=true`; that path has not been tested yet.
+
+## Instances on private routes
+
+Control Center refuses instance URLs that resolve to a private address, and it checks from inside the cluster. On bare-metal clusters, routes resolve to the private ingress address there even when they are public from outside, so `autodetect_instances.sh` fails with `Access to private IP addresses is not allowed`. IBM does not document this check and there is no setting for it.
+
+`x_debug_register_private_route_instances.sh` works around it: it briefly maps the routes to their public IP on `zen-core-api`, registers the instances, and removes the mapping. `--check` shows what each route resolves to and changes nothing. It is unsupported by IBM and restarts Control Center's API twice. The check only applies when adding an instance, so nothing needs to stay patched.
 
 ## Private registries
 

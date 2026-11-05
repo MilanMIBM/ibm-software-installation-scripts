@@ -293,7 +293,7 @@ def _():
         "include_install_options": "**Do you want to include customized install options?**",
         "swhcc_enable": "Set up **IBM Software Hub Control Center**? *Optional, needs IBM Software Hub Premium.*",
         "swhcc_chain": "Install it at the **end of the main install**? *Otherwise run its own full install script.*",
-        "swhcc_autodetect": "**Auto-detect** the Software Hub instances on the cluster and add them? *One browser approval is still needed.*",
+        "swhcc_autodetect": "**Auto-detect** the Software Hub instances on the cluster and add them? *A token-only cluster login needs one browser approval.*",
         "swhcc_cluster_admins": "Make all OpenShift **cluster-admins** Control Center admins? *Or list specific users in CONTROL_ADMIN_USERS below.*",
         "swhcc_cluster": "**Where does Control Center run?**",
         "swhcc_oauth_secret": "**OAuth client secret:**",

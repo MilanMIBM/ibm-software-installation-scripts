@@ -16,8 +16,10 @@ source "${_CP4D_REPO_ROOT}/src/helpers/swhub_control_center_helpers.sh"
 # Software Hub Control Center - OAuth client
 # ------------------------------------------------------------------------------
 # Creates the OAuth client Control Center uses to read cluster capacity data, on the
-# cluster where Software Hub runs, then prints the values for registering that
-# cluster, which is a web client step. Safe to re-run.
+# cluster where Software Hub runs. This is IBM's client: prompt asks each user once
+# and OpenShift remembers it. Keep respondWithChallenges false here, because it breaks
+# the Refresh data button; the scripts change both only while they refresh. Safe to
+# re-run.
 # ==============================================================================
 
 swhcc_activate
@@ -42,6 +44,7 @@ secret: "${CONTROL_OAUTH_SECRET}"
 redirectURIs:
   - https://${CONTROL_CENTER_ROUTE}/zen/oauth/redirect
 grantMethod: prompt
+respondWithChallenges: false
 accessTokenMaxAgeSeconds: 120
 accessTokenInactivityTimeoutSeconds: 300
 scopeRestrictions:
@@ -55,7 +58,7 @@ OAUTH_EOF
 
 OAUTH_ROUTE="$(oc get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}')"
 echo ""
-h_info "Registering the cluster, if you do it in the web client (Configurations and settings > Clusters > Register cluster):"
+h_info "Values for registering the cluster in the web client, if you do not use the scripts:"
 h_info "  API address:     $(oc whoami --show-server)"
 h_info "  OAuth route:     https://${OAUTH_ROUTE}"
 h_info "  OAuth client ID: ${CONTROL_OAUTH_CLIENT_ID}"

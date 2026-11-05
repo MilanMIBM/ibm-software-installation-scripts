@@ -47,12 +47,13 @@ Options:
   --account-memory-gi GI    Memory for that account (default: all worker capacity)
   --rotate-api-keys         Let auto-detect generate new API keys, which revokes the
                             current ones (default: off)
-  --verify-wait SECONDS     How long to wait for the browser approval (default: 600)
+  --verify-wait SECONDS     How long to wait if verifying falls back to a browser
+                            (default: 600)
   --no-cluster-admins       Set CONTROL_ADD_CLUSTER_ADMINS to false
   --admin-users LIST        Give the roles to these users (comma-separated) instead
                             of the cluster-admins
   --admin-roles LIST        Roles to give, comma-separated (default:
-                            zen_administrator_role)
+                            zen_administrator_role,zen_resource_group_admin_role)
   --admin-exclude-users L   Cluster-admins to leave out, comma-separated
   --out FILE                Write somewhere else
   --force                   Overwrite an existing file (a timestamped .bak is kept)

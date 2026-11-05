@@ -30,7 +30,7 @@ Options:
   --users LIST  Exactly these users, comma-separated (default: CONTROL_ADMIN_USERS,
                 else every cluster-admin on the Control Center cluster)
   --roles LIST  Roles, comma-separated (default: CONTROL_ADMIN_ROLES, else
-                zen_administrator_role)
+                zen_administrator_role,zen_resource_group_admin_role)
   --dry-run     Show what would change
 
 Cluster-admins come from the role bindings, directly or through OpenShift groups, so
@@ -62,7 +62,7 @@ else
     [[ -z "${USERS_ARG}" && "${ACTION}" != status ]] && SAVE=true || SAVE=false
 fi
 
-ROLES=(${(s:,:)${${ROLES_ARG:-${CONTROL_ADMIN_ROLES:-zen_administrator_role}}// /}})
+ROLES=(${(s:,:)${${ROLES_ARG:-${CONTROL_ADMIN_ROLES:-zen_administrator_role,zen_resource_group_admin_role}}// /}})
 (( ${#ROLES} )) || h_die "No roles given."
 
 swhcc_oc_login

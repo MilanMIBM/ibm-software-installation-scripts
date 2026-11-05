@@ -20,8 +20,8 @@ Safe to re-run: what is already registered is left alone.
 
   autodetect_instances.sh [--dry-run] [--account NAME] [--rotate-api-keys]
 
-In order: registers the cluster, waits for the one browser approval, creates the
-account, then validates and adds each instance. Instances that are not Completed, or
+In order: registers and verifies the cluster, creates the account, then validates
+and adds each instance. Instances that are not Completed, or
 have no route, are skipped with a warning.
 
 Options:
@@ -101,6 +101,7 @@ fi
 swhcc_ensure_account "${ACCOUNT}" "Software Hub instances found by autodetect_instances.sh" \
     "${SWHCC_CLUSTER_ID}" "${CPU}" "${MEMORY}" 0
 ACCOUNT_ID="${SWHCC_ACCOUNT_ID}"
+swhcc_ensure_instance_rights
 
 added=0; present=0; skipped=0; failed=0
 for line in "${DETECTED[@]}"; do

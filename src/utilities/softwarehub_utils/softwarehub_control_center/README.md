@@ -16,7 +16,7 @@ Day 1 tasks for a Control Center installed with [optional_install_swhub_control_
 
 ## Administrators
 
-By default, only `cpadmin` can use Control Center. `toggle_cluster_admins.sh` gives every OpenShift cluster-admin the Control Center administrator role. It reads the cluster role bindings, so it covers any identity provider, people added through OpenShift groups, and people who have never signed in. It runs in the full install while `CONTROL_ADD_CLUSTER_ADMINS` is true, which is the default.
+By default, only `cpadmin` can use Control Center. `toggle_cluster_admins.sh` gives every OpenShift cluster-admin the Control Center administrator and account administrator roles. Account administrators can add instances, which the administrator role alone cannot. It reads the cluster role bindings, so it covers any identity provider, people added through OpenShift groups, and people who have never signed in. It runs in the full install while `CONTROL_ADD_CLUSTER_ADMINS` is true, which is the default.
 
 ```bash
 ./toggle_cluster_admins.sh status      # who is covered and what they have; changes nothing
@@ -30,16 +30,23 @@ By default, only `cpadmin` can use Control Center. `toggle_cluster_admins.sh` gi
 
 To make that permanent, set `CONTROL_ADMIN_USERS` and `CONTROL_ADMIN_ROLES`. With `CONTROL_ADMIN_USERS` set, only those users are covered, not the cluster-admins. `CONTROL_ADMIN_EXCLUDE_USERS` leaves people out.
 
+- Adding instances needs `zen_resource_group_admin_role`, so `autodetect_instances.sh` and `register_instance.sh` give it to the sign-in user. The administrator role alone is not enough.
 - `off` removes only the listed roles and keeps each user's record and other roles. It works from the current cluster-admin list, so someone who has since lost cluster-admin keeps their role until you remove it with `off --users`.
 - Control Center's sign-in user (`cpadmin`) is never changed, so the toggle can't lock you out.
 - Nothing is watching for changes: a new cluster-admin gets the role the next time this runs.
 - People can only sign in with OpenShift when OpenShift authentication is on for Control Center. The script warns if it isn't.
 
-## The one browser step
+## People and platforms sign in separately
 
-Registering a cluster needs a person to approve Control Center's `cluster-reader` access, because the OAuth client uses `grantMethod: prompt`. The scripts print the page to open, then wait for up to `CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS` (600 by default). If nobody approves in time, the script exits with a message, and the next run carries on from there.
+People sign in to Control Center as themselves. Registering and refreshing the cluster is platform to platform, with no browser: the scripts get an OAuth code the way `oc login` does, using the cluster username and password from the config, and hand it to Control Center.
 
-IBM also asks you to re-authenticate when nodes are added or removed, and periodically unless the privileged monitoring service is installed. Use `register_cluster.sh --reauthenticate`.
+People use the Refresh data button as normal. The OAuth client from step `1.4` is IBM's, with `grantMethod: prompt`: each OpenShift user approves access once, and OpenShift remembers it. To ask someone again, delete their entry with `oc delete oauthclientauthorization <user>:ibm-software-hub-cc`. The OpenShift login page is separate, and appears whenever their OpenShift session has ended.
+
+For a script refresh, the scripts switch the client to `grantMethod: auto` with `respondWithChallenges: true` for a few seconds, then switch it back. Leaving challenges on makes OpenShift reject browsers with `A non-empty X-CSRF-Token header is required`. If a script is killed in that window, re-run step `1.4`.
+
+A token-only cluster login cannot do this, so the scripts fall back to printing a page to approve, and wait for up to `CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS`.
+
+IBM asks you to refresh when nodes are added or removed, and periodically unless the privileged monitoring service is installed. Run `register_cluster.sh --reauthenticate`.
 
 ## API keys
 

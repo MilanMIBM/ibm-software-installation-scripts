@@ -117,7 +117,9 @@ export CONTROL_OAUTH_SECRET="{{ oauth_secret | sh }}"
 # Instances need an API key. Generating one revokes the admin's current key and
 # breaks anything using it, so this only happens with ROTATE_API_KEYS=true; the
 # instance in cpd_vars.sh reuses CPD_APIKEY from cpd_instance_details.sh.
-# VERIFY_WAIT_SECONDS: how long to wait for the one browser approval step.
+# The cluster is verified and refreshed with no browser, using the cluster username
+# and password. A token-only login falls back to a page to approve by hand, and
+# VERIFY_WAIT_SECONDS is how long to wait for that.
 
 export AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES="{{ autodetect }}"
 export CONTROL_CLUSTER_DISPLAY_NAME="{{ cluster_display_name | sh }}"

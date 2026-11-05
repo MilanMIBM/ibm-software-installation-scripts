@@ -53,7 +53,7 @@ SWHCC_DEFAULTS = {
     "verify_wait_seconds": "600",
     "add_cluster_admins": "true",
     "admin_users": "",
-    "admin_roles": "zen_administrator_role",
+    "admin_roles": "zen_administrator_role,zen_resource_group_admin_role",
     "admin_exclude_users": "",
 }
 

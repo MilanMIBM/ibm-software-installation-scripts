@@ -107,4 +107,67 @@ def test_notebook_can_set_every_autodetect_variable():
 def test_cluster_admins_are_on_by_default():
     text = render.render_swhcc_vars()
     assert 'CONTROL_ADD_CLUSTER_ADMINS="true"' in text
-    assert 'CONTROL_ADMIN_ROLES="zen_administrator_role"' in text
+    assert 'CONTROL_ADMIN_ROLES="zen_administrator_role,zen_resource_group_admin_role"' in text
+
+
+def test_oauth_url_request_sends_a_bare_host():
+    # Control Center adds https:// to swh_host itself; a URL here gave it https://https://.
+    script = """
+export _CP4D_REPO_ROOT="$1" CONTROL_CENTER_URL=https://cpd-cc.apps.example.com/
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+cpdapi() { print -r -- "$2"; API_CODE=200; API_BODY='{"oauth_authz_url":"https://x"}'; }
+swhcc_cluster_oauth_url c1
+"""
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
+    assert "swh_host=cpd-cc.apps.example.com" in result.stdout
+    assert "https" not in result.stdout.split("swh_host=")[1]
+
+
+def test_cluster_is_verified_with_no_browser(tmp_path):
+    fake = tmp_path / "curl"
+    fake.write_text("""#!/bin/sh
+cat > "$CAPTURE"
+printf 'HTTP/1.1 302 Found\\r\\nLocation: https://cc/zen/oauth/redirect?code=abc&state=c3Q%%3D\\r\\n\\r\\n'
+""")
+    fake.chmod(0o755)
+    script = """
+export _CP4D_REPO_ROOT="$1" CONTROL_CENTER_URL=https://cpd-cc.apps.example.com
+export OCP_USERNAME=kubeadmin OCP_PASSWORD='pa"ss\\1'
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+export CONTROL_OAUTH_CLIENT_ID=cc
+oc() { print -r -- "oc $*" >> "$OC_LOG"; }
+PATH="$2:$PATH"
+cpdapi() { [[ "$1" == GET ]] && API_BODY='{"oauth_authz_url":"https://oauth/authorize"}' || { print -r -- "$1 $2"; cat "${3#@}"; }; API_CODE=200; }
+swhcc_cluster_auto_verify c1
+"""
+    capture = tmp_path / "curl-config"
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT), str(tmp_path)], capture_output=True, text=True,
+                            check=True, env={**__import__("os").environ, "CAPTURE": str(capture), "OC_LOG": str(tmp_path / "oc.log")})
+    patches = (tmp_path / "oc.log").read_text().splitlines()
+    assert [("true" in p) for p in patches] == [True, False], "challenges must be switched back off"
+    assert "PUT /zen-data/v1/management/platform/clusters/c1/capacities" in result.stdout
+    assert '"code": "abc"' in result.stdout and '"state": "c3Q="' in result.stdout
+    assert '"swh_host": "cpd-cc.apps.example.com"' in result.stdout
+    assert capture.read_text().strip() == r'user = "kubeadmin:pa\"ss\\1"'
+
+
+def test_oauth_client_stays_browser_friendly_at_rest():
+    text = (ROOT / "scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/1.4_swhub_control_center_oauth_client.sh").read_text()
+    # True here would make OpenShift reject the web client's Refresh data button.
+    assert "grantMethod: prompt" in text and "respondWithChallenges: false" in text
+
+
+@pytest.mark.parametrize("call", ["swhcc_grant_roles u1 new_role", "swhcc_revoke_roles u1 old_role"])
+def test_role_updates_send_the_username_usermgmt_requires(call):
+    script = f"""
+export _CP4D_REPO_ROOT="$1"
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+cpdapi() {{
+    API_CODE=200
+    if [[ "$1" == GET ]]; then API_BODY='{{"user_roles":["old_role"]}}'; else print -r -- "$1 $3"; fi
+}}
+{call}
+"""
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
+    body = result.stdout.split("PUT ", 1)[1]
+    assert __import__("json").loads(body)["username"] == "u1"

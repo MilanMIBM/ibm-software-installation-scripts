@@ -64,6 +64,7 @@ fi
 [[ -n "${API_KEY}" ]] || h_die "No API key: use --api-key-env VAR."
 
 swhcc_api_login
+swhcc_ensure_instance_rights
 swhcc_find_account "${ACCOUNT}" || h_die "Account '${ACCOUNT}' not found. Create it with create_account.sh."
 if swhcc_find_instance "${URL}"; then
     h_info "${URL} is already registered (ID ${REPLY})."

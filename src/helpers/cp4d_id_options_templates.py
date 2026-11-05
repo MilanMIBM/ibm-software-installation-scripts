@@ -1101,7 +1101,7 @@ default_swhub_control_center_setup = [
     {"key": "CONTROL_AUTODETECT_ROTATE_API_KEYS", "value": "false"},
     {"key": "CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS", "value": "600"},
     {"key": "CONTROL_ADMIN_USERS", "value": ""},
-    {"key": "CONTROL_ADMIN_ROLES", "value": "zen_administrator_role"},
+    {"key": "CONTROL_ADMIN_ROLES", "value": "zen_administrator_role,zen_resource_group_admin_role"},
     {"key": "CONTROL_ADMIN_EXCLUDE_USERS", "value": ""},
 ]
 

@@ -31,7 +31,8 @@ swhcc_api_ok() { [[ "${API_CODE:-}" == 2* ]]; }
 # The API's own error text, for messages.
 swhcc_api_error() {
     local detail
-    detail="$(print -r -- "${API_BODY:-}" | jq -r '[.errors[]? | .message // .code] | join("; ")' 2>/dev/null || true)"
+    detail="$(print -r -- "${API_BODY:-}" | jq -r '([.errors[]? | .message // .code] | join("; ")) as $errors
+        | if $errors != "" then $errors else (.message // .exception // "") end' 2>/dev/null || true)"
     print -r -- "HTTP ${API_CODE:-?}${detail:+: ${detail}}"
 }
 
@@ -95,26 +96,78 @@ swhcc_cluster_verified() {
     swhcc_find_cluster "${SWHCC_API_ENDPOINT}" && [[ "${SWHCC_CLUSTER_STATUS}" == verified ]]
 }
 
-# The browser step: the OAuth client uses grantMethod: prompt, so a person has to
-# approve the cluster-reader access. Sets REPLY to the page to open.
+# The OpenShift authorize page for this cluster. Sets REPLY.
 swhcc_cluster_oauth_url() {   # <cluster id>
     local invoker host
     invoker="$(cpdapi_urlencode 'clusters?action=register')"
-    host="$(cpdapi_urlencode "${CONTROL_CENTER_URL%/}")"
+    # A bare host: Control Center adds https:// itself when it builds the redirect URI.
+    host="${${CONTROL_CENTER_URL%/}#https://}"
+    host="$(cpdapi_urlencode "${host}")"
     cpdapi GET "${SWHCC_PLATFORM}/clusters/$1/oauth-authz-endpoints?invoker_uri=${invoker}&swh_host=${host}"
     swhcc_api_ok || h_die "Could not get the OAuth page ($(swhcc_api_error))."
     REPLY="$(print -r -- "${API_BODY}" | jq -r '.oauth_authz_url // empty')"
     [[ -n "${REPLY}" ]] || h_die "Control Center returned no OAuth page."
 }
 
-# Print the browser step, then wait for it. Fails if nobody approves in time.
+# One attempt at an OAuth code the way oc login does. Prints the redirect location.
+swhcc_oauth_challenge() {   # <authorize url> <user> <escaped password>
+    print -r -- "user = \"$2:$3\"" \
+        | curl -sk -K - -H 'X-CSRF-Token: 1' -o /dev/null -D - "$1" \
+        | tr -d '\r' | sed -n 's/^[Ll]ocation: //p' | tail -1
+}
+
+# Verify or refresh the cluster platform to platform, with no browser: get an OAuth
+# code the way oc login does, using the cluster login in the config, then hand it to
+# Control Center, which reads the capacity with it. Needs a username and password; a
+# token-only login cannot do this.
+# The client normally suits people: prompt asks each user once and remembers it, and
+# respondWithChallenges stays off because it rejects browsers, which would break the
+# Refresh data button. So it only changes for the seconds this takes. OpenShift takes
+# a moment to pick up the change, hence the retries.
+swhcc_cluster_auto_verify() {   # <cluster id>
+    local user="${OCP_USERNAME:-${CONTROL_OCP_USERNAME:-}}" password="${OCP_PASSWORD:-${CONTROL_OCP_PASSWORD:-}}"
+    [[ -n "${user}" && -n "${password}" ]] || { h_warn "No cluster username and password in the config."; return 1; }
+    swhcc_cluster_oauth_url "$1"
+    local authorize="${REPLY}" location parsed code state try
+    password="${password//\\/\\\\}"
+    password="${password//\"/\\\"}"
+    oc patch oauthclient "${CONTROL_OAUTH_CLIENT_ID}" --type=merge -p '{"respondWithChallenges":true,"grantMethod":"auto"}' >/dev/null \
+        || { h_warn "Could not update OAuth client ${CONTROL_OAUTH_CLIENT_ID}."; return 1; }
+    for try in 1 2 3 4 5 6; do
+        location="$(swhcc_oauth_challenge "${authorize}" "${user}" "${password}" || true)"
+        [[ "${location}" == *"code="* ]] && break
+        sleep 2
+    done
+    oc patch oauthclient "${CONTROL_OAUTH_CLIENT_ID}" --type=merge -p '{"respondWithChallenges":false,"grantMethod":"prompt"}' >/dev/null \
+        || h_warn "Could not restore OAuth client ${CONTROL_OAUTH_CLIENT_ID}; re-run step 1.4 or browser refreshes fail."
+    parsed="$(print -r -- "${location}" | python3 -c '
+import sys, urllib.parse
+query = urllib.parse.parse_qs(urllib.parse.urlsplit(sys.stdin.read().strip()).query)
+print(query.get("code", [""])[0], query.get("state", [""])[0])')"
+    code="${parsed%% *}"; state="${parsed#* }"
+    if [[ -z "${code}" ]]; then
+        h_warn "OpenShift returned no code for ${user}."
+        return 1
+    fi
+    local host="${${CONTROL_CENTER_URL%/}#https://}"
+    swhcc_api_secret PUT "${SWHCC_PLATFORM}/clusters/$1/capacities" \
+        "$(CODE="${code}" STATE="${state}" HOST="${host}" jq -n '{code: env.CODE, state: env.STATE, swh_host: env.HOST}')"
+    if ! swhcc_api_ok; then
+        h_warn "Control Center did not accept the code ($(swhcc_api_error))."
+        return 1
+    fi
+    h_info "Cluster capacity refreshed as ${user}."
+}
+
+# Verify the cluster without a person when the config allows it. Otherwise print the
+# page to approve by hand and wait for it. Fails if that does not happen in time.
 swhcc_wait_cluster_verified() {   # <timeout seconds>
     swhcc_cluster_verified && return 0
+    swhcc_cluster_auto_verify "${SWHCC_CLUSTER_ID}" && swhcc_cluster_verified && return 0
     swhcc_cluster_oauth_url "${SWHCC_CLUSTER_ID}"
-    h_info "One manual step: approve Control Center's read access to this cluster."
-    h_info "  1. Sign in to ${CONTROL_CENTER_URL} in your browser."
+    h_info "Could not verify the cluster automatically, so this needs a browser:"
+    h_info "  1. Sign in to ${CONTROL_CENTER_URL}."
     h_info "  2. In that browser, open: ${REPLY}"
-    h_info "  3. Log in to OpenShift and click 'Allow selected permissions'."
     (( $1 > 0 )) || return 1
     h_wait_for "$1" "the cluster to be verified" swhcc_cluster_verified
 }
@@ -189,6 +242,15 @@ print(json.dumps({"uid": str(claims["uid"]), "username": claims["username"]}))')
 
 # --- Instances ----------------------------------------------------------------
 
+# Registering an instance needs manage_namespaces, which zen_administrator_role does
+# not include. Give the signed-in user the account administrator role, and sign in
+# again so the token carries it.
+swhcc_ensure_instance_rights() {
+    swhcc_grant_roles "${CONTROL_CENTER_USERNAME}" zen_resource_group_admin_role \
+        || h_die "Could not give ${CONTROL_CENTER_USERNAME} the account administrator role."
+    swhcc_api_login
+}
+
 # Sets REPLY to the registered instance's ID; fails when it is not registered.
 swhcc_find_instance() {   # <url>
     cpdapi GET "${SWHCC_PLATFORM}/namespaces?limit=1000"
@@ -208,6 +270,7 @@ swhcc_register_instance() {   # <display name> <url> <username> <api key> <accou
     swhcc_api_secret POST "${SWHCC_PLATFORM}/namespaces?validate=true" "${check}"
     if ! swhcc_api_ok; then
         h_error "Control Center rejected '$1' ($(swhcc_api_error))."
+        [[ "${API_BODY}" == *"private IP"* ]] && h_warn "This route resolves to a private address inside the cluster: see x_debug_register_private_route_instances.sh in optional_install_swhub_control_center/."
         return 1
     fi
     body="$(NAME="$1" URL="$2" USER_NAME="$3" KEY="$4" ACCOUNT="$5" \
@@ -302,7 +365,7 @@ swhcc_grant_roles() {   # <user> <role>...
         fi
         h_info "${user}: adding ${(j:, :)missing}"
         [[ "${DRY_RUN:-false}" == true ]] && return 0
-        cpdapi PUT "${user_path}" "$(jq -n '{user_roles: $ARGS.positional}' --args ${current:#} "${missing[@]}")"
+        cpdapi PUT "${user_path}" "$(jq -n --arg user "${user}" '{username: $user, user_roles: $ARGS.positional}' --args ${current:#} "${missing[@]}")"
     fi
     swhcc_api_ok || { h_error "${user}: could not set roles ($(swhcc_api_error))."; return 1; }
 }
@@ -324,6 +387,6 @@ swhcc_revoke_roles() {   # <user> <role>...
     fi
     h_info "${user}: removing ${(j:, :)@}"
     [[ "${DRY_RUN:-false}" == true ]] && return 0
-    cpdapi PUT "${user_path}" "$(jq -n '{user_roles: $ARGS.positional}' --args "${keep[@]}")"
+    cpdapi PUT "${user_path}" "$(jq -n --arg user "${user}" '{username: $user, user_roles: $ARGS.positional}' --args "${keep[@]}")"
     swhcc_api_ok || { h_error "${user}: could not remove the roles ($(swhcc_api_error))."; return 1; }
 }

@@ -23,13 +23,14 @@ Options:
   --name NAME         Display name (default: CONTROL_CLUSTER_DISPLAY_NAME, else the
                       name in the API address)
   --description TEXT  Description
-  --wait SECONDS      How long to wait for the browser approval (default:
+  --wait SECONDS      How long to wait if it falls back to a browser (default:
                       CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS, else 600; 0 only prints it)
-  --reauthenticate    Print the approval page for a registered cluster. IBM asks for
-                      this when nodes are added or removed, and periodically without
-                      the privileged monitoring service.
+  --reauthenticate    Refresh a registered cluster's capacity. IBM asks for this when
+                      nodes are added or removed, and periodically without the
+                      privileged monitoring service.
 
-Approving Control Center's read access is the one step that needs a browser.
+This runs with no browser, using the cluster username and password in the config. A
+token-only login falls back to printing a page to approve.
 USAGE
 }
 
@@ -53,10 +54,11 @@ swhcc_cluster_facts
 
 if [[ "${REAUTH}" == true ]]; then
     swhcc_find_cluster "${SWHCC_API_ENDPOINT}" || h_die "${SWHCC_API_ENDPOINT} is not registered yet."
+    swhcc_cluster_auto_verify "${SWHCC_CLUSTER_ID}" && exit 0
     swhcc_cluster_oauth_url "${SWHCC_CLUSTER_ID}"
     h_info "Sign in to ${CONTROL_CENTER_URL}, then open this in the same browser:"
     h_info "  ${REPLY}"
-    exit 0
+    exit 1
 fi
 
 swhcc_ensure_cluster "${DESCRIPTION}"
