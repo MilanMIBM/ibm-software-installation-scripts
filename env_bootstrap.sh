@@ -63,6 +63,9 @@ fi
 #      script's arguments; removed from "$@" before the script parses them.
 #   2. ENV_TARGET from the environment / caller (e.g. ENV_TARGET=confluent ./x.sh).
 #   3. Inferred from the calling script's location:
+#        scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/,
+#        src/utilities/softwarehub_utils/softwarehub_control_center/
+#                                                             -> swhub_control_center
 #        scripts/install_cloud_pak_for_data/, src/utilities/  -> cpd
 #        src/utilities/kubecost_utils/  -> kubecost when configs/kubecost_config/
 #                                          kubecost_vars.sh exists, else cpd
@@ -95,6 +98,8 @@ if [[ -z "${ENV_TARGET:-}" ]]; then
     [[ "${_caller}" == "${_CP4D_REPO_ROOT}"/* ]] || _caller="${SCRIPT_DIR:-}/"
     _CP4D_ENV_TARGET_WHY="no target for this script's folder"
     case "${_caller#${_CP4D_REPO_ROOT}/}" in
+        scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/*|src/utilities/softwarehub_utils/softwarehub_control_center/*)
+            ENV_TARGET=swhub_control_center; _CP4D_ENV_TARGET_WHY="Software Hub Control Center script folder" ;;
         scripts/install_cloud_pak_for_data/*) ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder scripts/install_cloud_pak_for_data/" ;;
         # Kubecost: its own config when there is one, else the CP4D config as before.
         src/utilities/kubecost_utils/*)

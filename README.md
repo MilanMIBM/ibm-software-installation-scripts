@@ -131,6 +131,10 @@ Scripts run `./scripts/0.0_make_executable.sh` on their own if any `.sh` isn't e
 
 ---
 
+## Optional: Software Hub Control Center
+
+Control Center is a separate sub-install, not a component in the regular list. It runs the premium olm-utils image in its own container and workspace, so your regular cpd-cli setup is unaffected. Set `INSTALL_SWHUB_CONTROL_CENTER="true"` in `cpd_vars.sh` to run it at the end of the main install, or run it on its own. See [its README](scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/README.md).
+
 ## Useful extras
 
 ```bash

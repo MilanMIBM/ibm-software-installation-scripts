@@ -11,6 +11,9 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 #   prereq-operators  2.2  prerequisite operators
 #   softwarehub       3.1  IBM Software Hub
 #   cpd               4.0  CPD components
+#   swhub-control-center-config  writes its vars file if there is none yet
+#   swhub-control-center         optional sub-install, last, when cpd_vars.sh has
+#                                INSTALL_SWHUB_CONTROL_CENTER="true"
 # --from <step> resumes at a step, --skip leaves steps out, --list-steps shows
 # the plan (h_steps_parse in src/helpers/common_helpers.sh). The DO_* toggles
 # below still apply.
@@ -90,6 +93,24 @@ h_step softwarehub "${DO_INSTALL_SOFTWAREHUB}" \
 h_step cpd "${DO_INSTALL_CPD}" \
     "4.0 install cpd components" \
     "${SCRIPTS_ROOT}/4_install_components/4.0_full_step_4_installprocess-cpd.sh"
+
+
+# Optional Software Hub Control Center sub-install, once everything else is done.
+# It runs in its own container and workspace, and a failure here only warns: the
+# main install is already finished, and it can be re-run on its own.
+DO_SWHUB_CONTROL_CENTER="${DO_SWHUB_CONTROL_CENTER:-${INSTALL_SWHUB_CONTROL_CENTER:-false}}"
+SWHCC_DIR="${SCRIPTS_ROOT}/optional_install_swhub_control_center"
+if [[ "${DO_SWHUB_CONTROL_CENTER}" == true && ! -f "${CONFIG_DIR}/swhub_control_center/swhub_control_center_vars.sh" ]]; then
+    DO_SWHUB_CONTROL_CENTER_CONFIG=true
+else
+    DO_SWHUB_CONTROL_CENTER_CONFIG=false
+fi
+h_step --warn swhub-control-center-config "${DO_SWHUB_CONTROL_CENTER_CONFIG}" \
+    "derive swhub_control_center_vars.sh from cpd_vars.sh" \
+    "${SWHCC_DIR}/0_swhub_control_center_generate_config.sh" --from-cpd
+h_step --warn swhub-control-center "${DO_SWHUB_CONTROL_CENTER}" \
+    "optional Software Hub Control Center (INSTALL_SWHUB_CONTROL_CENTER in cpd_vars.sh)" \
+    env ENV_TARGET=swhub_control_center "${SWHCC_DIR}/full_installprocess-swhub_control_center.sh"
 
 h_steps_plan
 h_steps_run

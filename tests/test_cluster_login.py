@@ -35,10 +35,11 @@ LOCAL_CLUSTER_RE = re.compile(
     r"port-forward|policy|process|expose)\b"
     r"|(?:^|[\s;(|&`$\"])helm\s+(?:install|upgrade|uninstall|status|list|history|rollback)\b"
 )
-CPDM_LOGIN_RE = re.compile(r"eval\s+\"?\$\{CPDM_OC_LOGIN")
+# swhcc_login: the Control Center sub-install's login, for its own side container.
+CPDM_LOGIN_RE = re.compile(r"eval\s+\"?\$\{CPDM_OC_LOGIN|^\s*swhcc_login\b", re.MULTILINE)
 LOCAL_LOGIN_RE = re.compile(
     r"eval\s+\"?\$\{(?:CPDM_OC_LOGIN|OC_LOGIN|MIRROR_OC_LOGIN|CONCERT_REMOTE_HUB_OC_LOGIN)"
-    r"|\bocu_login\b|\bpreg_cluster_login\b|(?:^|\s)oc\s+login\b"
+    r"|\bocu_login\b|\bpreg_cluster_login\b|\bswhcc_(?:oc_)?login\b|(?:^|\s)oc\s+login\b"
 )
 
 # Runnable scripts that rely on a session someone else set up, and why.

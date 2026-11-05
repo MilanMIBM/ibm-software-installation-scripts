@@ -141,6 +141,9 @@ export COMPLETE_COMPONENT_LIST="${SOFTWARE_HUB},${CPD_COMPONENTS}"
 export IMAGE_GROUPS="{{ optional_images_str }}"
 {% endif -%}
 export UPDATE="{{ updating_components_checkbox.value | lower }}"
+# true: run the optional Software Hub Control Center sub-install at the very end of
+# full_swhub_x_cpd_installprocess.sh. Its settings are in swhub_control_center/.
+export INSTALL_SWHUB_CONTROL_CENTER="{{ (swhcc_enable_checkbox.value and swhcc_chain_checkbox.value) | lower }}"
 export INSTALL_OPTIONS="{{ install_options_addon.value | lower }}"
 {% if install_options_addon.value == true -%}
 export INSTALL_OPTIONS_FILE="{{ inst_options_filename }}"

@@ -112,12 +112,6 @@ else
     echo "[INFO] SETUP_INSTANCE_PROJECTS=false - not creating ${PROJECT_CPD_INST_OPERATORS:-} / ${PROJECT_CPD_INST_OPERANDS:-}."
 fi
 
-# Software Hub Control Center (operators: the project 2.0.2 passes to case-download)
-if SWHCC_OPERATORS_NS="$(cp4d_swhcc_operator_ns)"; then
-    setup_project "${SWHCC_OPERATORS_NS}"
-    setup_project "$(cp4d_swhcc_operand_ns)"
-fi
-
 # --- Additional non-standard projects
 # Add any extra namespaces here that are not covered by the standard CPD variables above.
 # Example:

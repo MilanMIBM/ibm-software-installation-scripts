@@ -100,12 +100,12 @@ _source_registry_overrides() {
 # so a script targeting a different cluster gets exactly the values in its own
 # config, with nothing from cpd_vars.sh able to override them. ENV_TARGET may be
 # a bare name (confluent -> confluent_vars.sh, looked up in every configs/*/
-# subfolder) or a path to a config file. Scripts normally get ENV_TARGET from
+# subfolder or subfolder of cp4d_config/) or a path to a config file. Scripts normally get ENV_TARGET from
 # env_bootstrap.sh, which infers it from the script's folder (cpd, confluent,
 # concert, datastax_mc) unless ENV_TARGET or --env-target is given.
 if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
     _target_file="${ENV_TARGET}"
-    for _d in "${CONFIGS_ROOT}"/*(N/); do
+    for _d in "${CONFIGS_ROOT}"/*(N/) "${CONFIG_DIR}"/*(N/); do
         [[ -f "${_target_file}" ]] && break
         _target_file="${_d}/${ENV_TARGET}_vars.sh"
         [[ -f "${_target_file}" ]] || _target_file="${_d}/${ENV_TARGET}"
@@ -115,6 +115,7 @@ if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
         echo "[ERROR] ENV_TARGET='${ENV_TARGET}' does not resolve to a config file." >&2
         echo "[ERROR] Tried: ${ENV_TARGET}, ${CONFIGS_ROOT}/*/${ENV_TARGET}_vars.sh, ${CONFIGS_ROOT}/*/${ENV_TARGET}" >&2
         [[ "${ENV_TARGET}" == datastax_mc ]] && echo "[ERROR] Create it with scripts/install_datastax_mc_standalone/0_initial_setup/0.0_generate_datastax_mc_config.sh --empty (or --from-cpd)" >&2
+        [[ "${ENV_TARGET}" == swhub_control_center ]] && echo "[ERROR] Create it with scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/0_swhub_control_center_generate_config.sh or the softwarehub_cp4d_vars_generation.py notebook." >&2
         return 1 2>/dev/null || exit 1
     fi
 

@@ -22,9 +22,6 @@ h_steps_parse --strict "$@"
 _components=",${SOFTWARE_HUB:-},${CPD_COMPONENTS:-},"
 [[ "${_components// /}" == *",ccs,"* ]] && DO_CCS_CR=true || DO_CCS_CR=false
 unset _components
-# Optional: Software Hub Control Center, only when ibm_swhcc is listed.
-source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
-cp4d_has_component ibm_swhcc && DO_CONTROL_CENTER=true || DO_CONTROL_CENTER=false
 
 # Each step only warns when it fails, so a benign "already installed" failure in
 # one step still lets the rest proceed.
@@ -35,7 +32,5 @@ h_step --warn admission-controller true "3.3.2 admission controller"      "${CUR
 h_step --warn entitlements         true "3.4 apply entitlements"          "${CURRENT_DIR}/3.4_apply_entitlements.sh"
 h_step --warn ccs-cr               "${DO_CCS_CR}" "3.5 create ccs-cr if missing (ccs in SOFTWARE_HUB / CPD_COMPONENTS)" \
     "${CURRENT_DIR}/3.5_create_ccs_cr_if_missing.sh"
-h_step --warn control-center       "${DO_CONTROL_CENTER}" "3.6 Software Hub Control Center (ibm_swhcc in COMPLETE_COMPONENT_LIST)" \
-    "${CURRENT_DIR}/3.6_setup_software_hub_control_center.sh"
 h_steps_plan
 h_steps_run

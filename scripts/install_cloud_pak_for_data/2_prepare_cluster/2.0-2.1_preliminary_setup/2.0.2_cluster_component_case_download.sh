@@ -30,9 +30,13 @@ eval "${CPDM_OC_LOGIN}"
 
 COMPONENTS=${COMPLETE_COMPONENT_LIST}
 
-SWHCC_FLAG=()
-if SWHCC_OPERATORS_NS="$(cp4d_swhcc_operator_ns)"; then
-    SWHCC_FLAG=(--swhcc_operator_ns=${SWHCC_OPERATORS_NS})
+# Control Center has its own sub-install and CASE download. An older config may
+# still list it, which case-download would refuse without --swhcc_operator_ns.
+if cp4d_has_component ibm_swhcc; then
+    echo "[WARN] Leaving ibm_swhcc out: use INSTALL_SWHUB_CONTROL_CENTER and optional_install_swhub_control_center/ instead." >&2
+    _components=(${(s:,:)COMPONENTS})
+    COMPONENTS="${(j:,:)_components:#ibm_swhcc}"
+    unset _components
 fi
 
 cpd-cli manage case-download \
@@ -42,7 +46,6 @@ cpd-cli manage case-download \
     --operator_ns=${PROJECT_CPD_INST_OPERATORS} \
     --cluster_resources=true \
     --from_oci=${CP_OPEN_DOWNLOAD} \
-    "${SWHCC_FLAG[@]}" \
     "${PATCH_FLAG[@]}"
     
 eval "${OC_LOGIN}"

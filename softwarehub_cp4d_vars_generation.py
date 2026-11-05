@@ -32,11 +32,17 @@ def _():
         default_project_naming_conventions,
         default_private_registry_setup,
         default_local_registry_setup,
+        default_swhub_control_center_separate_cluster,
+        default_swhub_control_center_setup,
         image_group_id_records,
     )
     from src.helpers.marimo_sortablekv import sortable_kv
     from src.helpers.jinja2_template_rendering_helpers import (
         render_template_from_environment,
+    )
+    from src.helpers.swhub_control_center_config_render import (
+        render_swhcc_vars,
+        write_vars_file,
     )
 
     return (
@@ -45,9 +51,13 @@ def _():
         default_local_registry_setup,
         default_private_registry_setup,
         default_project_naming_conventions,
+        default_swhub_control_center_separate_cluster,
+        default_swhub_control_center_setup,
         image_group_id_records,
+        render_swhcc_vars,
         render_template_from_environment,
         sortable_kv,
+        write_vars_file,
     )
 
 
@@ -281,6 +291,12 @@ def _():
         "cpd_admin_username": "**Preselect your cp4d admin username:**",
         "review_and_save": "**Review or alter your config and save it and you're good to go!**",
         "include_install_options": "**Do you want to include customized install options?**",
+        "swhcc_enable": "Set up **IBM Software Hub Control Center**? *Optional, needs IBM Software Hub Premium.*",
+        "swhcc_chain": "Install it at the **end of the main install**? *Otherwise run its own full install script.*",
+        "swhcc_autodetect": "**Auto-detect** the Software Hub instances on the cluster and add them? *One browser approval is still needed.*",
+        "swhcc_cluster_admins": "Make all OpenShift **cluster-admins** Control Center admins? *Or list specific users in CONTROL_ADMIN_USERS below.*",
+        "swhcc_cluster": "**Where does Control Center run?**",
+        "swhcc_oauth_secret": "**OAuth client secret:**",
     }
     return (widget_labels,)
 
@@ -407,6 +423,173 @@ def _(
     )
     component_specs_accordion
     return
+
+
+@app.cell
+def _(widget_labels):
+    swhcc_enable_checkbox = mo.ui.checkbox(
+        label=widget_labels.get("swhcc_enable"), value=False
+    )
+    return (swhcc_enable_checkbox,)
+
+
+@app.cell
+def _(widget_labels):
+    swhcc_chain_checkbox = mo.ui.checkbox(
+        label=widget_labels.get("swhcc_chain"), value=True
+    )
+    return (swhcc_chain_checkbox,)
+
+
+@app.cell
+def _(widget_labels):
+    swhcc_autodetect_checkbox = mo.ui.checkbox(
+        label=widget_labels.get("swhcc_autodetect"), value=True
+    )
+    return (swhcc_autodetect_checkbox,)
+
+
+@app.cell
+def _(widget_labels):
+    swhcc_cluster_admins_checkbox = mo.ui.checkbox(
+        label=widget_labels.get("swhcc_cluster_admins"), value=True
+    )
+    return (swhcc_cluster_admins_checkbox,)
+
+
+@app.cell
+def _(widget_labels):
+    swhcc_cluster_select = mo.ui.dropdown(
+        label=widget_labels.get("swhcc_cluster"),
+        options={
+            "Same cluster as Software Hub (Default)": "same",
+            "A different cluster": "different",
+        },
+        value="Same cluster as Software Hub (Default)",
+        allow_select_none=False,
+        full_width=True,
+    )
+    return (swhcc_cluster_select,)
+
+
+@app.cell
+def _(widget_labels):
+    swhcc_oauth_secret_input = mo.ui.text(
+        label=widget_labels.get("swhcc_oauth_secret"),
+        value=uuid.uuid4().hex,
+        kind="password",
+        full_width=False,
+    )
+    return (swhcc_oauth_secret_input,)
+
+
+@app.cell
+def _(default_swhub_control_center_setup, sortable_kv):
+    swhcc_setup_records = sortable_kv(
+        label="Control Center Specs:",
+        value=default_swhub_control_center_setup,
+        addable=False,
+        removable=False,
+        editable=True,
+        movable=False,
+    )
+    return (swhcc_setup_records,)
+
+
+@app.cell
+def _(default_swhub_control_center_separate_cluster, sortable_kv):
+    swhcc_cluster_records = sortable_kv(
+        label="Control Center Cluster (use a token or a username and password):",
+        value=default_swhub_control_center_separate_cluster,
+        addable=False,
+        removable=False,
+        editable=True,
+        movable=False,
+    )
+    return (swhcc_cluster_records,)
+
+
+@app.cell
+def _(
+    swhcc_autodetect_checkbox,
+    swhcc_chain_checkbox,
+    swhcc_cluster_admins_checkbox,
+    swhcc_cluster_records,
+    swhcc_cluster_select,
+    swhcc_enable_checkbox,
+    swhcc_oauth_secret_input,
+    swhcc_setup_records,
+    widget_width,
+):
+    # The accordion only appears once the checkbox is selected.
+    _different = swhcc_cluster_select.value == "different"
+    _accordion = ""
+    if swhcc_enable_checkbox.value:
+        _accordion = mo.accordion(
+            items={
+                "*Software Hub Control Center* ***(optional)***": mo.vstack(
+                    [
+                        swhcc_chain_checkbox,
+                        swhcc_autodetect_checkbox,
+                        swhcc_cluster_admins_checkbox,
+                        swhcc_cluster_select.style({"width": widget_width}),
+                        swhcc_setup_records,
+                        swhcc_cluster_records if _different else "",
+                        swhcc_oauth_secret_input,
+                    ],
+                    gap=1,
+                )
+            },
+            multiple=True,
+        )
+    mo.vstack([swhcc_enable_checkbox.center(), _accordion], gap=1)
+    return
+
+
+@app.cell
+def _(
+    cp4d_patch_input,
+    cp4d_version_input,
+    swhcc_autodetect_checkbox,
+    swhcc_cluster_admins_checkbox,
+    swhcc_cluster_records,
+    swhcc_cluster_select,
+    swhcc_oauth_secret_input,
+    swhcc_setup_records,
+):
+    _setup = records_to_dict(swhcc_setup_records.value.get("value"))
+    _cluster = records_to_dict(swhcc_cluster_records.value.get("value"))
+    swhcc_settings = {
+        "cluster_mode": swhcc_cluster_select.value,
+        "version": cp4d_version_input.value,
+        "patch_id": cp4d_patch_input.value,
+        "operators_project": _setup.get("CONTROL_PROJECT_OPERATORS"),
+        "operands_project": _setup.get("CONTROL_PROJECT_OPERANDS"),
+        "premium_tag": _setup.get("CONTROL_OLM_UTILS_TAG"),
+        "oauth_client_id": _setup.get("CONTROL_OAUTH_CLIENT_ID"),
+        "oauth_secret": swhcc_oauth_secret_input.value,
+        "autodetect": str(swhcc_autodetect_checkbox.value).lower(),
+        "cluster_display_name": _setup.get("CONTROL_CLUSTER_DISPLAY_NAME"),
+        "account_name": _setup.get("CONTROL_AUTODETECT_ACCOUNT_NAME"),
+        "account_cpu": _setup.get("CONTROL_AUTODETECT_ACCOUNT_CPU"),
+        "account_memory_gi": _setup.get("CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI"),
+        "rotate_api_keys": _setup.get("CONTROL_AUTODETECT_ROTATE_API_KEYS"),
+        "verify_wait_seconds": _setup.get("CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS"),
+        "add_cluster_admins": str(swhcc_cluster_admins_checkbox.value).lower(),
+        "admin_users": _setup.get("CONTROL_ADMIN_USERS"),
+        "admin_roles": _setup.get("CONTROL_ADMIN_ROLES"),
+        "admin_exclude_users": _setup.get("CONTROL_ADMIN_EXCLUDE_USERS"),
+        "ocp_url": _cluster.get("CONTROL_OCP_URL"),
+        "ocp_username": _cluster.get("CONTROL_OCP_USERNAME"),
+        "ocp_password": _cluster.get("CONTROL_OCP_PASSWORD"),
+        "ocp_token": _cluster.get("CONTROL_OCP_TOKEN"),
+        "image_arch": _cluster.get("CONTROL_IMAGE_ARCH"),
+        "stg_block": _cluster.get("CONTROL_STG_CLASS_BLOCK"),
+        "stg_file": _cluster.get("CONTROL_STG_CLASS_FILE"),
+        "license_project": _cluster.get("CONTROL_PROJECT_LICENSE_SERVICE"),
+        "scheduler_project": _cluster.get("CONTROL_PROJECT_SCHEDULING_SERVICE"),
+    }
+    return (swhcc_settings,)
 
 
 @app.cell
@@ -946,11 +1129,42 @@ def _(rendered_variables_file_cpd):
 
 
 @app.cell
-def _(cpd_vars_template_editor, inst_options_template_editor, save_file_stack):
+def _(render_swhcc_vars, run_button, swhcc_enable_checkbox, swhcc_settings):
+    rendered_variables_file_swhcc = (
+        render_swhcc_vars(swhcc_settings)
+        if run_button.value and swhcc_enable_checkbox.value
+        else ""
+    )
+    return (rendered_variables_file_swhcc,)
+
+
+@app.cell
+def _(rendered_variables_file_swhcc, swhcc_enable_checkbox):
+    swhcc_vars_template_editor = mo.ui.code_editor(
+        label="> **Edit your swhub_control_center_vars.sh file template.** \n",
+        value=rendered_variables_file_swhcc,
+        language="bash",
+        show_copy_button=True,
+        theme="dark",
+        max_height=1000,
+        disabled=(not swhcc_enable_checkbox.value),
+    )
+    return (swhcc_vars_template_editor,)
+
+
+@app.cell
+def _(
+    cpd_vars_template_editor,
+    inst_options_template_editor,
+    save_file_stack,
+    swhcc_enable_checkbox,
+    swhcc_vars_template_editor,
+):
     config_stack_cpd = mo.vstack(
         [
             cpd_vars_template_editor,
             inst_options_template_editor,
+            swhcc_vars_template_editor if swhcc_enable_checkbox.value else "",
             save_file_stack,
         ]
     )
@@ -998,10 +1212,23 @@ def _(cpd_vars_filename, cpd_vars_template_editor):
 
 
 @app.cell
+def _(swhcc_enable_checkbox, swhcc_vars_template_editor):
+    save_config_swhcc = mo.download(
+        data=swhcc_vars_template_editor.value.encode("utf-8"),
+        filename="swhub_control_center_vars.sh",
+        mimetype="application/x-sh",
+        label="**Save your swhub_control_center_vars.sh file**",
+        disabled=(not swhcc_enable_checkbox.value),
+    )
+    return (save_config_swhcc,)
+
+
+@app.cell
 def _(
     name_variable_file_cpd,
     save_config_cpd,
     save_config_inst_options,
+    save_config_swhcc,
     save_to_config_dir_button,
 ):
     save_file_stack = mo.hstack(
@@ -1009,6 +1236,7 @@ def _(
             name_variable_file_cpd,
             save_config_cpd,
             save_config_inst_options,
+            save_config_swhcc,
             save_to_config_dir_button,
         ],
         justify="space-around",
@@ -1105,8 +1333,13 @@ def _(
     inst_options_filename,
     inst_options_template_editor,
     install_options_addon,
+    render_swhcc_vars,
     render_template_from_environment,
     save_to_config_dir_button,
+    swhcc_enable_checkbox,
+    swhcc_settings,
+    swhcc_vars_template_editor,
+    write_vars_file,
 ):
     # Save what is in the editors so manual edits are kept; only fall back to
     # rendering the templates when "Generate" has not been clicked yet.
@@ -1138,6 +1371,17 @@ def _(
             with open(_inst_opts_path, "w") as _f:
                 _f.write(_inst_opts_content)
             _saved.append(_inst_opts_path)
+
+        # In its own subfolder, so the regular install never loads it.
+        if swhcc_enable_checkbox.value:
+            _swhcc_path = os.path.join(
+                _config_dir, "swhub_control_center", "swhub_control_center_vars.sh"
+            )
+            write_vars_file(
+                _swhcc_path,
+                swhcc_vars_template_editor.value or render_swhcc_vars(swhcc_settings),
+            )
+            _saved.append(_swhcc_path)
 
         _save_result = mo.callout(
             mo.md(

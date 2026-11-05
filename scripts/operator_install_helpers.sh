@@ -404,25 +404,6 @@ cp4d_has_component() {
 }
 
 # -----------------------------------------------------------------------------
-# cp4d_swhcc_operator_ns / cp4d_swhcc_operand_ns
-# -----------------------------------------------------------------------------
-# Echo the Software Hub Control Center projects when ibm_swhcc is in
-# ${COMPLETE_COMPONENT_LIST} (cpd_vars.sh or the caller's environment win):
-#   operators  ${PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS}, else cpd-swhub-center
-#   operands   ${PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS}, else cpd-swhub-center-operands
-# `cpd-cli manage case-download` refuses ibm_swhcc without --swhcc_operator_ns,
-# and setup-control-center takes both. Echo nothing and return 1 when ibm_swhcc
-# is not selected.
-cp4d_swhcc_operator_ns() {
-    cp4d_has_component ibm_swhcc || return 1
-    echo "${PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS:-cpd-swhub-center}"
-}
-cp4d_swhcc_operand_ns() {
-    cp4d_has_component ibm_swhcc || return 1
-    echo "${PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS:-cpd-swhub-center-operands}"
-}
-
-# -----------------------------------------------------------------------------
 # cp4d_olm_utils_is_premium
 # -----------------------------------------------------------------------------
 # True when ${OLM_UTILS_IMAGE} is the IBM Software Hub Premium olm-utils image

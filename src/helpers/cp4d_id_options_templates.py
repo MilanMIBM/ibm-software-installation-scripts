@@ -28,7 +28,7 @@ cp4d_component_id_options = [
     "ibm-cert-manager",
     "ibm-databand",
     "ibm-streamsets-sdi",
-    "ibm_swhcc",
+    # "ibm_swhcc",  # optional sub-install: see the notebook's Control Center section
     "ikc_premium",
     "ikc_standard",
     "informix_cp4d",
@@ -142,7 +142,8 @@ cp4d_component_id_records = [
         "component_name": "StreamSets WatsonX Data Integration",
         "component_id": "ibm-streamsets-sdi",
     },
-    {"component_name": "IBM Software Hub Control Center", "component_id": "ibm_swhcc"},
+    # Optional sub-install: see the notebook's Control Center section
+    # {"component_name": "IBM Software Hub Control Center", "component_id": "ibm_swhcc"},
     {"component_name": "IBM Knowledge Catalog Premium", "component_id": "ikc_premium"},
     {
         "component_name": "IBM Knowledge Catalog Standard",
@@ -1082,8 +1083,39 @@ default_project_naming_conventions = [
     {"key": "PROJECT_SCHEDULING_SERVICE", "value": "ibm-scheduler"},
     {"key": "PROJECT_IBM_EVENTS", "value": "ibm-knative-events"},
     {"key": "PROJECT_PRIVILEGED_MONITORING_SERVICE", "value": "ibm-cpd-privileged"},
-    {"key": "PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS", "value": "cpd-swhub-center"},
-    {"key": "PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS", "value": "cpd-swhub-center-operands"},
+    # Now CONTROL_PROJECT_* in swhub_control_center_vars.sh:
+    # {"key": "PROJECT_SW_HUB_CONTROL_CENTER_OPERATORS", "value": "cpd-swhub-center"},
+    # {"key": "PROJECT_SW_HUB_CONTROL_CENTER_OPERANDS", "value": "cpd-swhub-center-operands"},
+]
+
+# Optional Software Hub Control Center sub-install (swhub_control_center_vars.sh)
+default_swhub_control_center_setup = [
+    {"key": "CONTROL_PROJECT_OPERATORS", "value": "cpd-swhub-center"},
+    {"key": "CONTROL_PROJECT_OPERANDS", "value": "cpd-swhub-center-operands"},
+    {"key": "CONTROL_OLM_UTILS_TAG", "value": "5.4.0"},
+    {"key": "CONTROL_OAUTH_CLIENT_ID", "value": "ibm-software-hub-cc"},
+    {"key": "CONTROL_CLUSTER_DISPLAY_NAME", "value": ""},
+    {"key": "CONTROL_AUTODETECT_ACCOUNT_NAME", "value": "software-hub-instances"},
+    {"key": "CONTROL_AUTODETECT_ACCOUNT_CPU", "value": ""},
+    {"key": "CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI", "value": ""},
+    {"key": "CONTROL_AUTODETECT_ROTATE_API_KEYS", "value": "false"},
+    {"key": "CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS", "value": "600"},
+    {"key": "CONTROL_ADMIN_USERS", "value": ""},
+    {"key": "CONTROL_ADMIN_ROLES", "value": "zen_administrator_role"},
+    {"key": "CONTROL_ADMIN_EXCLUDE_USERS", "value": ""},
+]
+
+# Only when Control Center runs on a different cluster from its instances
+default_swhub_control_center_separate_cluster = [
+    {"key": "CONTROL_OCP_URL", "value": "<insert_api_server_url>"},
+    {"key": "CONTROL_OCP_USERNAME", "value": "kubeadmin"},
+    {"key": "CONTROL_OCP_PASSWORD", "value": "<insert_password>"},
+    {"key": "CONTROL_OCP_TOKEN", "value": ""},
+    {"key": "CONTROL_IMAGE_ARCH", "value": "amd64"},
+    {"key": "CONTROL_STG_CLASS_BLOCK", "value": "ocs-storagecluster-ceph-rbd"},
+    {"key": "CONTROL_STG_CLASS_FILE", "value": "ocs-storagecluster-cephfs"},
+    {"key": "CONTROL_PROJECT_LICENSE_SERVICE", "value": "ibm-licensing"},
+    {"key": "CONTROL_PROJECT_SCHEDULING_SERVICE", "value": "ibm-cpd-scheduler"},
 ]
 
 default_private_registry_setup = [

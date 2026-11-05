@@ -1,0 +1,144 @@
+#===============================================================================
+# IBM Software Hub Control Center installation variables
+#===============================================================================
+# Read only by scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/.
+# It lives in configs/cp4d_config/swhub_control_center/ so the regular install never
+# loads it. Holds credentials: keep it chmod 700. One file per cluster - Control
+# Center installs exactly once per cluster.
+# https://www.ibm.com/docs/en/software-hub/5.4.x?topic=center-setting-up-installation-environment-variables-control
+
+{% if has_cpd_vars %}
+# ------------------------------------------------------------------------------
+# IBM Software Hub installation variables
+# ------------------------------------------------------------------------------
+# VERSION, PATCH_ID, UPDATE, IBM_ENTITLEMENT_KEY, the image pull settings{% if cluster_mode == "same" %}, the cluster
+# login and the storage classes{% endif %} follow cpd_vars.sh.
+
+_SWHCC_VARS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "${_SWHCC_VARS_DIR}/../cpd_vars.sh"
+[ -f "${_SWHCC_VARS_DIR}/../registry_overrides.sh" ] && source "${_SWHCC_VARS_DIR}/../registry_overrides.sh"
+unset _SWHCC_VARS_DIR
+{% else %}
+# ------------------------------------------------------------------------------
+# IBM Software Hub release and images
+# ------------------------------------------------------------------------------
+# No cpd_vars.sh was found, so these are set here. PATCH_ID picks the patch Control
+# Center installs at: match the Software Hub instances it monitors.
+
+export VERSION="{{ version | sh }}"
+export PATCH_ID="{{ patch_id | sh }}"
+export UPDATE="false"
+export IBM_ENTITLEMENT_KEY=""
+export IMAGE_PULL_SECRET="pull-secret"
+export IMAGE_PULL_PREFIX="icr.io"
+{% endif %}
+
+# ------------------------------------------------------------------------------
+# Control Center cluster
+# ------------------------------------------------------------------------------
+# same = on the cluster in cpd_vars.sh; different = a cluster of its own, where the
+# sub-install also adds the License Service and the scheduling service.
+
+export CONTROL_CLUSTER_MODE="{{ cluster_mode }}"
+{% if cluster_mode == "same" %}
+export CONTROL_OCP_URL="${OCP_URL}"
+export CONTROL_IMAGE_ARCH="${IMAGE_ARCH}"
+export CONTROL_SERVER_ARGUMENTS="${SERVER_ARGUMENTS}"
+export CONTROL_LOGIN_ARGUMENTS="${LOGIN_ARGUMENTS}"
+{% else %}
+export CONTROL_OCP_URL="{{ ocp_url | sh }}"
+export CONTROL_IMAGE_ARCH="{{ image_arch | sh }}"
+{% if ocp_token %}
+export CONTROL_OCP_TOKEN="{{ ocp_token | sh }}"
+export CONTROL_LOGIN_ARGUMENTS="--token=${CONTROL_OCP_TOKEN}"
+{% else %}
+export CONTROL_OCP_USERNAME="{{ ocp_username | sh }}"
+export CONTROL_OCP_PASSWORD="{{ ocp_password | sh }}"
+export CONTROL_LOGIN_ARGUMENTS="--username=${CONTROL_OCP_USERNAME} --password=${CONTROL_OCP_PASSWORD}"
+{% endif %}
+export CONTROL_SERVER_ARGUMENTS="--server=${CONTROL_OCP_URL}"
+{% endif %}
+export CONTROL_CPDM_OC_LOGIN="cpd-cli manage login-to-ocp ${CONTROL_SERVER_ARGUMENTS} ${CONTROL_LOGIN_ARGUMENTS}"
+export CONTROL_OC_LOGIN="oc login ${CONTROL_SERVER_ARGUMENTS} ${CONTROL_LOGIN_ARGUMENTS}"
+
+# ------------------------------------------------------------------------------
+# Control Center storage
+# ------------------------------------------------------------------------------
+
+{% if cluster_mode == "same" %}
+export CONTROL_STG_CLASS_BLOCK="${STG_CLASS_BLOCK}"
+export CONTROL_STG_CLASS_FILE="${STG_CLASS_FILE}"
+{% else %}
+export CONTROL_STG_CLASS_BLOCK="{{ stg_block | sh }}"
+export CONTROL_STG_CLASS_FILE="{{ stg_file | sh }}"
+{% endif %}
+
+# ------------------------------------------------------------------------------
+# Control Center projects
+# ------------------------------------------------------------------------------
+# Must not be shared with any other software, including Software Hub instances.
+
+{% if cluster_mode != "same" %}
+export CONTROL_PROJECT_LICENSE_SERVICE="{{ license_project | sh }}"
+export CONTROL_PROJECT_SCHEDULING_SERVICE="{{ scheduler_project | sh }}"
+{% endif %}
+export CONTROL_PROJECT_OPERATORS="{{ operators_project | sh }}"
+export CONTROL_PROJECT_OPERANDS="{{ operands_project | sh }}"
+
+# ------------------------------------------------------------------------------
+# Side-by-side cpd-cli
+# ------------------------------------------------------------------------------
+# setup-control-center only exists in the premium olm-utils image. It runs in a
+# container and workspace of its own, so the regular olm-utils-play-v4 container,
+# its login and ~/cpd-cli/work stay as they are. IBM publishes the premium image
+# under the release tag, which moves with each patch; the numbered patch tags stop
+# early. The install itself always lands on PATCH_ID through its patch metadata.
+
+export CONTROL_OLM_UTILS_IMAGE="cp.icr.io/cp/cpd/olm-utils-premium-v4:{{ premium_tag | sh }}.${CONTROL_IMAGE_ARCH}"
+export CONTROL_OLM_UTILS_CONTAINER="{{ container | sh }}"
+export CONTROL_CPD_CLI_WORKSPACE="${HOME}/{{ workspace_dir | sh }}"
+
+# ------------------------------------------------------------------------------
+# OAuth client
+# ------------------------------------------------------------------------------
+# Lets Control Center read cluster capacity data. Created on the Software Hub cluster.
+
+export CONTROL_OAUTH_CLIENT_ID="{{ oauth_client_id | sh }}"
+export CONTROL_OAUTH_SECRET="{{ oauth_secret | sh }}"
+
+# ------------------------------------------------------------------------------
+# Adding instances
+# ------------------------------------------------------------------------------
+# true: the full install ends with src/utilities/softwarehub_utils/
+# softwarehub_control_center/autodetect_instances.sh, which registers this cluster
+# and every Software Hub instance on it. Instances go into the account below. Empty
+# CPU and memory (cores, Gi) give it all of the workers' allocatable capacity, which
+# leaves nothing to allocate to other accounts.
+# Instances need an API key. Generating one revokes the admin's current key and
+# breaks anything using it, so this only happens with ROTATE_API_KEYS=true; the
+# instance in cpd_vars.sh reuses CPD_APIKEY from cpd_instance_details.sh.
+# VERIFY_WAIT_SECONDS: how long to wait for the one browser approval step.
+
+export AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES="{{ autodetect }}"
+export CONTROL_CLUSTER_DISPLAY_NAME="{{ cluster_display_name | sh }}"
+export CONTROL_AUTODETECT_ACCOUNT_NAME="{{ account_name | sh }}"
+export CONTROL_AUTODETECT_ACCOUNT_CPU="{{ account_cpu | sh }}"
+export CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI="{{ account_memory_gi | sh }}"
+export CONTROL_AUTODETECT_ROTATE_API_KEYS="{{ rotate_api_keys | sh }}"
+export CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS="{{ verify_wait_seconds | sh }}"
+
+# ------------------------------------------------------------------------------
+# Administrators
+# ------------------------------------------------------------------------------
+# true: the full install gives every OpenShift cluster-admin on the Control Center
+# cluster CONTROL_ADMIN_ROLES, from any identity provider. Set CONTROL_ADMIN_USERS
+# (comma-separated) to give the roles to exactly those users instead of the
+# cluster-admins. Roles are comma-separated: zen_administrator_role is the Control
+# Center administrator, zen_resource_group_admin_role an account administrator.
+# Run src/utilities/softwarehub_utils/softwarehub_control_center/
+# toggle_cluster_admins.sh on|off to change this later.
+
+export CONTROL_ADD_CLUSTER_ADMINS="{{ add_cluster_admins }}"
+export CONTROL_ADMIN_USERS="{{ admin_users | sh }}"
+export CONTROL_ADMIN_ROLES="{{ admin_roles | sh }}"
+export CONTROL_ADMIN_EXCLUDE_USERS="{{ admin_exclude_users | sh }}"
