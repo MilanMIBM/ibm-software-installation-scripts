@@ -295,6 +295,7 @@ def _():
         "swhcc_chain": "Install it at the **end of the main install**? *Otherwise run its own full install script.*",
         "swhcc_autodetect": "**Auto-detect** the Software Hub instances on the cluster and add them? *A token-only cluster login needs one browser approval.*",
         "swhcc_cluster_admins": "Make all OpenShift **cluster-admins** Control Center admins? *Or list specific users in CONTROL_ADMIN_USERS below.*",
+        "swhcc_indicator": "Deploy the **other workloads indicator**, so the other workloads account shows requests and usage? *Unsupported by IBM.*",
         "swhcc_cluster": "**Where does Control Center run?**",
         "swhcc_oauth_secret": "**OAuth client secret:**",
     }
@@ -459,6 +460,14 @@ def _(widget_labels):
 
 @app.cell
 def _(widget_labels):
+    swhcc_indicator_checkbox = mo.ui.checkbox(
+        label=widget_labels.get("swhcc_indicator"), value=True
+    )
+    return (swhcc_indicator_checkbox,)
+
+
+@app.cell
+def _(widget_labels):
     swhcc_cluster_select = mo.ui.dropdown(
         label=widget_labels.get("swhcc_cluster"),
         options={
@@ -517,6 +526,7 @@ def _(
     swhcc_cluster_records,
     swhcc_cluster_select,
     swhcc_enable_checkbox,
+    swhcc_indicator_checkbox,
     swhcc_oauth_secret_input,
     swhcc_setup_records,
     widget_width,
@@ -532,6 +542,7 @@ def _(
                         swhcc_chain_checkbox,
                         swhcc_autodetect_checkbox,
                         swhcc_cluster_admins_checkbox,
+                        swhcc_indicator_checkbox,
                         swhcc_cluster_select.style({"width": widget_width}),
                         swhcc_setup_records,
                         swhcc_cluster_records if _different else "",
@@ -554,6 +565,7 @@ def _(
     swhcc_cluster_admins_checkbox,
     swhcc_cluster_records,
     swhcc_cluster_select,
+    swhcc_indicator_checkbox,
     swhcc_oauth_secret_input,
     swhcc_setup_records,
 ):
@@ -576,6 +588,10 @@ def _(
         "account_memory_gi": _setup.get("CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI"),
         "other_account_name": _setup.get("CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME"),
         "instance_quota": _setup.get("CONTROL_AUTODETECT_INSTANCE_QUOTA"),
+        "quota_headroom": _setup.get("CONTROL_AUTODETECT_QUOTA_HEADROOM"),
+        "indicator": str(swhcc_indicator_checkbox.value).lower(),
+        "indicator_project": _setup.get("CONTROL_OTHER_WORKLOADS_INDICATOR_PROJECT"),
+        "indicator_image": _setup.get("CONTROL_OTHER_WORKLOADS_INDICATOR_IMAGE"),
         "rotate_api_keys": _setup.get("CONTROL_AUTODETECT_ROTATE_API_KEYS"),
         "verify_wait_seconds": _setup.get("CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS"),
         "add_cluster_admins": str(swhcc_cluster_admins_checkbox.value).lower(),

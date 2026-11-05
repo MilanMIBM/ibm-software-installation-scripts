@@ -221,56 +221,104 @@ swhcc_cluster_capacity() {   # <cluster id> [account id]...
     done
 }
 
-# Reads a JSON array of pods. Prints the CPU and memory requests of the running and
-# pending ones, rounded up to whole cores and Gi.
-swhcc_sum_requests() {
+# Reads a JSON array of pods. Prints the CPU requests, memory requests (Gi), CPU limits
+# and memory limits (Gi) of the running and pending ones, unrounded.
+swhcc_sum_resources() {
     python3 -c '
-import json, math, sys
+import json, sys
 UNITS = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "m": 1e-3}
 def quantity(value):
     for unit, factor in UNITS.items():
         if value.endswith(unit):
             return float(value[:-len(unit)]) * factor
     return float(value)
-cpu = memory = 0
+total = {"requests": {"cpu": 0.0, "memory": 0.0}, "limits": {"cpu": 0.0, "memory": 0.0}}
 for pod in json.load(sys.stdin):
     if pod["status"].get("phase") not in ("Running", "Pending"):
         continue
     for container in pod["spec"]["containers"]:
-        requests = container.get("resources", {}).get("requests", {})
-        cpu += quantity(requests.get("cpu", "0"))
-        memory += quantity(requests.get("memory", "0"))
-print(math.ceil(round(cpu, 6)), math.ceil(round(memory / 2**30, 6)))'
+        for kind in total:
+            values = container.get("resources", {}).get(kind, {})
+            for resource in ("cpu", "memory"):
+                total[kind][resource] += quantity(values.get(resource, "0"))
+print("%.6f %.6f %.6f %.6f" % (total["requests"]["cpu"], total["requests"]["memory"] / 2**30,
+                               total["limits"]["cpu"], total["limits"]["memory"] / 2**30))'
 }
 
-# What everything outside Software Hub has reserved on the workers, such as storage,
-# monitoring and third-party agents: SWHCC_OTHER_CPU and SWHCC_OTHER_MEMORY_GI. Masters
-# are left out because Control Center's cluster capacity only counts workers.
-swhcc_other_reserved_capacity() {
-    local -a software_hub=("${(@f)$( { oc get zenservice -A -o json; oc get commonservice -A -o json; } \
+# A number divided by an optional factor, rounded up to a whole number.
+swhcc_ceil() {   # <number> [divide by]
+    awk -v x="$1" -v d="${2:-1}" 'BEGIN { y = x / d; r = int(y); if (y > r + 1e-9) r++; print r }'
+}
+
+# Quotas for instances sharing an account. Reads "id requests_cpu requests_memory
+# limits_cpu limits_memory" lines and prints "id cpu memory_gi". Each quota is at least
+# requests / headroom, so requests stay under the instance's 95% alert line and new pods
+# fit if enforcement is ever turned on. It grows to the instance's limits, and at most
+# to its share of the account by limits. Warns on stderr when the floors alone do not
+# fit the account.
+swhcc_plan_quotas() {   # <account cpu> <account memory gi> <headroom>
+    python3 -c '
+import math, sys
+cap = [float(sys.argv[1]), float(sys.argv[2])]
+headroom = float(sys.argv[3])
+rows = [line.split() for line in sys.stdin if line.strip()]
+quota = {row[0]: [0, 0] for row in rows}
+for k, name in ((0, "vCPU"), (1, "memory")):
+    requests = [float(row[1 + k]) for row in rows]
+    limits = [float(row[3 + k]) for row in rows]
+    floors = [math.ceil(r / headroom - 1e-9) for r in requests]
+    ceilings = [max(math.ceil(l - 1e-9), f) for l, f in zip(limits, floors)]
+    total = sum(limits)
+    shares = [math.floor(cap[k] * l / total) if total else f for l, f in zip(limits, floors)]
+    for row, f, c, s in zip(rows, floors, ceilings, shares):
+        quota[row[0]][k] = max(f, min(c, s))
+    if sum(floors) > cap[k]:
+        print(f"The instances need {sum(floors)} {name} of quota but the account holds {cap[k]:g}.", file=sys.stderr)
+for row in rows:
+    print(row[0], *quota[row[0]])' "$@"
+}
+
+# Projects that belong to the Software Hub instances, one per line: anything with a
+# ZenService or CommonService, plus the configured instance and shared component
+# projects. Control Center runs a ZenService and CommonService of its own, but is not
+# an instance, so its projects count as other workloads.
+swhcc_instance_projects() {
+    local -a projects=("${(@f)$( { oc get zenservice -A -o json; oc get commonservice -A -o json; } \
         | jq -r '.items[].metadata.namespace')}")
-    software_hub+=("${PROJECT_CPD_INST_OPERATORS:-}" "${PROJECT_CPD_INST_OPERANDS:-}" "${PROJECT_LICENSE_SERVICE:-}"
-                   "${PROJECT_SCHEDULING_SERVICE:-}" "${PROJECT_IBM_EVENTS:-}" "${PROJECT_PRIVILEGED_MONITORING_SERVICE:-}"
-                   "${CONTROL_PROJECT_OPERATORS}" "${CONTROL_PROJECT_OPERANDS}")
-    local masters totals
+    projects+=("${PROJECT_CPD_INST_OPERATORS:-}" "${PROJECT_CPD_INST_OPERANDS:-}" "${PROJECT_LICENSE_SERVICE:-}"
+               "${PROJECT_SCHEDULING_SERVICE:-}" "${PROJECT_IBM_EVENTS:-}" "${PROJECT_PRIVILEGED_MONITORING_SERVICE:-}")
+    local -a control_center=("${CONTROL_PROJECT_OPERATORS:-}" "${CONTROL_PROJECT_OPERANDS:-}")
+    print -rl -- ${${projects:#}:|control_center} | sort -u
+}
+
+# What everything outside the Software Hub instances has reserved on the workers: storage,
+# monitoring, third-party agents and Control Center itself. Sets SWHCC_OTHER_CPU and
+# SWHCC_OTHER_MEMORY_GI. Masters are left out because Control Center's cluster capacity
+# only counts workers.
+swhcc_other_reserved_capacity() {
+    local -a software_hub=("${(@f)$(swhcc_instance_projects)}")
+    local masters
     masters="$(oc get nodes -l '!node-role.kubernetes.io/worker' -o json | jq -c '[.items[].metadata.name]')"
-    totals="$(oc get pods -A -o json \
+    local -a values=(${=$(oc get pods -A -o json \
         | jq --argjson masters "${masters}" '$ARGS.positional as $skip | [.items[]
             | select((.metadata.namespace | IN($skip[])) | not)
             | select((.spec.nodeName // "") as $node | ($masters | index($node)) == null)]' --args ${software_hub:#} \
-        | swhcc_sum_requests)"
-    SWHCC_OTHER_CPU="${totals%% *}"
-    SWHCC_OTHER_MEMORY_GI="${totals##* }"
+        | swhcc_sum_resources)})
+    # Requests / 0.95, so a quota set to this allocation leaves room under the alert line.
+    SWHCC_OTHER_CPU="$(swhcc_ceil "${values[1]}" 0.95)"
+    SWHCC_OTHER_MEMORY_GI="$(swhcc_ceil "${values[2]}" 0.95)"
 }
 
 # What the instances have reserved, rounded up: SWHCC_CPU and SWHCC_MEMORY_GI. This
 # matches the requests Control Center reports for an instance, and works before it has
-# collected any metrics. Operator projects are not part of that figure.
+# collected any metrics. SWHCC_RESOURCES holds the unrounded requests and limits, as
+# swhcc_sum_resources prints them. Operator projects are not part of that figure.
 swhcc_reserved_capacity() {   # <project>...
-    local project totals
-    totals="$(for project in "$@"; do oc get pods -n "${project}" -o json; done | jq -s '[.[].items[]]' | swhcc_sum_requests)"
-    SWHCC_CPU="${totals%% *}"
-    SWHCC_MEMORY_GI="${totals##* }"
+    local project
+    SWHCC_RESOURCES="$(for project in "$@"; do oc get pods -n "${project}" -o json; done | jq -s '[.[].items[]]' | swhcc_sum_resources)"
+    local -a values=(${=SWHCC_RESOURCES})
+    SWHCC_CPU="$(swhcc_ceil "${values[1]}")"
+    SWHCC_MEMORY_GI="$(swhcc_ceil "${values[2]}")"
 }
 
 # --- Accounts -----------------------------------------------------------------
@@ -372,6 +420,46 @@ swhcc_sync_account_admins() {   # <account id>
     (( failed == 0 ))
 }
 
+# --- Private routes -------------------------------------------------------------
+
+# True when zen-core-api resolves the host to a private address, which Control Center
+# refuses for instance URLs.
+swhcc_route_is_private() {   # <host>
+    local pod address
+    pod="$(oc get pods -n "${CONTROL_PROJECT_OPERANDS}" -o name --field-selector=status.phase=Running | grep '/zen-core-api-' | head -1 || true)"
+    [[ -n "${pod}" ]] || h_die "No running zen-core-api pod in ${CONTROL_PROJECT_OPERANDS}."
+    address="$(oc exec -n "${CONTROL_PROJECT_OPERANDS}" -c zen-core-api-container "${pod}" -- getent ahostsv4 "$1" 2>/dev/null | awk 'NR == 1 {print $1}')"
+    [[ "${address}" == (10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|127.*) ]]
+}
+
+swhcc_remove_route_mapping() {
+    h_info "Removing the route mapping from zen-core-api"
+    oc patch deployment zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --type=merge \
+        -p '{"spec":{"template":{"spec":{"hostAliases":null}}}}' >/dev/null
+    oc rollout status deployment/zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --timeout=300s
+}
+
+# Run a command while zen-core-api resolves the hosts to a public IP, then always remove
+# the mapping. Unsupported by IBM, and restarts Control Center's API twice. The command
+# runs in a subshell, so variables it sets do not come back.
+swhcc_with_route_mapping() {   # <public ip> <host>... -- <command>...
+    local ip="$1" rc=0
+    shift
+    local -a hosts=()
+    while (( $# )) && [[ "$1" != -- ]]; do hosts+=("$1"); shift; done
+    shift
+    [[ "${ip}" != (10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|127.*|) ]] \
+        || h_die "'${ip}' is not a public address, so mapping to it would not help."
+    h_info "Mapping ${#hosts} route(s) to ${ip} on zen-core-api"
+    oc patch deployment zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --type=merge \
+        -p "$(jq -cn --arg ip "${ip}" '{spec: {template: {spec: {hostAliases: [{ip: $ip, hostnames: $ARGS.positional}]}}}}' --args "${hosts[@]}")" >/dev/null
+    trap 'swhcc_remove_route_mapping; exit 130' INT TERM
+    { oc rollout status deployment/zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --timeout=300s && ( "$@" ); } || rc=$?
+    trap - INT TERM
+    swhcc_remove_route_mapping
+    return "${rc}"
+}
+
 # --- Instances ----------------------------------------------------------------
 
 # Registering an instance needs manage_namespaces, which zen_administrator_role does
@@ -395,17 +483,20 @@ swhcc_find_instance() {   # <url>
 # An instance quota, in cores and Gi; -1 is unlimited. Control Center's account page
 # shows the sum of these as "allocated", so unlimited instances show as 0 there. It
 # only tracks usage: Enforce stays false, so nothing is limited.
+# PolicyType request: the instance measures the quota against requests, which is what
+# swhcc_plan_quotas sizes it for. The web client sends limit, which measures limits and
+# alerts as soon as they overcommit (290 vCPU of limits against a 139 quota here).
 swhcc_set_instance_quota() {   # <instance id> <cpu> <memory gi>
     cpdapi POST "${SWHCC_WATCHDOG}/instance/resources/policies" \
         "$(jq -n --arg id "$1" --argjson cpu "$2" --argjson memory "$3" '{InstanceID: $id, ID: "platform",
             Enforce: false, EnforcementSupported: false, Enable: true, Alert: false, Policies: {Quota: {
                 CPU: {Maximum: $cpu, Warning: -1, Unit: "c"}, Memory: {Maximum: $memory, Warning: -1, Unit: "Gi"},
-                GPU: {Maximum: -1, Warning: -1, Unit: "GPU"}, PolicyType: "limit"}}}')"
+                GPU: {Maximum: -1, Warning: -1, Unit: "GPU"}, PolicyType: "request"}}}')"
 }
 
 # Validate, save, then set the unlimited quota the web client sets by default. The
 # web client removes the instance when that last call fails, so this does too.
-swhcc_register_instance() {   # <display name> <url> <username> <api key> <account id>
+swhcc_register_instance() {   # <display name> <url> <username> <api key> <account id> [workload kind]
     local project="${${${2#https://}%%.*}#cpd-}" check body id
     check="$(NAME="${project}" URL="$2" USER_NAME="$3" KEY="$4" ACCOUNT="$5" \
         jq -n '{namespace_name: env.NAME, resource_group_id: env.ACCOUNT, instance_connection: {url: env.URL},
@@ -416,10 +507,10 @@ swhcc_register_instance() {   # <display name> <url> <username> <api key> <accou
         [[ "${API_BODY}" == *"private IP"* ]] && h_warn "This route resolves to a private address inside the cluster: see x_debug_register_private_route_instances.sh in optional_install_swhub_control_center/."
         return 1
     fi
-    body="$(NAME="$1" URL="$2" USER_NAME="$3" KEY="$4" ACCOUNT="$5" \
+    body="$(NAME="$1" URL="$2" USER_NAME="$3" KEY="$4" ACCOUNT="$5" KIND="${6:-SW_CORE_WL}" \
         jq -n '{namespace_name: env.NAME, resource_group_id: env.ACCOUNT,
                 instance_connection: {url: env.URL, username: env.USER_NAME},
-                instance_credentials: {api_key: env.KEY, username: env.USER_NAME}, workload_kind: "SW_CORE_WL"}')"
+                instance_credentials: {api_key: env.KEY, username: env.USER_NAME}, workload_kind: env.KIND}')"
     swhcc_api_secret POST "${SWHCC_PLATFORM}/namespaces" "${body}"
     if ! swhcc_api_ok; then
         h_error "Could not save '$1' ($(swhcc_api_error))."

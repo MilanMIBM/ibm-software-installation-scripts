@@ -68,9 +68,21 @@ Auto-detected instances go into `CONTROL_AUTODETECT_ACCOUNT_NAME`, and each run 
 
 `CONTROL_AUTODETECT_ACCOUNT_CPU` and `CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI` override either one. An allocation changed in the web client is overwritten on the next run unless you set these.
 
-A second account, `CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME`, holds what workloads outside Software Hub have reserved on the workers, such as `openshift-storage` and monitoring, rounded up. It uses `workload_kind: OTHER_WL`, and each run updates it. The first account gets the rest, so the two add up to the cluster. Software Hub operators, the License Service, the scheduling service and Control Center itself count as Software Hub. Leave the variable empty to turn this off.
+A second account, `CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME`, holds what workloads outside Software Hub have reserved on the workers, such as `openshift-storage` and monitoring, rounded up. It uses `workload_kind: OTHER_WL`, and each run updates it. The first account gets the rest, so the two add up to the cluster. The instances' operators, the License Service and the scheduling service count as Software Hub. Control Center itself counts as an other workload: it runs a ZenService of its own but is not an instance. Leave the variable empty to turn this off.
 
-Each instance also gets a quota, because the two pages count different things: Resource groups shows what accounts hold of the cluster, and an account's page shows what its instances hold of the account. With `CONTROL_AUTODETECT_INSTANCE_QUOTA=reserved`, the default, each run sets the quota to the instance's requests, rounded up. With `none` the instance stays unlimited, and the account page shows 0 allocated and a negative unused figure. The quota only tracks: enforcement stays off, so nothing is limited.
+Each instance also gets a quota, because the two pages count different things: Resource groups shows what accounts hold of the cluster, and an account's page shows what its instances hold of the account. Control Center writes the quota into the instance's own platform quota, which raises a critical alert once requests pass 95% of it, and would block new pods if anyone turned enforcement on. So with `CONTROL_AUTODETECT_INSTANCE_QUOTA=limits`, the default, each quota is at least requests ÷ `CONTROL_AUTODETECT_QUOTA_HEADROOM` (0.9), and grows to the instance's limits within its share of the account. `reserved` keeps it at that minimum, and `none` leaves the instance unlimited, which shows 0 allocated on the account page. The scripts never turn enforcement on.
+
+## Other workloads indicator
+
+Control Center only measures Software Hub instances, so `other-reserved-workloads` would show its allocation but no requests or usage. `x_debug_toggle_other_workloads_indicator.sh` in `optional_install_swhub_control_center/` deploys a small stand-in instance in `CONTROL_OTHER_WORKLOADS_INDICATOR_PROJECT` that reports what everything outside the instances reserves on the workers, including Control Center itself, and registers it in that account.
+
+```bash
+x_debug_toggle_other_workloads_indicator.sh status
+x_debug_toggle_other_workloads_indicator.sh off   # unregister, delete its project and cluster role
+x_debug_toggle_other_workloads_indicator.sh on
+```
+
+It is on by default (`CONTROL_OTHER_WORKLOADS_INDICATOR`), and the full install runs it after auto-detect. `on` and `off` also save the setting. It limits nothing and raises no alerts. Its service account can only list pods, nodes, volume claims and pod metrics. It answers Control Center's five calls, logs every request without credentials, and refuses anything without its key. It is unsupported by IBM, and registering it briefly maps its private route on `zen-core-api`.
 
 ## Not an IBM-published API
 

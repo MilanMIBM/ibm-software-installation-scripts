@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Stand-in Software Hub instance for Control Center's "other workloads" account.
 
-Control Center only measures registered Software Hub instances. It polls each one on
-four zen-watchdog endpoints, so it cannot show what storage, monitoring or third-party
+Control Center only measures registered Software Hub instances. It checks an instance
+on registration with GET /zen-data/v2/controlplane, which returns its project, then
+polls four zen-watchdog endpoints, so it cannot show what storage, monitoring or third-party
 agents reserve. This server answers those endpoints with the totals of every project
 outside Software Hub, so the reservation shows up in that account. It is an indicator
 only: nothing here limits or schedules anything.
@@ -14,6 +15,8 @@ without credentials, so unexpected calls from Control Center are easy to spot.
 Environment:
     INDICATOR_USERNAME, INDICATOR_API_KEY  the login Control Center was given
     EXCLUDE_PROJECTS                       extra Software Hub projects, comma-separated
+    INCLUDE_PROJECTS                       counted even with a ZenService, such as Control
+                                           Center's own projects, comma-separated
     QUOTA_CPU, QUOTA_MEMORY_GI             starting quota, until Control Center sends one
     PORT                                   default 8080
 """
@@ -67,17 +70,20 @@ class Kube:
             return []
 
 
-def collect(kube, extra_projects=(), own_project=""):
-    """Requests, limits, usage and volume capacity of everything outside Software Hub.
+def collect(kube, extra_projects=(), include_projects=()):
+    """Requests, limits, usage and volume capacity of everything outside the instances.
 
-    Software Hub means any project with a ZenService or CommonService, plus the extra
-    projects given, plus this one. Pods on nodes that are not workers are left out,
-    because Control Center's cluster capacity only counts workers.
+    An instance project is any project with a ZenService or CommonService, plus the
+    extra projects given, except the included ones: Control Center runs a ZenService of
+    its own but is not an instance. This indicator counts too. Pods on nodes that are
+    not workers are left out, because Control Center's cluster capacity only counts
+    workers.
     """
     skip = {item["metadata"]["namespace"]
             for path in ("/apis/zen.cpd.ibm.com/v1/zenservices", "/apis/operator.ibm.com/v3/commonservices")
             for item in kube.items(path)}
-    skip |= {p for p in extra_projects if p} | ({own_project} if own_project else set())
+    skip |= {p for p in extra_projects if p}
+    skip -= {p for p in include_projects if p}
     workers = {node["metadata"]["name"] for node in kube.items("/api/v1/nodes")
                if "node-role.kubernetes.io/worker" in node["metadata"].get("labels", {})}
 
@@ -136,8 +142,13 @@ def _gi(value):
     return value / 2**30
 
 
+def _r(value):
+    """3 decimals at most: the web client shows these figures unrounded."""
+    return round(value, 3)
+
+
 def _percent(used, maximum):
-    return used / maximum * 100 if maximum and maximum > 0 else 0
+    return _r(used / maximum * 100) if maximum and maximum > 0 else 0
 
 
 def overview(totals, policy, now):
@@ -148,13 +159,13 @@ def overview(totals, policy, now):
         "Resources": {
             "ResourcePlan": policy,
             "InUse": {
-                "CPU": {"Requests": totals["cpu_requests"], "Utilization": totals["cpu_usage"], "Capacity": 0,
-                        "Units": "c", "Limits": totals["cpu_limits"]},
-                "Memory": {"Requests": _gi(totals["memory_requests"]), "Utilization": _gi(totals["memory_usage"]),
-                           "Capacity": 0, "Units": "Gi", "Limits": _gi(totals["memory_limits"])},
+                "CPU": {"Requests": _r(totals["cpu_requests"]), "Utilization": _r(totals["cpu_usage"]), "Capacity": 0,
+                        "Units": "c", "Limits": _r(totals["cpu_limits"])},
+                "Memory": {"Requests": _r(_gi(totals["memory_requests"])), "Utilization": _r(_gi(totals["memory_usage"])),
+                           "Capacity": 0, "Units": "Gi", "Limits": _r(_gi(totals["memory_limits"]))},
                 "Network": {"TransmittedBps": 0, "ReceivedBps": 0, "Unit": "B/s"},
                 "GPU": {"Requests": 0, "Utilization": 0, "Capacity": 0, "Units": "unit", "Limits": 0},
-                "Volume": {"Capacity": totals["volume_bytes"] / 1e9, "Utilization": 0, "Units": "GB"},
+                "Volume": {"Capacity": _r(totals["volume_bytes"] / 1e9), "Utilization": 0, "Units": "GB"},
             },
             "Quota": {"PercentCPU": _percent(totals["cpu_requests"], quota["CPU"]["Maximum"]),
                       "PercentMemory": _percent(_gi(totals["memory_requests"]), quota["Memory"]["Maximum"]),
@@ -169,9 +180,9 @@ def overview(totals, policy, now):
 def policy_details(totals, policy):
     """GET /zen-watchdog/v3/resources/policies/platform."""
     details = dict(policy, Name="Platform",
-                   CPUUsage=totals["cpu_usage"], CPUAllocated=totals["cpu_requests"], CPULimit=totals["cpu_limits"],
-                   MemoryUsage=_gi(totals["memory_usage"]), MemoryAllocated=_gi(totals["memory_requests"]),
-                   MemoryLimit=_gi(totals["memory_limits"]), GPULimit=0)
+                   CPUUsage=_r(totals["cpu_usage"]), CPUAllocated=_r(totals["cpu_requests"]), CPULimit=_r(totals["cpu_limits"]),
+                   MemoryUsage=_r(_gi(totals["memory_usage"])), MemoryAllocated=_r(_gi(totals["memory_requests"])),
+                   MemoryLimit=_r(_gi(totals["memory_limits"])), GPULimit=0)
     return {"_messageCode_": "success", "message": "Success in getting quota details", "requestObj": details}
 
 
@@ -189,8 +200,8 @@ def log(message):
 
 
 class State:
-    def __init__(self, kube, extra_projects, own_project, policy):
-        self.kube, self.extra, self.own = kube, extra_projects, own_project
+    def __init__(self, kube, extra_projects, include_projects, policy, project=""):
+        self.kube, self.extra, self.include, self.project = kube, extra_projects, include_projects, project
         self.policy = policy
         self.lock = threading.Lock()
         self._totals, self._at = None, 0.0
@@ -198,7 +209,7 @@ class State:
     def totals(self):
         with self.lock:
             if self._totals is None or time.time() - self._at > CACHE_SECONDS:
-                self._totals, self._at = collect(self.kube, self.extra, self.own), time.time()
+                self._totals, self._at = collect(self.kube, self.extra, self.include), time.time()
             return self._totals
 
 
@@ -220,6 +231,8 @@ def make_handler(state, username, api_key):
                 return self._send(200, {"_messageCode_": "200", "message": "Server up and running"})
             if not authorized(self.headers.get("Authorization"), username, api_key):
                 return self._send(401, {"_messageCode_": "unauthorized", "message": "Invalid credentials"})
+            if self.command == "GET" and path == "/zen-data/v2/controlplane":
+                return self._send(200, {"message": "Success", "requestObj": state.project})
             if self.command == "GET" and path == "/zen-watchdog/v3/instance/overview":
                 return self._send(200, overview(state.totals(), state.policy, time.time()))
             if self.command == "GET" and path == "/zen-watchdog/v3/cluster/information":
@@ -250,11 +263,13 @@ def make_handler(state, username, api_key):
 def main():
     kube = Kube()
     extra = os.environ.get("EXCLUDE_PROJECTS", "").split(",")
+    include = os.environ.get("INCLUDE_PROJECTS", "").split(",")
     policy = default_policy(float(os.environ.get("QUOTA_CPU") or 0), float(os.environ.get("QUOTA_MEMORY_GI") or 0))
-    state = State(kube, extra, kube.namespace, policy)
+    state = State(kube, extra, include, policy, kube.namespace)
     handler = make_handler(state, os.environ.get("INDICATOR_USERNAME", ""), os.environ.get("INDICATOR_API_KEY", ""))
     port = int(os.environ.get("PORT", "8080"))
-    log(f"serving on :{port}, leaving out {len([p for p in extra if p])} configured projects and {kube.namespace}")
+    log(f"serving on :{port}, leaving out {len([p for p in extra if p])} configured projects, "
+        f"counting {len([p for p in include if p])} Control Center projects")
     ThreadingHTTPServer(("", port), handler).serve_forever()
 
 

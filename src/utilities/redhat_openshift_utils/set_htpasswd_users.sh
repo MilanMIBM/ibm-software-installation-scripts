@@ -62,6 +62,8 @@ set -euo pipefail
 #       --bcrypt-cost <n>          bcrypt cost for the hashes, 4-17 [10]
 #       --rollout-timeout <sec>    how long to wait for the login pods [300]
 #       --no-wait                  don't wait for the login pods to roll out
+#       --no-print-passwords       keep new passwords out of the output; they are
+#                                  only in the credentials file
 #       --secret-only              only write the htpasswd secret and the credentials
 #                                  file: no OAuth change, no identity linking or
 #                                  deletion, no rollout wait. Add the provider later
@@ -115,6 +117,7 @@ PASSWORD_LENGTH=""
 BCRYPT_COST=10
 ROLLOUT_TIMEOUT=300
 WAIT_ROLLOUT=true
+PRINT_PASSWORDS=true
 SECRET_ONLY=false
 IDP_ONLY=false
 REMOVE_IDP=false
@@ -140,6 +143,7 @@ while [[ $# -gt 0 ]]; do
         --bcrypt-cost)         BCRYPT_COST="${2:?--bcrypt-cost needs a number}"; shift 2 ;;
         --rollout-timeout)     ROLLOUT_TIMEOUT="${2:?--rollout-timeout needs seconds}"; shift 2 ;;
         --no-wait)             WAIT_ROLLOUT=false; shift ;;
+        --no-print-passwords)  PRINT_PASSWORDS=false; shift ;;
         --secret-only)         SECRET_ONLY=true; shift ;;
         --idp-only)            IDP_ONLY=true; shift ;;
         --remove-idp)          REMOVE_IDP=true; shift ;;
@@ -370,7 +374,7 @@ if [[ "${SECRET_ONLY}" == true ]]; then
         echo "[INFO] OAuth not changed: no '${IDP_NAME}' login yet. Re-run without --secret-only to add it."
     fi
     (( ${#REMOVED} > 0 )) && echo "[INFO] Pruned from the secret (their OpenShift users/identities kept): ${REMOVED[*]}"
-    (( ${#ISSUED} > 0 )) && {
+    (( ${#ISSUED} > 0 )) && [[ "${PRINT_PASSWORDS}" == true ]] && {
         echo "[INFO] New passwords (also in ${CREDENTIALS_FILE}):"
         for _u in "${ISSUED[@]}"; do
             printf '         %-40s %s\n' "${_u}" "${SAVED_PASSWORDS[${_u}]}"
@@ -395,7 +399,9 @@ wait_for_rollout
 echo "[INFO] ---"
 echo "[INFO] Console: $(oc whoami --show-console 2>/dev/null || echo unknown)"
 echo "[INFO] Users pick '${IDP_NAME}' on the login page."
-if (( ${#ISSUED} > 0 )); then
+if (( ${#ISSUED} > 0 )) && [[ "${PRINT_PASSWORDS}" != true ]]; then
+    echo "[INFO] ${#ISSUED} new password(s) saved to ${CREDENTIALS_FILE}."
+elif (( ${#ISSUED} > 0 )); then
     echo "[INFO] New passwords (also in ${CREDENTIALS_FILE}):"
     for _u in "${ISSUED[@]}"; do
         printf '         %-40s %s\n' "${_u}" "${SAVED_PASSWORDS[${_u}]}"

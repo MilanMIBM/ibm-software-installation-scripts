@@ -19,7 +19,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 # cpd_vars.sh has INSTALL_SWHUB_CONTROL_CENTER="true":
 #   1.0 prep -> 1.0.1 shared components -> 1.1 install -> 1.2 status
 #   -> 1.3 instance details -> 1.4 OAuth client -> cluster-admins
-#   -> auto-detect instances
+#   -> auto-detect instances -> other workloads indicator
 #
 # Step 0 is NOT run here: configs/cp4d_config/swhub_control_center/
 # swhub_control_center_vars.sh must exist. Write it with
@@ -47,6 +47,8 @@ DO_SWHCC_OAUTH="${DO_SWHCC_OAUTH:-true}"                       # 1.4 create the 
 [[ "${CONTROL_CLUSTER_MODE:-same}" == different ]] && DO_SWHCC_SHARED=true || DO_SWHCC_SHARED=false
 h_is_true "${AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES:-true}" && DO_SWHCC_AUTODETECT=true || DO_SWHCC_AUTODETECT=false
 h_is_true "${CONTROL_ADD_CLUSTER_ADMINS:-true}" && DO_SWHCC_ADMINS=true || DO_SWHCC_ADMINS=false
+# The indicator step also runs when it is off, so a change to false removes it.
+DO_SWHCC_INDICATOR="${DO_SWHCC_AUTODETECT}"
 
 echo "=============================================================================="
 echo " Software Hub Control Center full install - project '${CONTROL_PROJECT_OPERANDS:-?}'"
@@ -70,6 +72,8 @@ h_step --warn  cluster-admins    "${DO_SWHCC_ADMINS}"           "give OpenShift 
     "${_CP4D_REPO_ROOT}/src/utilities/softwarehub_utils/softwarehub_control_center/toggle_cluster_admins.sh"
 h_step --warn  autodetect-instances "${DO_SWHCC_AUTODETECT}"    "auto-detect and add the Software Hub instances (AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES)" \
     "${_CP4D_REPO_ROOT}/src/utilities/softwarehub_utils/softwarehub_control_center/autodetect_instances.sh"
+h_step --warn  other-workloads-indicator "${DO_SWHCC_INDICATOR}" "other workloads indicator (CONTROL_OTHER_WORKLOADS_INDICATOR)" \
+    "${SCRIPT_DIR}/x_debug_toggle_other_workloads_indicator.sh"
 
 h_steps_plan
 h_steps_run

@@ -50,8 +50,13 @@ Options:
   --other-account-name N    Account for what non-Software Hub workloads reserve
                             (default: other-reserved-workloads)
   --no-other-account        Do not create that account
-  --instance-quota M        reserved (track each instance against its requests,
-                            rounded up, default) or none (unlimited)
+  --instance-quota M        limits (default: grow to the instance's limits within
+                            its share of the account), reserved (requests /
+                            headroom only) or none (unlimited)
+  --quota-headroom F        Requests / F is each quota's minimum (default: 0.9)
+  --no-other-workloads-indicator
+                            Do not deploy the stand-in that reports other
+                            workloads (CONTROL_OTHER_WORKLOADS_INDICATOR=false)
   --rotate-api-keys         Let auto-detect generate new API keys, which revokes the
                             current ones (default: off)
   --verify-wait SECONDS     How long to wait if verifying falls back to a browser
@@ -86,6 +91,8 @@ CLUSTER_DISPLAY_NAME=""
 ACCOUNT_NAME=""
 ACCOUNT_ALLOCATION=""
 INSTANCE_QUOTA=""
+QUOTA_HEADROOM=""
+INDICATOR=true
 OTHER_ACCOUNT_SET=false
 OTHER_ACCOUNT_NAME=""
 ACCOUNT_CPU=""
@@ -123,6 +130,8 @@ while (( $# )); do
         --other-account-name) need_value "$1" "${2:-}"; OTHER_ACCOUNT_SET=true; OTHER_ACCOUNT_NAME="$2"; shift 2 ;;
         --no-other-account)  OTHER_ACCOUNT_SET=true; OTHER_ACCOUNT_NAME=""; shift ;;
         --instance-quota)    need_value "$1" "${2:-}"; INSTANCE_QUOTA="$2"; shift 2 ;;
+        --quota-headroom)    need_value "$1" "${2:-}"; QUOTA_HEADROOM="$2"; shift 2 ;;
+        --no-other-workloads-indicator) INDICATOR=false; shift ;;
         --rotate-api-keys)   ROTATE_API_KEYS=true; shift ;;
         --verify-wait)       need_value "$1" "${2:-}"; VERIFY_WAIT="$2"; shift 2 ;;
         --no-cluster-admins) CLUSTER_ADMINS=false; shift ;;
@@ -178,6 +187,8 @@ args+=(--set "cluster_mode=${CLUSTER_MODE}" --set "patch_id=${PATCH_VALUE}" --se
 [[ -n "${ACCOUNT_NAME}" ]]      && args+=(--set "account_name=${ACCOUNT_NAME}")
 [[ "${OTHER_ACCOUNT_SET}" == true ]] && args+=(--set "other_account_name=${OTHER_ACCOUNT_NAME}")
 [[ -n "${INSTANCE_QUOTA}" ]]    && args+=(--set "instance_quota=${INSTANCE_QUOTA}")
+[[ -n "${QUOTA_HEADROOM}" ]]    && args+=(--set "quota_headroom=${QUOTA_HEADROOM}")
+args+=(--set "indicator=${INDICATOR}")
 [[ -n "${ACCOUNT_ALLOCATION}" ]] && args+=(--set "account_allocation=${ACCOUNT_ALLOCATION}")
 [[ -n "${ACCOUNT_CPU}" ]]       && args+=(--set "account_cpu=${ACCOUNT_CPU}")
 [[ -n "${ACCOUNT_MEMORY_GI}" ]] && args+=(--set "account_memory_gi=${ACCOUNT_MEMORY_GI}")

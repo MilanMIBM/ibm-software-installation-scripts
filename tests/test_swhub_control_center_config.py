@@ -1,6 +1,8 @@
 """swhub_control_center_vars.sh rendering, and Control Center leaving the regular list."""
 
+import base64
 import importlib.util
+import json
 import stat
 import subprocess
 from pathlib import Path
@@ -101,7 +103,7 @@ def test_notebook_can_set_every_autodetect_variable():
     template = (render.TEMPLATE_DIR / render.TEMPLATE_NAME).read_text()
     wanted = {line.split("=")[0].split()[1] for line in template.splitlines()
               if line.startswith(("export CONTROL_AUTODETECT_", "export CONTROL_CLUSTER_DISPLAY_NAME", "export CONTROL_ADMIN_"))}
-    assert len(wanted) == 12 and wanted <= keys
+    assert len(wanted) == 13 and wanted <= keys
 
 
 def test_cluster_admins_are_on_by_default():
@@ -251,6 +253,8 @@ swhcc_set_instance_quota i1 77 213
     assert body["Enforce"] is False and body["InstanceID"] == "i1"
     assert body["Policies"]["Quota"]["CPU"]["Maximum"] == 77
     assert body["Policies"]["Quota"]["Memory"]["Maximum"] == 213
+    # Measured against requests: a limit quota alerts as soon as limits overcommit.
+    assert body["Policies"]["Quota"]["PolicyType"] == "request"
 
 
 def test_other_workloads_leave_out_software_hub_and_masters():
@@ -263,11 +267,132 @@ oc() {
         "get zenservice"*) print -r -- '{"items":[{"metadata":{"namespace":"cpd"}}]}' ;;
         "get commonservice"*) print -r -- '{"items":[{"metadata":{"namespace":"ops"}}]}' ;;
         "get nodes"*) print -r -- '{"items":[{"metadata":{"name":"m1"}}]}' ;;
-        "get pods"*) print -r -- "{\\"items\\":[$(pod storage w1 1500m),$(pod monitoring w2 1),$(pod storage m1 50),$(pod cpd w1 50),$(pod ops w1 50),$(pod cco w1 50)]}" ;;
+        "get pods"*) print -r -- "{\\"items\\":[$(pod storage w1 1500m),$(pod monitoring w2 1),$(pod storage m1 50),$(pod cpd w1 50),$(pod ops w1 50),$(pod cco w1 2)]}" ;;
     esac
 }
 swhcc_other_reserved_capacity
 print -r -- "$SWHCC_OTHER_CPU $SWHCC_OTHER_MEMORY_GI"
 """
+    # Control Center (cco) has a ZenService of its own but counts as an other workload.
+    script = script.replace('{"metadata":{"namespace":"cpd"}}', '{"metadata":{"namespace":"cpd"}},{"metadata":{"namespace":"cco"}}')
     result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
-    assert result.stdout.strip().splitlines()[-1] == "3 2"
+    assert result.stdout.strip().splitlines()[-1] == "5 4"  # requests 4.5 and 3 Gi, / 0.95
+
+
+def load_indicator():
+    spec = importlib.util.spec_from_file_location("indicator", ROOT / "src/helpers/swhub_control_center_indicator_server.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeKube:
+    def __init__(self, data):
+        self.data = data
+
+    def items(self, path):
+        return self.data.get(path, [])
+
+
+def test_indicator_counts_control_center_but_not_instances_or_masters():
+    ind = load_indicator()
+    def pod(ns, node, cpu, mem="1Gi", phase="Running"):
+        return {"metadata": {"namespace": ns, "name": f"{ns}-{node}-{cpu}"}, "status": {"phase": phase},
+                "spec": {"nodeName": node, "containers": [{"resources": {"requests": {"cpu": cpu, "memory": mem},
+                                                                          "limits": {"cpu": "2", "memory": "2Gi"}}}]}}
+    kube = FakeKube({
+        "/apis/zen.cpd.ibm.com/v1/zenservices": [{"metadata": {"namespace": "cpd"}}, {"metadata": {"namespace": "cc"}}],
+        "/apis/operator.ibm.com/v3/commonservices": [{"metadata": {"namespace": "ops"}}],
+        "/api/v1/nodes": [{"metadata": {"name": "w1", "labels": {"node-role.kubernetes.io/worker": ""}}},
+                          {"metadata": {"name": "m1", "labels": {}}}],
+        "/api/v1/pods": [pod("storage", "w1", "1500m"), pod("cc", "w1", "1"), pod("cpd", "w1", "9"),
+                         pod("ops", "w1", "9"), pod("storage", "m1", "9"), pod("storage", "w1", "9", phase="Succeeded")],
+        "/apis/metrics.k8s.io/v1beta1/pods": [{"metadata": {"namespace": "storage", "name": "storage-w1-1500m"},
+                                               "containers": [{"usage": {"cpu": "250000000n", "memory": "512Mi"}}]}],
+        "/api/v1/persistentvolumeclaims": [{"metadata": {"namespace": "storage"}, "status": {"phase": "Bound", "capacity": {"storage": "10G"}}},
+                                           {"metadata": {"namespace": "cpd"}, "status": {"phase": "Bound", "capacity": {"storage": "99G"}}}],
+    })
+    totals = ind.collect(kube, extra_projects=["unused"], include_projects=["cc"])
+    assert totals["cpu_requests"] == 2.5 and totals["cpu_limits"] == 4
+    assert totals["memory_requests"] == 2 * 2**30 and totals["cpu_usage"] == 0.25
+    assert totals["volume_bytes"] == 10e9 and totals["projects"] == 2
+
+
+def test_indicator_speaks_control_centers_format():
+    ind = load_indicator()
+    totals = {"cpu_requests": 15.1, "cpu_limits": 30, "memory_requests": 54 * 2**30, "memory_limits": 80 * 2**30,
+              "cpu_usage": 3, "memory_usage": 20 * 2**30, "volume_bytes": 0, "projects": 27}
+    policy = ind.merge_policy(ind.default_policy(), {"Policies": {"Quota": {"CPU": {"Maximum": 17}, "Memory": {"Maximum": 58}}}})
+    body = ind.overview(totals, policy, 1793893800)["requestObj"]
+    assert body["Resources"]["InUse"]["Memory"]["Requests"] == 54
+    # The web client shows these unrounded, so float noise must not reach it.
+    noisy = dict(totals, cpu_requests=19.911000000000012, memory_requests=65.14453125 * 2**30, volume_bytes=561566973952)
+    used = ind.overview(noisy, policy, 0)["requestObj"]["Resources"]["InUse"]
+    assert (used["CPU"]["Requests"], used["Memory"]["Requests"], used["Volume"]["Capacity"]) == (19.911, 65.145, 561.567)
+    assert body["Resources"]["ResourcePlan"]["Policies"]["Quota"]["CPU"]["Maximum"] == 17
+    assert round(body["Resources"]["Quota"]["PercentCPU"], 1) == 88.8
+    assert body["AlertsAndEvents"]["CriticalStatus"]["Total"] == 0
+    key = base64.b64encode(b"ind:secret").decode()
+    assert ind.authorized(f"ZenApiKey {key}", "ind", "secret")
+    assert not ind.authorized(f"ZenApiKey {key}x", "ind", "secret") and not ind.authorized("Bearer x", "ind", "secret")
+
+
+def plan(cap_cpu, cap_mem, rows, headroom="0.9"):
+    script = """
+export _CP4D_REPO_ROOT="$1"
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+print -rl -- "${@:5}" | swhcc_plan_quotas "$2" "$3" "$4"
+"""
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT), str(cap_cpu), str(cap_mem), headroom, *rows],
+                            capture_output=True, text=True, check=True)
+    return result.stdout.split(), result.stderr
+
+
+def test_quota_grows_to_limits_within_the_account():
+    # cpd-operands today: limits over the account for CPU, inside it for memory.
+    out, warn = plan(144, 605, ["i1 76.573 212.33 290.162 553.25"])
+    assert out == ["i1", "144", "554"] and not warn
+
+
+def test_quota_floor_keeps_requests_under_the_alert_line():
+    out, _ = plan(1000, 1000, ["i1 10 10 10.5 10.5"])  # limits barely above requests
+    assert out == ["i1", "12", "12"]  # ceil(10 / 0.9), not 11
+
+
+def test_quotas_share_the_account_by_limits():
+    out, warn = plan(100, 100, ["a 10 10 300 300", "b 10 10 100 100"])
+    assert out == ["a", "75", "75", "b", "25", "25"] and not warn
+
+
+def test_quota_warns_when_floors_do_not_fit():
+    out, warn = plan(10, 10, ["a 9 9 20 20", "b 9 9 20 20"])
+    assert out == ["a", "10", "10", "b", "10", "10"] and "need 20" in warn
+
+
+def test_ceil_with_headroom():
+    script = 'export _CP4D_REPO_ROOT="$1"; source "$1/src/helpers/swhub_control_center_api_helpers.sh"; swhcc_ceil 15.111 0.95; swhcc_ceil 3; swhcc_ceil 3.000000000001; swhcc_ceil 3.0000001'
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
+    assert result.stdout.split() == ["16", "3", "3", "4"]
+
+
+def test_indicator_answers_the_registration_check():
+    import http.client, threading
+    from http.server import ThreadingHTTPServer
+    ind = load_indicator()
+    state = ind.State(FakeKube({}), [], [], ind.default_policy(), "swhcc-other-workloads")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ind.make_handler(state, "ind", "secret"))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        key = base64.b64encode(b"ind:secret").decode()
+        def get(path, auth=True):
+            conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
+            conn.request("GET", path, headers={"Authorization": f"ZenApiKey {key}"} if auth else {})
+            response = conn.getresponse()
+            return response.status, json.loads(response.read())
+        assert get("/zen-data/v2/controlplane") == (200, {"message": "Success", "requestObj": "swhcc-other-workloads"})
+        assert get("/zen-data/v2/controlplane", auth=False)[0] == 401
+        assert get("/zen-watchdog/v1/monitor", auth=False)[0] == 200
+        assert get("/zen-watchdog/v3/instance/overview")[0] == 200
+        assert get("/anything/else")[0] == 404
+    finally:
+        server.shutdown()

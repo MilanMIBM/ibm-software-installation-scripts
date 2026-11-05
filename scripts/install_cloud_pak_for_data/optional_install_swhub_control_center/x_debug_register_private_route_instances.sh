@@ -53,15 +53,8 @@ DEPLOYMENT=zen-core-api
 [[ "${CONTROL_CLUSTER_MODE}" == same ]] \
     || h_die "This is for a Control Center on the same cluster as its instances."
 
-remove_mapping() {
-    h_info "Removing the mapping from ${DEPLOYMENT}"
-    oc patch deployment "${DEPLOYMENT}" -n "${NS}" --type=merge \
-        -p '{"spec":{"template":{"spec":{"hostAliases":null}}}}' >/dev/null
-    oc rollout status "deployment/${DEPLOYMENT}" -n "${NS}" --timeout=300s
-}
-
 if [[ "${REMOVE}" == true ]]; then
-    remove_mapping
+    swhcc_remove_route_mapping
     exit 0
 fi
 
@@ -84,31 +77,13 @@ done
 [[ "${CHECK}" == true ]] && exit 0
 
 [[ -n "${PUBLIC_IP}" ]] || h_die "Could not look up a public IP. Use --ip."
-[[ "${PUBLIC_IP}" != (10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|127.*) ]] \
-    || h_die "${PUBLIC_IP} is private, so the mapping would not help. Use --ip with a public address."
 
 if [[ "${YES}" != true ]]; then
     h_confirm "Map these routes to ${PUBLIC_IP} on ${DEPLOYMENT}, register, then remove it? This restarts Control Center's API twice." \
         || { h_info "Nothing changed."; exit 0; }
 fi
 
-ALIASES="$(jq -cn --arg ip "${PUBLIC_IP}" '[{ip: $ip, hostnames: $ARGS.positional}]' --args "${HOSTS[@]}")"
-
-register_with_mapping() {
-    h_info "Mapping ${#HOSTS} route(s) to ${PUBLIC_IP} on ${DEPLOYMENT}"
-    oc patch deployment "${DEPLOYMENT}" -n "${NS}" --type=merge \
-        -p "$(jq -cn --argjson aliases "${ALIASES}" '{spec: {template: {spec: {hostAliases: $aliases}}}}')" >/dev/null \
-        && oc rollout status "deployment/${DEPLOYMENT}" -n "${NS}" --timeout=300s \
-        && "${_CP4D_REPO_ROOT}/src/utilities/softwarehub_utils/softwarehub_control_center/autodetect_instances.sh"
-}
-
-# Whatever happens, do not leave the mapping behind. Not an EXIT trap: that slot holds
-# the timer at the top of this script.
-trap 'remove_mapping; exit 130' INT TERM
-rc=0
-register_with_mapping || rc=$?
-trap - INT TERM
-remove_mapping
-
-(( rc == 0 )) || h_die "Registering failed (exit ${rc}). The mapping has been removed."
+swhcc_with_route_mapping "${PUBLIC_IP}" "${HOSTS[@]}" -- \
+    "${_CP4D_REPO_ROOT}/src/utilities/softwarehub_utils/softwarehub_control_center/autodetect_instances.sh" \
+    || h_die "Registering failed. The mapping has been removed."
 h_info "Done. Metrics appear on the next zen-watchdog cycle, within 10 minutes."

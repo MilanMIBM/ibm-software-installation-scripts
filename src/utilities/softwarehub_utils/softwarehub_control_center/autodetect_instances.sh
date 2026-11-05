@@ -73,12 +73,32 @@ rotated_key() {   # <project> <url>
 
 # Track an instance against what it has reserved, rounded up. This is what fills in
 # the account page; it limits nothing. Runs for new and registered instances alike.
-apply_instance_quota() {   # <project> <instance id>
-    [[ "${CONTROL_AUTODETECT_INSTANCE_QUOTA:-reserved}" == reserved ]] || return 0
-    swhcc_reserved_capacity "$1"
-    h_info "'$1' quota: ${SWHCC_CPU} vCPU, ${SWHCC_MEMORY_GI} Gi memory"
-    swhcc_set_instance_quota "$2" "${SWHCC_CPU}" "${SWHCC_MEMORY_GI}"
-    swhcc_api_ok || h_warn "Could not set the quota for '$1' ($(swhcc_api_error))."
+# Quotas for every registered instance, planned together so they fit the account: see
+# swhcc_plan_quotas. CONTROL_AUTODETECT_INSTANCE_QUOTA is limits (grow to the limits,
+# the default), reserved (requests plus headroom only) or none (unlimited). They only
+# track usage: the scripts never turn enforcement on.
+QUOTA_PROJECTS=(); QUOTA_IDS=()
+apply_instance_quotas() {   # <account cpu> <account memory gi>
+    local mode="${CONTROL_AUTODETECT_INSTANCE_QUOTA:-limits}" i line warnings
+    [[ "${mode}" != none ]] || { h_info "Instance quotas left unlimited (CONTROL_AUTODETECT_INSTANCE_QUOTA=none)."; return 0; }
+    (( ${#QUOTA_IDS} )) || return 0
+    local -a lines=()
+    for i in {1..${#QUOTA_IDS}}; do
+        swhcc_reserved_capacity "${QUOTA_PROJECTS[i]}"
+        local -a values=(${=SWHCC_RESOURCES})
+        [[ "${mode}" == reserved ]] && values[3]=0 values[4]=0
+        lines+=("${QUOTA_IDS[i]} ${(j: :)values}")
+    done
+    warnings="$(mktemp)"
+    local -a plan=("${(@f)$(print -rl -- "${lines[@]}" | swhcc_plan_quotas "$1" "$2" "${CONTROL_AUTODETECT_QUOTA_HEADROOM:-0.9}" 2>"${warnings}")}")
+    [[ -s "${warnings}" ]] && h_warn "$(<"${warnings}") Each quota is set to its minimum anyway."
+    rm -f "${warnings}"
+    for i in {1..${#QUOTA_IDS}}; do
+        line=(${=plan[i]})
+        h_info "'${QUOTA_PROJECTS[i]}' quota: ${line[2]} vCPU, ${line[3]} Gi memory"
+        swhcc_set_instance_quota "${line[1]}" "${line[2]}" "${line[3]}"
+        swhcc_api_ok || h_warn "Could not set the quota for '${QUOTA_PROJECTS[i]}' ($(swhcc_api_error))."
+    done
 }
 
 DETECTED=("${(@f)$(swhcc_detect_instances)}")
@@ -160,7 +180,7 @@ for line in "${DETECTED[@]}"; do
     fi
     if swhcc_find_instance "${url}"; then
         h_info "'${project}' is already registered."
-        apply_instance_quota "${project}" "${REPLY}"
+        QUOTA_PROJECTS+=("${project}"); QUOTA_IDS+=("${REPLY}")
         (( ++present )); continue
     fi
 
@@ -180,7 +200,7 @@ for line in "${DETECTED[@]}"; do
 
     if swhcc_register_instance "${project}" "${url}" "${user}" "${key}" "${ACCOUNT_ID}"; then
         h_info "Added '${project}' to account '${ACCOUNT}'."
-        swhcc_find_instance "${url}" && apply_instance_quota "${project}" "${REPLY}"
+        swhcc_find_instance "${url}" && { QUOTA_PROJECTS+=("${project}"); QUOTA_IDS+=("${REPLY}"); }
         (( ++added ))
     else
         (( ++failed ))
@@ -188,4 +208,5 @@ for line in "${DETECTED[@]}"; do
 done
 
 h_info "Instances: ${added} added, ${present} already registered, ${skipped} skipped, ${failed} failed."
+apply_instance_quotas "${CPU}" "${MEMORY}"
 (( failed == 0 ))

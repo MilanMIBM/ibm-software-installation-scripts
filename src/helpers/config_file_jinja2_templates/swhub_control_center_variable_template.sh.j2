@@ -117,9 +117,10 @@ export CONTROL_OAUTH_SECRET="{{ oauth_secret | sh }}"
 # up. CPU and memory (cores, Gi) override it with your own values.
 # OTHER_ACCOUNT_NAME is a second account for what workloads outside Software Hub have
 # reserved on the workers, rounded up. Empty turns it off.
-# INSTANCE_QUOTA is reserved, to track each instance against what it has reserved,
-# rounded up, or none for unlimited. The account page shows the sum of these as
-# allocated. It only tracks: nothing is enforced.
+# INSTANCE_QUOTA sets each instance's quota, which the account page shows as allocated:
+# limits (default) grows it to the instance's limits within its share of the account,
+# reserved keeps it at requests / QUOTA_HEADROOM, none leaves it unlimited. Both keep
+# requests under the instance's 95% alert line. Quotas only track: nothing is enforced.
 # Instances need an API key. Generating one revokes the admin's current key and
 # breaks anything using it, so this only happens with ROTATE_API_KEYS=true; the
 # instance in cpd_vars.sh reuses CPD_APIKEY from cpd_instance_details.sh.
@@ -135,8 +136,23 @@ export CONTROL_AUTODETECT_ACCOUNT_CPU="{{ account_cpu | sh }}"
 export CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI="{{ account_memory_gi | sh }}"
 export CONTROL_AUTODETECT_OTHER_ACCOUNT_NAME="{{ other_account_name | sh }}"
 export CONTROL_AUTODETECT_INSTANCE_QUOTA="{{ instance_quota | sh }}"
+export CONTROL_AUTODETECT_QUOTA_HEADROOM="{{ quota_headroom | sh }}"
 export CONTROL_AUTODETECT_ROTATE_API_KEYS="{{ rotate_api_keys | sh }}"
 export CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS="{{ verify_wait_seconds | sh }}"
+
+# ------------------------------------------------------------------------------
+# Other workloads indicator
+# ------------------------------------------------------------------------------
+# Control Center only measures Software Hub instances, so the other workloads account
+# shows no requests or usage. When true, the full install deploys a small stand-in
+# instance in INDICATOR_PROJECT that reports what everything outside the instances
+# reserves, and registers it there. It limits nothing. Turn it on or off later with
+# optional_install_swhub_control_center/x_debug_toggle_other_workloads_indicator.sh.
+# The image must hold python3: the default is the python image stream on the cluster.
+
+export CONTROL_OTHER_WORKLOADS_INDICATOR="{{ indicator }}"
+export CONTROL_OTHER_WORKLOADS_INDICATOR_PROJECT="{{ indicator_project | sh }}"
+export CONTROL_OTHER_WORKLOADS_INDICATOR_IMAGE="{{ indicator_image | sh }}"
 
 # ------------------------------------------------------------------------------
 # Administrators
