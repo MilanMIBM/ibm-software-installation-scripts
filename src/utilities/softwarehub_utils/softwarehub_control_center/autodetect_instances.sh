@@ -20,8 +20,8 @@ Safe to re-run: what is already registered is left alone.
 
   autodetect_instances.sh [--dry-run] [--account NAME] [--rotate-api-keys]
 
-In order: registers and verifies the cluster, creates the account, then validates
-and adds each instance. Instances that are not Completed, or
+In order: registers and verifies the cluster, creates the account, makes everyone with
+Control Center access an administrator of it, then validates and adds each instance. Instances that are not Completed, or
 have no route, are skipped with a warning.
 
 Options:
@@ -91,17 +91,27 @@ if ! swhcc_wait_cluster_verified "${CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS:-600}
     exit 1
 fi
 
-CPU="${CONTROL_AUTODETECT_ACCOUNT_CPU:-}"
-MEMORY="${CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI:-}"
-if [[ -z "${CPU}" || -z "${MEMORY}" ]]; then
-    swhcc_worker_capacity
-    : "${CPU:=${SWHCC_CPU}}"
-    : "${MEMORY:=${SWHCC_MEMORY_GI}}"
+# The account gets the whole cluster by default, so Control Center shows usage, requests
+# and limits as a share of it. reserved sizes it to the instances instead. Explicit
+# CPU and memory values win over both.
+GPU=0
+if [[ "${CONTROL_AUTODETECT_ACCOUNT_ALLOCATION:-cluster}" == reserved ]]; then
+    swhcc_reserved_capacity "${DETECTED[@]%%$'\t'*}"
+else
+    SWHCC_ACCOUNT_ID=""
+    swhcc_find_account "${ACCOUNT}" || true
+    swhcc_cluster_capacity "${SWHCC_CLUSTER_ID}" "${SWHCC_ACCOUNT_ID}"
+    GPU="${SWHCC_GPU}"
 fi
+CPU="${CONTROL_AUTODETECT_ACCOUNT_CPU:-${SWHCC_CPU}}"
+MEMORY="${CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI:-${SWHCC_MEMORY_GI}}"
 swhcc_ensure_account "${ACCOUNT}" "Software Hub instances found by autodetect_instances.sh" \
-    "${SWHCC_CLUSTER_ID}" "${CPU}" "${MEMORY}" 0
+    "${SWHCC_CLUSTER_ID}" "${CPU}" "${MEMORY}" "${GPU}"
 ACCOUNT_ID="${SWHCC_ACCOUNT_ID}"
+h_info "Account '${ACCOUNT}' allocation: ${CPU} vCPU, ${MEMORY} Gi memory, ${GPU} GPU"
+swhcc_allocate "${ACCOUNT_ID}" "${SWHCC_CLUSTER_ID}" "${CPU}" "${MEMORY}" "${GPU}"
 swhcc_ensure_instance_rights
+swhcc_sync_account_admins "${ACCOUNT_ID}" || h_warn "Some users or groups could not be made account administrators."
 
 added=0; present=0; skipped=0; failed=0
 for line in "${DETECTED[@]}"; do

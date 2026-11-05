@@ -47,6 +47,7 @@ SWHCC_DEFAULTS = {
     "autodetect": "true",
     "cluster_display_name": "",
     "account_name": "software-hub-instances",
+    "account_allocation": "cluster",
     "account_cpu": "",
     "account_memory_gi": "",
     "rotate_api_keys": "false",

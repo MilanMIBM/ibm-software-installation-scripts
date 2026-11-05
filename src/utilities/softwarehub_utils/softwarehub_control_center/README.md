@@ -59,7 +59,14 @@ If a key is regenerated later, for example by re-running `3.3.1_get_instance_cre
 
 ## Default account
 
-Auto-detected instances go into `CONTROL_AUTODETECT_ACCOUNT_NAME`. When `CONTROL_AUTODETECT_ACCOUNT_CPU` and `CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI` are empty, it gets all of the workers' allocatable capacity, leaving nothing for other accounts. Set them if you plan to split the cluster.
+`autodetect_instances.sh` makes every user and group with Control Center access an administrator of this account, on each run. That means any user or group holding a role; the system All Users group holds none, so it is left out.
+
+Auto-detected instances go into `CONTROL_AUTODETECT_ACCOUNT_NAME`, and each run sets its allocation from `CONTROL_AUTODETECT_ACCOUNT_ALLOCATION`:
+
+- `cluster` (default): the whole cluster, using Control Center's own capacity figures, less what other accounts hold. The Resource groups page then shows usage, requests and limits as a share of the full cluster, but leaves nothing to allocate to new accounts.
+- `reserved`: the CPU and memory requests of the instances' running and pending pods, rounded up.
+
+`CONTROL_AUTODETECT_ACCOUNT_CPU` and `CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI` override either one. An allocation changed in the web client is overwritten on the next run unless you set these.
 
 ## Not an IBM-published API
 

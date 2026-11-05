@@ -571,6 +571,7 @@ def _(
         "autodetect": str(swhcc_autodetect_checkbox.value).lower(),
         "cluster_display_name": _setup.get("CONTROL_CLUSTER_DISPLAY_NAME"),
         "account_name": _setup.get("CONTROL_AUTODETECT_ACCOUNT_NAME"),
+        "account_allocation": _setup.get("CONTROL_AUTODETECT_ACCOUNT_ALLOCATION"),
         "account_cpu": _setup.get("CONTROL_AUTODETECT_ACCOUNT_CPU"),
         "account_memory_gi": _setup.get("CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI"),
         "rotate_api_keys": _setup.get("CONTROL_AUTODETECT_ROTATE_API_KEYS"),

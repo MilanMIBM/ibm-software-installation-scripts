@@ -1096,6 +1096,7 @@ default_swhub_control_center_setup = [
     {"key": "CONTROL_OAUTH_CLIENT_ID", "value": "ibm-software-hub-cc"},
     {"key": "CONTROL_CLUSTER_DISPLAY_NAME", "value": ""},
     {"key": "CONTROL_AUTODETECT_ACCOUNT_NAME", "value": "software-hub-instances"},
+    {"key": "CONTROL_AUTODETECT_ACCOUNT_ALLOCATION", "value": "cluster"},
     {"key": "CONTROL_AUTODETECT_ACCOUNT_CPU", "value": ""},
     {"key": "CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI", "value": ""},
     {"key": "CONTROL_AUTODETECT_ROTATE_API_KEYS", "value": "false"},

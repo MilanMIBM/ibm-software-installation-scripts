@@ -101,7 +101,7 @@ def test_notebook_can_set_every_autodetect_variable():
     template = (render.TEMPLATE_DIR / render.TEMPLATE_NAME).read_text()
     wanted = {line.split("=")[0].split()[1] for line in template.splitlines()
               if line.startswith(("export CONTROL_AUTODETECT_", "export CONTROL_CLUSTER_DISPLAY_NAME", "export CONTROL_ADMIN_"))}
-    assert len(wanted) == 9 and wanted <= keys
+    assert len(wanted) == 10 and wanted <= keys
 
 
 def test_cluster_admins_are_on_by_default():
@@ -171,3 +171,67 @@ cpdapi() {{
     result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
     body = result.stdout.split("PUT ", 1)[1]
     assert __import__("json").loads(body)["username"] == "u1"
+
+
+def test_account_admins_follow_control_center_access():
+    script = """
+export _CP4D_REPO_ROOT="$1"
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+cpdapi() {
+    API_CODE=200
+    case "$1 $2" in
+        "GET /usermgmt/v2/usermgmt/users"*) API_BODY='[{"uid":"1","username":"member","user_roles":["r"]},{"uid":"2","username":"new","user_roles":["r"]},{"uid":"3","username":"norole","user_roles":[]}]' ;;
+        "GET /usermgmt/v4/groups"*) API_BODY='{"results":[{"group_id":10000,"name":"All Users","roles":[]},{"group_id":7,"name":"admins","roles":["r"]}]}' ;;
+        "GET /usermgmt/v1/user/"*) API_BODY='{"user_roles":["r","zen_resource_group_admin_role"]}' ;;
+        GET*) API_BODY='{"user_members":{"users":[{"uid":"1"}]}}' ;;
+        *) print -r -- "$1 $2 $(print -r -- "$3" | jq -c .)" ;;
+    esac
+}
+swhcc_sync_account_admins acct
+"""
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
+    writes = [line for line in result.stdout.splitlines() if line.startswith(("POST", "PATCH"))]
+    assert len(writes) == 3
+    assert 'members {"users":[{"uid":"2","username":"new"}]}' in writes[0]
+    assert "/v2/groups/7" in writes[1] and "zen_resource_group_admin_role" in writes[1]
+    assert '{"groups":[{"group_id":"7","group_name":"admins"}]}' in writes[2]
+    assert "All Users" not in result.stdout and "norole" not in result.stdout
+
+
+def test_reserved_capacity_is_the_pod_requests_rounded_up():
+    pods = """{"items":[
+      {"status":{"phase":"Running"},"spec":{"containers":[{"resources":{"requests":{"cpu":"1500m","memory":"1Gi"}}},{"resources":{"requests":{"cpu":"1","memory":"512Mi"}}}]}},
+      {"status":{"phase":"Pending"},"spec":{"containers":[{"resources":{"requests":{"cpu":"100m"}}}]}},
+      {"status":{"phase":"Succeeded"},"spec":{"containers":[{"resources":{"requests":{"cpu":"50","memory":"50Gi"}}}]}},
+      {"status":{"phase":"Running"},"spec":{"containers":[{"resources":{}}]}}]}"""
+    script = f"""
+export _CP4D_REPO_ROOT="$1"
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+oc() {{ print -r -- '{pods}'; }}
+swhcc_reserved_capacity one
+print -r -- "$SWHCC_CPU $SWHCC_MEMORY_GI"
+swhcc_reserved_capacity one two
+print -r -- "$SWHCC_CPU $SWHCC_MEMORY_GI"
+"""
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
+    assert result.stdout.split("\n")[:2] == ["3 2", "6 3"]
+
+
+def test_cluster_capacity_is_the_room_left_plus_what_the_account_holds():
+    script = """
+export _CP4D_REPO_ROOT="$1"
+source "$1/src/helpers/swhub_control_center_api_helpers.sh"
+cpdapi() {
+    API_CODE=200
+    case "$2" in
+        */cluster/resources) API_BODY='{"requestObj":{"Resources":[{"ClusterID":"c1","Resources":{"CPU":{"AvailableCapacity":83},"Memory":{"AvailableCapacity":447.5},"GPU":{"AvailableCapacity":0}}}]}}' ;;
+        *) API_BODY='{"requestObj":{"Resources":[{"ClusterID":"c1","Resources":{"CPU":{"Allocated":77},"Memory":{"Allocated":213},"GPU":{"Allocated":-1}}}]}}' ;;
+    esac
+}
+swhcc_cluster_capacity c1 acct
+print -r -- "$SWHCC_CPU $SWHCC_MEMORY_GI $SWHCC_GPU"
+swhcc_cluster_capacity c1
+print -r -- "$SWHCC_CPU $SWHCC_MEMORY_GI $SWHCC_GPU"
+"""
+    result = subprocess.run(["zsh", "-c", script, "_", str(ROOT)], capture_output=True, text=True, check=True)
+    assert result.stdout.split("\n")[:2] == ["160 661 0", "83 448 0"]

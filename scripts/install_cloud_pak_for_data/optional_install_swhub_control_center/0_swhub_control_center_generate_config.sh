@@ -43,8 +43,10 @@ Options:
                             API address)
   --account-name NAME       Account for auto-detected instances (default:
                             software-hub-instances)
-  --account-cpu CORES       vCPU for that account (default: all worker capacity)
-  --account-memory-gi GI    Memory for that account (default: all worker capacity)
+  --account-allocation M    cluster (the whole cluster, default) or reserved (what
+                            the instances have reserved, rounded up)
+  --account-cpu CORES       vCPU for that account, overriding --account-allocation
+  --account-memory-gi GI    Memory for that account, overriding --account-allocation
   --rotate-api-keys         Let auto-detect generate new API keys, which revokes the
                             current ones (default: off)
   --verify-wait SECONDS     How long to wait if verifying falls back to a browser
@@ -77,6 +79,7 @@ OAUTH_CLIENT_ID=""
 AUTODETECT=true
 CLUSTER_DISPLAY_NAME=""
 ACCOUNT_NAME=""
+ACCOUNT_ALLOCATION=""
 ACCOUNT_CPU=""
 ACCOUNT_MEMORY_GI=""
 ROTATE_API_KEYS=false
@@ -106,6 +109,7 @@ while (( $# )); do
         --no-autodetect)     AUTODETECT=false; shift ;;
         --cluster-display-name) need_value "$1" "${2:-}"; CLUSTER_DISPLAY_NAME="$2"; shift 2 ;;
         --account-name)      need_value "$1" "${2:-}"; ACCOUNT_NAME="$2"; shift 2 ;;
+        --account-allocation) need_value "$1" "${2:-}"; ACCOUNT_ALLOCATION="$2"; shift 2 ;;
         --account-cpu)       need_value "$1" "${2:-}"; ACCOUNT_CPU="$2"; shift 2 ;;
         --account-memory-gi) need_value "$1" "${2:-}"; ACCOUNT_MEMORY_GI="$2"; shift 2 ;;
         --rotate-api-keys)   ROTATE_API_KEYS=true; shift ;;
@@ -161,6 +165,7 @@ args+=(--set "cluster_mode=${CLUSTER_MODE}" --set "patch_id=${PATCH_VALUE}" --se
 [[ -n "${OAUTH_CLIENT_ID}" ]]   && args+=(--set "oauth_client_id=${OAUTH_CLIENT_ID}")
 [[ -n "${CLUSTER_DISPLAY_NAME}" ]] && args+=(--set "cluster_display_name=${CLUSTER_DISPLAY_NAME}")
 [[ -n "${ACCOUNT_NAME}" ]]      && args+=(--set "account_name=${ACCOUNT_NAME}")
+[[ -n "${ACCOUNT_ALLOCATION}" ]] && args+=(--set "account_allocation=${ACCOUNT_ALLOCATION}")
 [[ -n "${ACCOUNT_CPU}" ]]       && args+=(--set "account_cpu=${ACCOUNT_CPU}")
 [[ -n "${ACCOUNT_MEMORY_GI}" ]] && args+=(--set "account_memory_gi=${ACCOUNT_MEMORY_GI}")
 [[ -n "${VERIFY_WAIT}" ]]       && args+=(--set "verify_wait_seconds=${VERIFY_WAIT}")

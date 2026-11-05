@@ -111,9 +111,10 @@ export CONTROL_OAUTH_SECRET="{{ oauth_secret | sh }}"
 # ------------------------------------------------------------------------------
 # true: the full install ends with src/utilities/softwarehub_utils/
 # softwarehub_control_center/autodetect_instances.sh, which registers this cluster
-# and every Software Hub instance on it. Instances go into the account below. Empty
-# CPU and memory (cores, Gi) give it all of the workers' allocatable capacity, which
-# leaves nothing to allocate to other accounts.
+# and every Software Hub instance on it. Instances go into the account below, and each
+# run sets its allocation. ACCOUNT_ALLOCATION is cluster, for the whole cluster less
+# what other accounts hold, or reserved, for what the instances have reserved, rounded
+# up. CPU and memory (cores, Gi) override it with your own values.
 # Instances need an API key. Generating one revokes the admin's current key and
 # breaks anything using it, so this only happens with ROTATE_API_KEYS=true; the
 # instance in cpd_vars.sh reuses CPD_APIKEY from cpd_instance_details.sh.
@@ -124,6 +125,7 @@ export CONTROL_OAUTH_SECRET="{{ oauth_secret | sh }}"
 export AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES="{{ autodetect }}"
 export CONTROL_CLUSTER_DISPLAY_NAME="{{ cluster_display_name | sh }}"
 export CONTROL_AUTODETECT_ACCOUNT_NAME="{{ account_name | sh }}"
+export CONTROL_AUTODETECT_ACCOUNT_ALLOCATION="{{ account_allocation | sh }}"
 export CONTROL_AUTODETECT_ACCOUNT_CPU="{{ account_cpu | sh }}"
 export CONTROL_AUTODETECT_ACCOUNT_MEMORY_GI="{{ account_memory_gi | sh }}"
 export CONTROL_AUTODETECT_ROTATE_API_KEYS="{{ rotate_api_keys | sh }}"

@@ -189,6 +189,53 @@ print(int(sum(cores(n["cpu"]) for n in nodes)), int(sum(size(n["memory"]) for n 
     SWHCC_MEMORY_GI="${totals##* }"
 }
 
+# The cluster as Control Center sees it, less what other accounts hold: SWHCC_CPU,
+# SWHCC_MEMORY_GI and SWHCC_GPU, rounded up. These are its own capacity figures, not
+# OpenShift's allocatable ones, so the account's bar fills the whole cluster.
+swhcc_cluster_capacity() {   # <cluster id> [account id]
+    cpdapi GET "${SWHCC_WATCHDOG}/cluster/resources"
+    swhcc_api_ok || h_die "Could not read the cluster capacity ($(swhcc_api_error))."
+    local free own='{}' totals
+    free="$(print -r -- "${API_BODY}" | jq -c --arg id "$1" '[.requestObj.Resources[] | select(.ClusterID == $id)][0].Resources // empty')"
+    [[ -n "${free}" ]] || h_die "Control Center reports no capacity for cluster $1."
+    if [[ -n "${2:-}" ]]; then
+        cpdapi GET "${SWHCC_WATCHDOG}/resource_group/resources/policies/$2"
+        swhcc_api_ok || h_die "Could not read the account's allocation ($(swhcc_api_error))."
+        own="$(print -r -- "${API_BODY}" | jq -c --arg id "$1" '[.requestObj.Resources[]? | select(.ClusterID == $id)][0].Resources // {}')"
+    fi
+    totals="$(jq -nr --argjson free "${free}" --argjson own "${own}" '
+        def room($k): ($free[$k].AvailableCapacity + ([$own[$k].Allocated // 0, 0] | max)) | ceil;
+        "\(room("CPU")) \(room("Memory")) \(room("GPU"))"')"
+    read -r SWHCC_CPU SWHCC_MEMORY_GI SWHCC_GPU <<< "${totals}"
+}
+
+# What the instances have reserved: the requests of their running and pending pods,
+# rounded up to SWHCC_CPU (whole cores) and SWHCC_MEMORY_GI (whole Gi). This matches
+# the requests Control Center reports for an instance, and works before it has
+# collected any metrics. Operator projects are not part of that figure.
+swhcc_reserved_capacity() {   # <project>...
+    local project totals
+    totals="$(for project in "$@"; do oc get pods -n "${project}" -o json; done | jq -s '[.[].items[]]' | python3 -c '
+import json, math, sys
+UNITS = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "m": 1e-3}
+def quantity(value):
+    for unit, factor in UNITS.items():
+        if value.endswith(unit):
+            return float(value[:-len(unit)]) * factor
+    return float(value)
+cpu = memory = 0
+for pod in json.load(sys.stdin):
+    if pod["status"].get("phase") not in ("Running", "Pending"):
+        continue
+    for container in pod["spec"]["containers"]:
+        requests = container.get("resources", {}).get("requests", {})
+        cpu += quantity(requests.get("cpu", "0"))
+        memory += quantity(requests.get("memory", "0"))
+print(math.ceil(round(cpu, 6)), math.ceil(round(memory / 2**30, 6)))')"
+    SWHCC_CPU="${totals%% *}"
+    SWHCC_MEMORY_GI="${totals##* }"
+}
+
 # --- Accounts -----------------------------------------------------------------
 
 # Sets SWHCC_ACCOUNT_ID and SWHCC_ACCOUNT_CLUSTERS; fails when there is none by that name.
@@ -203,11 +250,11 @@ swhcc_find_account() {   # <name>
         '[.resource_groups[]? | select(.resource_group_name == $name)][0].clusters // [] | map(.cluster_id) | join(" ")')"
 }
 
-# Give the account resources on a cluster. CPU in cores, memory in Gi.
+# Give the account resources on a cluster, or change them. CPU in cores, memory in Gi.
 swhcc_allocate() {   # <account id> <cluster id> <cpu> <memory gi> <gpu>
     local body
     body="$(jq -n --arg account "$1" --arg cluster "$2" --argjson cpu "$3" --argjson memory "$4" --argjson gpu "$5" \
-        '[{ClusterID: $cluster, ResourceGroupID: $account, CPUValue: $cpu, MemoryValue: $memory, GPUValue: $gpu, PolicyType: "limit"}]')"
+        '[{ClusterID: $cluster, ResourceGroupID: $account, Allocated: true, CPUValue: $cpu, MemoryValue: $memory, GPUValue: $gpu, PolicyType: "limit"}]')"
     cpdapi POST "${SWHCC_WATCHDOG}/resource_group/resources/policies" "${body}"
     swhcc_api_ok || h_die "Could not allocate resources to the account ($(swhcc_api_error))."
 }
@@ -238,6 +285,54 @@ print(json.dumps({"uid": str(claims["uid"]), "username": claims["username"]}))')
     fi
     h_info "Allocating $4 vCPU, $5 Gi memory and $6 GPU to account '$1'"
     swhcc_allocate "${SWHCC_ACCOUNT_ID}" "$3" "$4" "$5" "$6"
+}
+
+# Make everyone with Control Center access an administrator of the account: the
+# account administrator role, plus membership of this account. Users with no role and
+# groups with no role, such as the system All Users group, have no access to pass on.
+# Fails if any of them could not be updated.
+swhcc_sync_account_admins() {   # <account id>
+    local account="$1" role=zen_resource_group_admin_role failed=0 offset=0 page user uid group id name
+    local -a users=() lines=()
+    while :; do
+        cpdapi GET "/usermgmt/v2/usermgmt/users?offset=${offset}&limit=100"
+        swhcc_api_ok || h_die "Could not list users ($(swhcc_api_error))."
+        lines=("${(@f)$(print -r -- "${API_BODY}" | jq -r '.[] | select((.user_roles // []) | length > 0) | "\(.uid)\t\(.username)"')}")
+        users+=(${lines:#})
+        page="$(print -r -- "${API_BODY}" | jq 'length')"
+        (( page == 100 )) || break
+        (( offset += 100 ))
+    done
+
+    cpdapi GET "${SWHCC_PLATFORM}/resource_groups/${account}/members?member_type=USER&limit=100"
+    swhcc_api_ok || h_die "Could not list the account members ($(swhcc_api_error))."
+    local members=" $(print -r -- "${API_BODY}" | jq -r '[.user_members.users[]?.uid] | join(" ")') "
+
+    for user in "${users[@]}"; do
+        uid="${user%%$'\t'*}"; name="${user#*$'\t'}"
+        swhcc_grant_roles "${name}" "${role}" || (( ++failed ))
+        [[ "${members}" == *" ${uid} "* ]] && continue
+        h_info "${name}: adding to the account"
+        cpdapi POST "${SWHCC_PLATFORM}/resource_groups/${account}/members" \
+            "$(jq -n --arg uid "${uid}" --arg name "${name}" '{users: [{uid: $uid, username: $name}]}')"
+        swhcc_api_ok || { h_error "${name}: could not add to the account ($(swhcc_api_error))."; (( ++failed )); }
+    done
+
+    cpdapi GET "/usermgmt/v4/groups?limit=100"
+    swhcc_api_ok || h_die "Could not list groups ($(swhcc_api_error))."
+    lines=("${(@f)$(print -r -- "${API_BODY}" | jq -r '(.results // [])[] | select((.roles // []) | length > 0) | "\(.group_id)\t\(.name)"')}")
+    for group in ${lines:#}; do
+        id="${group%%$'\t'*}"; name="${group#*$'\t'}"
+        h_info "Group ${name}: making it an account administrator"
+        cpdapi PATCH "/usermgmt/v2/groups/${id}" "$(jq -n --arg role "${role}" '{add_role_identifiers: [$role]}')"
+        swhcc_api_ok || { h_error "Group ${name}: could not add the role ($(swhcc_api_error))."; (( ++failed )); }
+        cpdapi POST "${SWHCC_PLATFORM}/resource_groups/${account}/members" \
+            "$(jq -n --arg id "${id}" --arg name "${name}" '{groups: [{group_id: $id, group_name: $name}]}')"
+        # 409: it is already a member.
+        swhcc_api_ok || [[ "${API_CODE}" == 409 ]] \
+            || { h_error "Group ${name}: could not add to the account ($(swhcc_api_error))."; (( ++failed )); }
+    done
+    (( failed == 0 ))
 }
 
 # --- Instances ----------------------------------------------------------------
