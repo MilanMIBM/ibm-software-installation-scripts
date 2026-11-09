@@ -157,7 +157,7 @@ After the base install is up:
   - `x_repair_cpd_cli_profile.sh` checks that the `cpd-cli` profile points at this cluster and authenticates, and repairs it only when it doesn't (`--check` to only report).
 - Optional data lineage: see [products and integration support](docs/data-lineage.md) for `datalineage` and `mantaflow`.
 - `scripts/install_cloud_pak_for_data/5_component_specific_scripts/` holds per-service follow-ups:
-  - `cp4d_databases/`, `cp4d_informix/` - Db2 SCC prep, EDB Postgres and Informix prep
+  - `cp4d_databases/`, `cp4d_informix/` - Db2 SCC prep, EDB Postgres and Informix prep; [Cognos Db2 content-store setup](docs/cognos-analytics.md), including a preparation helper with read-only checks by default
   - `cp4d_general/` - Software Hub admins on a project, CPD projects, service routes, watsonx.data premium UI features
   - `cp4d_streamsets/` - StreamSets project, environment and engine setup end to end
   - `wxd_opensearch/`, `wxd_datastax_hcd/` - watsonx.data OpenSearch and DataStax HCD prep and fixes
