@@ -11,6 +11,19 @@ The procedure was exercised with Cognos service version **30.0.4**, Db2
 other releases must be checked against their IBM documentation. No Cognos data
 source, dashboard, or viewer-specific query authentication is configured here.
 
+## Prerequisites
+
+The Db2 and Cognos Analytics services must already be installed through the
+repository's Software Hub component-installation workflow. A service marked
+Ready to provision can create an instance; it does not mean an instance or its
+backend database already exists.
+
+This guide starts with instance provisioning. Reuse an existing database only
+if it is dedicated to this purpose and satisfies the content-store requirements.
+Database provisioning, SQL preparation, platform-connection creation and Cognos
+instance creation are separate steps. The preparation helper automates only the
+SQL preparation and its checks.
+
 ## 1. Provision the database
 
 Provision an unused, dedicated Db2 database through Services -> Instances, or use
@@ -23,10 +36,9 @@ need a compatible block class. Use the actual PVC requirements and storage-class
 capabilities rather than relying on a class's name. System, data, backup, archive,
 transaction-log and temporary volumes contribute separately to total capacity.
 
-For the installed Db2 wizard, **Create new storage -> Use storage template**
-allowed choosing a storage class and size. **Define storage parameters** opened
-the manual volume form and caused a blank page in the tested console. This is a
-version-specific UI observation, not a storage requirement.
+In the Db2 wizard, **Create new storage -> Use storage template** lets you
+choose a storage class and size. **Define storage parameters** configures a
+volume manually; it is not needed just to select a class and capacity.
 
 Keep database encryption enabled. Choose the database's authentication mode
 deliberately; Cognos provisioning must use the same IAM mode as the content
@@ -154,20 +166,21 @@ discover the custom resource and use its instance prefix when selecting pods;
 their names can start with `ca` immediately followed by the numeric instance ID.
 Do not depend on a `ca-` name filter or print secret-bearing specs/log payloads.
 
-## Troubleshooting observed during setup
+## Cognos 30.0.4 provisioning compatibility
 
-| Symptom | Diagnostic and recovery |
-| --- | --- |
-| Create keeps spinning | Inspect the create request's HTTP status. A stale browser session returned 401; signing out/in and reopening the wizard resolved submission. Check existing instances before retrying Create. |
-| Certificate setup fails; provider says artifacts service is not up | On Cognos 30.0.4, an externally authenticated administrator triggered HTTP 500 at `/v1/certificates/inline`. The artifacts stack trace pointed to `authorizeCognosUser`, which parsed a raw JWT as JSON. Provisioning as built-in `cpadmin` succeeded in the tested release. Treat this as an observed workaround, check for vendor fixes, and do not weaken TLS or grant extra data access. |
-| Operator Completed but platform Pending/Unknown | Inspect pod readiness and provider progress. The tested instance continued initializing, then became PROVISIONED without a cluster change. An intermediate Unknown alone does not establish a terminal failure. |
-| Db2 config update succeeded but check remains pending | Compare current and deferred values. Separately schedule database reactivation; do not force connected applications or assume a pod restart is necessary. |
+On the tested Cognos 30.0.4 release, submitting provisioning as an externally
+authenticated administrator triggered HTTP 500 at `/v1/certificates/inline`.
+The artifacts-service stack trace pointed to `authorizeCognosUser`, which parsed
+a raw JWT as JSON. Provisioning as built-in `cpadmin` succeeded. Treat this as
+an observed release-specific workaround and check for vendor fixes. The
+workaround concerns the provisioning identity, not the database connection
+account or dashboard viewers' permissions.
 
-In the tested failed instance, the UI offered only Delete instance. The operator
-had created content objects before platform provisioning failed. Deleting an
-instance is not a general recovery procedure and does not prove an external
-content database is empty. Inspect and preserve database state before any new
-attempt; do not rerun one-time CREATE statements blindly or mark platform status
+If certificate setup fails, inspect the actual HTTP error and artifacts-service
+stack trace; the provider's message that the artifacts service is not up can
+hide a request-processing failure. Preserve database state during recovery.
+Deleting a Cognos instance does not establish that an external content store is
+empty. Do not rerun one-time CREATE statements blindly or mark platform status
 PROVISIONED manually.
 
 ## IBM references
