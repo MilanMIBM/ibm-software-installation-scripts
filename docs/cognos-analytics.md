@@ -8,8 +8,7 @@ storage requirements for your Software Hub release before provisioning.
 
 The procedure was exercised with Cognos service version **30.0.4**, Db2
 **12.1.5.0-cn2**, and a UTF-8 database with 32K default pages. Compatibility with
-other releases must be checked against their IBM documentation. No Cognos data
-source, dashboard, or viewer-specific query authentication is configured here.
+other releases must be checked against their IBM documentation.
 
 ## Prerequisites
 
@@ -44,10 +43,6 @@ Keep database encryption enabled. Choose the database's authentication mode
 deliberately; Cognos provisioning must use the same IAM mode as the content
 store. Dedicated-node requirements and resource sizing depend on whether the
 deployment is production or a demonstration. Follow the release's Db2 guidance.
-
-The existing `4.5_provision_db2.sh` pins a Db2 version and applies one size to
-multiple volumes. Review those values and its authentication/page-size settings
-before using it for this purpose; this guide does not update that provisioner.
 
 ## 2. Grant instance access and create the connection
 
@@ -164,7 +159,7 @@ can precede application startup and final initialization.
 Use the existing instance manager for status inspection. For CLI troubleshooting,
 discover the custom resource and use its instance prefix when selecting pods;
 their names can start with `ca` immediately followed by the numeric instance ID.
-Do not depend on a `ca-` name filter or print secret-bearing specs/log payloads.
+Inspect status fields and redact credentials when collecting diagnostic logs.
 
 ## Cognos 30.0.4 provisioning compatibility
 
