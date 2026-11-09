@@ -70,6 +70,10 @@ The automated setup above performs the plugin, identity, role, and connector ste
 
 External COS preserves the table files independently of the cluster. Catalog definitions, table registrations, and Kafka connector progress also need to be preserved or restored when rebuilding around existing tables. A fresh ingestion with no saved progress can replay retained Kafka records into a table that already contains them.
 
+When rebuilding Kafka with reset offsets while keeping existing Iceberg tables, give `iceberg.control.topic` a new name for the replacement Kafka cluster. Iceberg 1.9.2 identifies recovery offsets in table snapshots by the control-topic name and Connect consumer group. Reusing both names can cause new batches to be skipped as already committed, while connector tasks remain `RUNNING` and logs report `Nothing to commit`. Create the new control topic with one partition, update each restored connector configuration, and verify a new table snapshot after the commit interval. Keep the control-topic name stable across normal restarts. Changing it does not recover records already skipped; replay requires a separate offset plan. See the [Iceberg coordinator recovery logic](https://github.com/apache/iceberg/blob/apache-iceberg-1.9.2/kafka-connect/kafka-connect/src/main/java/org/apache/iceberg/connect/channel/Coordinator.java).
+
+To recover skipped batches that Kafka still retains, first check the affected tables' snapshots for any successful commits from the replacement deployment. Save each affected connector's current offsets, stop the connector, reset its source offsets to the chosen replay positions through the Connect REST API, and resume it with the replacement control-topic name. Offset changes require the connector to be stopped, not paused. Replay appends records and can duplicate observations already present in the table; choose the replay range accordingly. Verify both task status and a new Iceberg snapshot with added records. See the [Connect offset management API](https://docs.confluent.io/platform/8.2/connect/references/restapi.html#offset-management).
+
 ## Prepare a local copy
 
 From the repository root:
