@@ -106,17 +106,19 @@ For a Kafka cluster this repo did not install:
 
 ### If queries hang
 
-Flink runs in a different namespace from Kafka. If the Confluent project has
-NetworkPolicies, Flink's connections are silently dropped and every query times
-out. The script detects this and warns; `--allow-network` adds a policy
-permitting the Flink namespace. Verify the whole path with `--test`, which runs
+Flink runs in a different namespace from Kafka. Ingress NetworkPolicies selecting
+the brokers or Schema Registry can block Flink's connections. The script checks
+those selectors; `--allow-network` grants Flink access to already restricted pods
+without isolating additional pods. Monitoring-only policies require no change.
+The grants are removed with their source policies or when Flink is uninstalled.
+Verify the whole path with `--test`, which runs
 a real `SHOW TABLES` rather than just registering configuration.
 
-**Other in-cluster clients:** `--allow-network` selects all Confluent pods, so
-clients in other namespaces, such as StreamSets, also need explicit ingress
-rules for the services and ports they use. Schema Registry access requires
-TCP 8081; blocked schema lookups can prevent Avro publishers from starting.
-Allow the client namespace and required ports, then test from its engine pods.
+**Other in-cluster clients:** existing restrictions, including a namespace-wide
+`allow-flink` policy, require separate grants for clients such as StreamSets.
+Allow the client namespace to reach the configured Kafka listener (default TCP
+29092) and Schema Registry (default TCP 8081), then test from its engine pods.
+Blocked schema lookups or Kafka metadata requests can prevent publishers from starting.
 
 ## Known constraints
 
