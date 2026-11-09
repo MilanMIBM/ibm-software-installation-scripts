@@ -112,6 +112,12 @@ out. The script detects this and warns; `--allow-network` adds a policy
 permitting the Flink namespace. Verify the whole path with `--test`, which runs
 a real `SHOW TABLES` rather than just registering configuration.
 
+**Other in-cluster clients:** `--allow-network` selects all Confluent pods, so
+clients in other namespaces, such as StreamSets, also need explicit ingress
+rules for the services and ports they use. Schema Registry access requires
+TCP 8081; blocked schema lookups can prevent Avro publishers from starting.
+Allow the client namespace and required ports, then test from its engine pods.
+
 ## Known constraints
 
 Verified against CMF 2.4.2 and confluent CLI v4.74 on OpenShift. Several of
