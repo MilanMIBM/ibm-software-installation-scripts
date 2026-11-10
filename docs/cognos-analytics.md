@@ -76,10 +76,12 @@ are independent. The provisioning workaround below does not require using
 
 ## 3. Prepare the content store
 
-The helper uses your current `oc` login and local Db2 administrator access inside
-the selected pod. It reads no passwords or Kubernetes Secrets. It does not load
-`env_bootstrap.sh`, run login commands from config files, or start Podman. Pass
-the namespace explicitly, or export `PROJECT_CPD_INST_OPERANDS` beforehand.
+The prep script sources `env_bootstrap.sh` to load the shared configuration,
+then runs `OC_LOGIN`, which reuses a valid session for the configured cluster
+or logs in when needed. The helper uses local Db2 administrator access inside
+the selected pod and reads no database passwords or Kubernetes Secrets. Pass
+the namespace explicitly, or use `PROJECT_CPD_INST_OPERANDS` from the loaded
+configuration.
 
 ```sh
 ./scripts/install_cloud_pak_for_data/5_component_specific_scripts/cp4d_databases/5_prep_cognos_content_store.sh \

@@ -8,5 +8,7 @@ while [[ "${repo_dir}" != / && ! -f "${repo_dir}/env_bootstrap.sh" ]]; do
 done
 [[ -f "${repo_dir}/env_bootstrap.sh" ]] || { print -u2 -- "Repository root not found"; exit 1; }
 
-# Keep --check free of bootstrap side effects, including Podman startup and config execution.
+source "${repo_dir}/env_bootstrap.sh"
+eval "${OC_LOGIN}"
+
 exec python3 "${repo_dir}/src/helpers/cognos_content_store.py" "$@"

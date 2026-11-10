@@ -3,8 +3,10 @@
 import contextlib
 import io
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -198,6 +200,45 @@ class ExecutionTests(unittest.TestCase):
             db.pod = "pod-b"
             db.resolve_pod()
             self.assertEqual(db.pod, "pod-b")
+
+
+class LauncherTests(unittest.TestCase):
+    def run_launcher(self, mode, login_status=0):
+        launcher = Path(__file__).resolve().parents[1] / "scripts/install_cloud_pak_for_data/5_component_specific_scripts/cp4d_databases/5_prep_cognos_content_store.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "scripts/prep/content_store.sh"
+            script.parent.mkdir(parents=True)
+            shutil.copyfile(launcher, script)
+            (root / "env_bootstrap.sh").write_text(
+                'print -r -- bootstrap\n'
+                'export PROJECT_CPD_INST_OPERANDS=database-ns\n'
+                f'OC_LOGIN=\'print -r -- login; (exit {login_status})\'\n'
+            )
+            helper = root / "src/helpers/cognos_content_store.py"
+            helper.parent.mkdir(parents=True)
+            helper.write_text(
+                'import json, os, sys\n'
+                'print(json.dumps([os.environ["PROJECT_CPD_INST_OPERANDS"], sys.argv[1:]]))\n'
+            )
+            return subprocess.run(
+                ["zsh", str(script), mode, "--instance", "db2-example"],
+                cwd=tmp, capture_output=True, text=True,
+            )
+
+    def test_bootstrap_and_login_precede_helper_in_both_modes(self):
+        for mode in ("--check", "--apply"):
+            with self.subTest(mode=mode):
+                result = self.run_launcher(mode)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                lines = result.stdout.splitlines()
+                self.assertEqual(lines[:2], ["bootstrap", "login"])
+                self.assertEqual(json.loads(lines[2]), ["database-ns", [mode, "--instance", "db2-example"]])
+
+    def test_failed_login_stops_before_helper(self):
+        result = self.run_launcher("--apply", login_status=7)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["bootstrap", "login"])
 
 
 if __name__ == "__main__":
