@@ -8,8 +8,6 @@ SECONDS=0
 trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-# (legacy hardcoded sourcing - replaced by universal crawl below)
-# source "${SCRIPT_DIR}/../source_env_setup.sh"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
@@ -21,24 +19,37 @@ STORE_CREDENTIALS_IN_VAULT="${SERVICE_INSTANCE_VAULT_STORE:-true}"
 
 # ---
 
-for var in OC_LOGIN CPDM_OC_LOGIN PREP_DB2; do
+for var in OC_LOGIN; do
     if [[ -z "${(P)var:-}" ]]; then
         echo "Error: ${var} is not set. Set it in ./cpd_vars.sh before running this script."
         exit 1
     fi
 done
 
+export CPD_PROFILE_NAME="${CPD_PROFILE_NAME:-${CPD_USERNAME}-profile}"
 eval "${OC_LOGIN}"
 DB2_USERNAME="${DB2_USERNAME:-db2admin}"
-export DB2_Version="12.1.3.0-cn3-${IMAGE_ARCH}"
+export DB2_Version="${DB2_VERSION:-12.1.3.0-cn3-${IMAGE_ARCH}}"
 DB2_CPU_LIMIT="2" # 2vCPUs also can be defined as "2000m"
 DB2_MEMORY_LIMIT="8Gi" # 8GB
-DB2_STORAGE_CLAIM=30 # 30GB default, applied on all storage classes volume claims, adjust manually if necessary
+export DB2_PROFILE="${DB2_PROFILE:-general}"
+export DB2_STORAGE_CLAIM="${DB2_STORAGE_CLAIM:-30}"
+for volume in DATA ACTIVELOGS TEMPTS META BACKUP ARCHIVELOGS; do
+    storage_var="DB2_${volume}_STORAGE_GI"
+    export "${storage_var}=${(P)storage_var:-${DB2_STORAGE_CLAIM}}"
+done
+python3 "${_CP4D_REPO_ROOT}/src/helpers/db2_provisioning.py" --validate
 DB2_4K_DEVICE_SUPPORT=ON # ON / OFF
 
 DB2_ID=$((RANDOM % 9000000 + 1000000)) # Random 7 digit id suffix
-export DB2_PAYLOAD_FILE="${SERVICE_INSTANCE_FILE_DIR}/db2oltp.json"
-export DB2_INSTANCE_NAME="db2oltp-1${DB2_ID}"
+export DB2_INSTANCE_NAME="${DB2_INSTANCE_NAME:-db2oltp-1${DB2_ID}}"
+python3 "${_CP4D_REPO_ROOT}/src/helpers/db2_provisioning.py" --validate
+export DB2_PAYLOAD_FILE="${SERVICE_INSTANCE_FILE_DIR}/${DB2_INSTANCE_NAME}.json"
+[[ ! -e "${DB2_PAYLOAD_FILE}" ]] || { print -u2 -- "Payload already exists; choose a new DB2_INSTANCE_NAME"; exit 1; }
+
+python3 "${_CP4D_REPO_ROOT}/src/helpers/db2_provisioning.py" --check-name "${DB2_INSTANCE_NAME}" --profile "${CPD_PROFILE_NAME}"
+existing_instance="$(oc get db2uinstance "${DB2_INSTANCE_NAME}" -n "${PROJECT_CPD_INST_OPERANDS}" --ignore-not-found -o name)"
+[[ -z "${existing_instance}" ]] || { print -u2 -- "Db2 instance already exists; choose a new DB2_INSTANCE_NAME"; exit 1; }
 
 # --- Instance password: DB2_PASSWORD as given (export it, or set it in
 # ./cpd_vars.sh), else a generated one. It is saved to this instance's details
@@ -61,189 +72,15 @@ h_write_instance_details db2oltp "${DB2_INSTANCE_NAME}" "${PROJECT_CPD_INST_OPER
 DB2_CREDENTIALS_FILE="${REPLY}"
 echo "[INFO] Credentials saved to ${DB2_CREDENTIALS_FILE#${_CP4D_REPO_ROOT}/} (${DB2_VAR_PREFIX}_*)"
 
-export CPD_PROFILE_NAME="${CPD_USERNAME}-profile"
+# The builder receives credentials through the environment, never shell interpolation.
+export DB2_PASSWORD DB2_CPU_LIMIT DB2_MEMORY_LIMIT DB2_4K_DEVICE_SUPPORT
+python3 "${_CP4D_REPO_ROOT}/src/helpers/db2_provisioning.py" --output "${DB2_PAYLOAD_FILE}"
 
-# --- Build the CPD service-instance payload (zen-data/v3/service_instances schema)
-
-# The password goes in through the environment, so any characters are safe.
-DB2_PASSWORD="${DB2_PASSWORD}" python3 - <<PYEOF
-import json, os
-
-payload = {
-    "addon_type": "db2oltp",
-    "display_name": "${DB2_INSTANCE_NAME}",
-    "namespace": "${PROJECT_CPD_INST_OPERANDS}",
-    "addon_version": "${DB2_Version}",
-    "create_arguments": {
-        "description": "",
-        "metadata": {
-            "labels": {
-                "cpd_db2": "db2oltp",
-                "db2u/cpdbr": "db2u",
-                "icpdsupport/addOnId": "db2oltp",
-                "icpdsupport/app": "${DB2_INSTANCE_NAME}",
-                "icpdsupport/module": "db2u"
-            },
-            "annotations": {
-                "openshift.io/required-scc": "restricted-v2"
-            }
-        },
-        "parameters": {
-            "account": {
-                "imagePullSecrets": ["${IMAGE_PULL_SECRET}"],
-                "securityConfig": {
-                    "nonRootInstall": True,
-                    "privilegedSysctlInit": False
-                }
-            },
-            "addOns": {
-                "graph": {"enabled": False},
-                "opendataformats": {"workloadProfile": "default"},
-                "qrep": {"enabled": False, "license": {}},
-                "rest": {"enabled": True}
-            },
-            "advOpts": {
-                "db2SecurityPlugin": "cloud_gss_plugin",
-                "zenControlPlaneNamespace": "${PROJECT_CPD_INST_OPERANDS}"
-            },
-            "environment": {
-                "authentication": {"ldap": {"enabled": False}},
-                "databases": [
-                    {
-                        "name": "BLUDB",
-                        "settings": {"dftPageSize": "16384"},
-                        "storage": [
-                            {
-                                "name": "data",
-                                "spec": {
-                                    "accessModes": ["ReadWriteOnce"],
-                                    "resources": {"requests": {"storage": "${DB2_STORAGE_CLAIM}Gi"}},
-                                    "storageClassName": "${STG_CLASS_BLOCK}"
-                                },
-                                "type": "template"
-                            },
-                            {
-                                "name": "activelogs",
-                                "spec": {
-                                    "accessModes": ["ReadWriteOnce"],
-                                    "resources": {"requests": {"storage": "${DB2_STORAGE_CLAIM}Gi"}},
-                                    "storageClassName": "${STG_CLASS_BLOCK}"
-                                },
-                                "type": "template"
-                            },
-                            {
-                                "name": "tempts",
-                                "spec": {
-                                    "accessModes": ["ReadWriteOnce"],
-                                    "resources": {"requests": {"storage": "${DB2_STORAGE_CLAIM}Gi"}},
-                                    "storageClassName": "${STG_CLASS_FILE}"
-                                },
-                                "type": "template"
-                            }
-                        ]
-                    }
-                ],
-                "dbType": "db2oltp",
-                "instance": {
-                    "dbmConfig": {
-                        "SRVCON_PW_PLUGIN": "IBMIAMauthpwfile",
-                        "group_plugin": "IBMIAMauthgroup",
-                        "srvcon_auth": "GSS_SERVER_ENCRYPT",
-                        "srvcon_gssplugin_list": "IBMIAMauth"
-                    },
-                    "password": {"value": os.environ["DB2_PASSWORD"]},
-                    "registry": {
-                        "DB2_4K_DEVICE_SUPPORT": "${DB2_4K_DEVICE_SUPPORT}",
-                        "DB2_FMP_RUN_AS_CONNECTED_USER": "NO",
-                        "DB2AUTH": "OSAUTHDB,ALLOW_LOCAL_FALLBACK,PLUGIN_AUTO_RELOAD"
-                    }
-                },
-                "partitionConfig": {"total": 1},
-                "ssl": {
-                    "allowSslOnly": False,
-                    "certLabel": "CN=zen-ca-cert",
-                    "secretName": "db2oltp-internal-tls"
-                }
-            },
-            "license": {"accept": True},
-            "nodes": 1,
-            "podTemplate": {
-                "db2u": {
-                    "resource": {
-                        "db2u": {
-                            "limits": {
-                                "cpu": "${DB2_CPU_LIMIT}",
-                                "memory": "${DB2_MEMORY_LIMIT}"
-                            }
-                        }
-                    }
-                }
-            },
-            "storage": [
-                {
-                    "name": "meta",
-                    "spec": {
-                        "accessModes": ["ReadWriteMany"],
-                        "resources": {"requests": {"storage": "${DB2_STORAGE_CLAIM}Gi"}},
-                        "storageClassName": "${STG_CLASS_FILE}"
-                    },
-                    "type": "create"
-                },
-                {
-                    "name": "backup",
-                    "spec": {
-                        "accessModes": ["ReadWriteMany"],
-                        "resources": {"requests": {"storage": "${DB2_STORAGE_CLAIM}Gi"}},
-                        "storageClassName": "${STG_CLASS_FILE}"
-                    },
-                    "type": "create"
-                },
-                {
-                    "name": "archivelogs",
-                    "spec": {
-                        "accessModes": ["ReadWriteMany"],
-                        "resources": {"requests": {"storage": "${DB2_STORAGE_CLAIM}Gi"}},
-                        "storageClassName": "${STG_CLASS_FILE}"
-                    },
-                    "type": "create"
-                }
-            ],
-            "version": "${DB2_Version}",
-            "volumeSources": [
-                {
-                    "visibility": ["db2u"],
-                    "volumeSource": {"secret": {"secretName": "zen-service-broker-secret"}}
-                },
-                {
-                    "visibility": ["db2u"],
-                    "volumeSource": {"configMap": {"name": "management-ingress-ibmcloud-cluster-info"}}
-                }
-            ]
-        }
-    }
-}
-
-# The payload holds the password: readable by this user only.
-os.umask(0o077)
-with open("${DB2_PAYLOAD_FILE}", "w") as f:
-    json.dump(payload, f, indent=2)
-os.chmod("${DB2_PAYLOAD_FILE}", 0o600)
-PYEOF
-
-# --- Log into the cluster and create the resource.
-
-eval "${OC_LOGIN}"
-eval "${CPDM_OC_LOGIN}"
-
-cpd-cli service-instance create \
-    --profile=${CPD_PROFILE_NAME} \
-    --from-source=${DB2_PAYLOAD_FILE} \
-    --verbose
+python3 "${_CP4D_REPO_ROOT}/src/helpers/db2_provisioning.py" --submit "${DB2_PAYLOAD_FILE}" --profile "${CPD_PROFILE_NAME}"
 
 # --- Observe the progress in provisioning of Db2
 
 echo "Waiting for ${DB2_INSTANCE_NAME} to reach Ready state..."
-sleep 120
-oc wait db2uinstance "${DB2_INSTANCE_NAME}" --for=jsonpath='{.status.state}'=Ready --timeout=30m || true
+python3 "${_CP4D_REPO_ROOT}/src/helpers/db2_provisioning.py" --wait "${DB2_INSTANCE_NAME}" --namespace "${PROJECT_CPD_INST_OPERANDS}" --profile "${CPD_PROFILE_NAME}"
 
-cpd-cli service-instance status "${DB2_INSTANCE_NAME}" --profile=${CPD_USERNAME} --service-type=db2oltp
+cpd-cli service-instance status "${DB2_INSTANCE_NAME}" --profile="${CPD_PROFILE_NAME}" --service-type=db2oltp

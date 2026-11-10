@@ -33,6 +33,7 @@ class Settings:
     schema: str
     pool_pages: int = 1000
     default_pool_pages: int = 49800
+    require_32k: bool = False
 
     def __post_init__(self):
         for name in ("database", "user", "schema"):
@@ -138,11 +139,11 @@ def plan(snap: Snapshot, s: Settings) -> Plan:
         if current != desired:
             result.pending.append(f"{name.upper()} must become {desired}; database reactivation requires separate scheduling")
 
-    for name, size in {**POOLS, "IBMDEFAULTBP": None}.items():
+    for name, size in {**POOLS, "IBMDEFAULTBP": 32768 if s.require_32k else None}.items():
         minimum = s.default_pool_pages if name == "IBMDEFAULTBP" else s.pool_pages
         actual = snap.pools.get(name)
         if actual is None:
-            if size is None:
+            if name == "IBMDEFAULTBP":
                 result.errors.append("IBMDEFAULTBP was not found")
             else:
                 sql.append(f"CREATE BUFFERPOOL {name} IMMEDIATE SIZE {minimum} PAGESIZE {size};")
@@ -161,6 +162,12 @@ def plan(snap: Snapshot, s: Settings) -> Plan:
             result.errors.append(f"{name} has incompatible page size, type or buffer pool")
     if "USERSPACE1" not in snap.spaces:
         result.errors.append("USERSPACE1 was not found; review the database's default tablespace")
+
+    if s.require_32k:
+        for name in ("SYSCATSPACE", "USERSPACE1", "TEMPSPACE1"):
+            actual = snap.spaces.get(name)
+            if actual is None or actual[0] != 32768:
+                result.errors.append(f"{name} must have 32768-byte pages for the Cognos database profile; create a new dedicated database")
 
     owner = snap.schemas.get(s.schema)
     if owner is None:
@@ -264,11 +271,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db2-os-user", default="db2inst1", help="local Db2 instance administrator inside the pod")
     parser.add_argument("--bufferpool-pages", type=int, default=1000, help="minimum size of each Cognos buffer pool (default: 1000 pages)")
     parser.add_argument("--default-bufferpool-pages", type=int, default=49800, help="minimum IBMDEFAULTBP size (default: 49800 pages)")
+    parser.add_argument("--require-32k", action="store_true", help="validate 32K IBMDEFAULTBP and initial catalog/default/temporary tablespaces; never convert an existing database")
     args = parser.parse_args(argv)
     if not args.namespace:
         parser.error("--namespace or exported PROJECT_CPD_INST_OPERANDS is required")
     try:
-        settings = Settings(args.database, args.user, args.schema or args.user, args.bufferpool_pages, args.default_bufferpool_pages)
+        settings = Settings(args.database, args.user, args.schema or args.user, args.bufferpool_pages, args.default_bufferpool_pages, args.require_32k)
         db = Db2(args.namespace, args.instance, args.pod, args.db2_os_user)
         return prepare(db, settings, args.apply)
     except PreparationError as exc:
