@@ -233,30 +233,9 @@ _mcm_cli_replace_in_file() {   # FILE FROM TO
     return 0
 }
 
-# FROM as a whole path: rewritten unless the next character could continue the folder
-# name, so a sibling such as FROM-dr/ is not touched. Keeps the file's mode.
+# FROM as a whole path (shared with migrate_to_multi_cluster.sh): see the helper.
 _mcm_cli_replace_path_in_file() {   # FILE FROM TO
-    local file="$1" from="$2" to="$3" text="" rest="" new="" before after tmp
-    IFS= read -rd '' text < "${file}" || true
-    rest="${text}"
-    while [[ "${rest}" == *"${from}"* ]]; do
-        before="${rest%%${(b)from}*}"
-        after="${rest#*${(b)from}}"
-        if [[ "${after}" == [[:alnum:]._-]* ]]; then
-            new+="${before}${from}"
-        else
-            new+="${before}${to}"
-        fi
-        rest="${after}"
-    done
-    new+="${rest}"
-    [[ "${new}" != "${text}" ]] || return 0
-    tmp="$(mktemp "${file}.XXXXXX")" || return 1
-    if ! cp -p "${file}" "${tmp}" || ! print -rn -- "${new}" > "${tmp}" || ! mv -f "${tmp}" "${file}"; then
-        rm -f "${tmp}"
-        return 1
-    fi
-    return 0
+    mcm_replace_path_in_file "$@"
 }
 
 # Generated configs embed absolute paths (ssl.truststore.location in *.properties).

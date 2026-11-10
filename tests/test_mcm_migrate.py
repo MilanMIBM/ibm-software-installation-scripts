@@ -867,6 +867,95 @@ def test_truststore_rewritten_by_migrate_and_rollback():
         assert f"ssl.truststore.location={cluster_dir}/confluent_kafka_internal_ca.crt" in text
 
 
+def _instance_details_fixture(sb):
+    """A flat CP4D config whose generated files hold absolute paths of folders that move."""
+    sb.write_config("cpd", ocp_url=URL_A)
+    sb.write_config("datastax_mc", ocp_url=URL_A)
+    cpd = sb.repo / "configs/cp4d_config"
+    dtx = sb.repo / "configs/datastax_mc_config"
+    (cpd / "certs/edb-postgres").mkdir(parents=True)
+    (cpd / "certs/edb-postgres/ca.crt").write_text("-----BEGIN CERTIFICATE-----\n")
+    details = cpd / "managed-service-instances/edb/edb-postgres-instance_details.sh"
+    details.parent.mkdir(parents=True)
+    details.write_text(
+        f"# edb instance edb-postgres, cluster {URL_A}\n"
+        f"export EDB_SSLROOTCERT={cpd}/certs/edb-postgres/ca.crt\n"
+        f"export EDB_ROUTE_URI_TLS='postgresql://app:pw@h:443/app?sslmode=verify-full&sslrootcert={cpd}/certs/edb-postgres/ca.crt'\n"
+        f"export SIBLING={cpd}-old/certs/ca.crt\n"
+        f"export INSTANCES={sb.repo}/service_instances/instance.json\n"
+        "export ELSEWHERE=/somewhere/else/ca.crt\n"
+    )
+    details.chmod(0o600)
+    (dtx / "scb").mkdir(parents=True)
+    (dtx / "scb/db-scb.zip").write_bytes(b"PK\x03\x04\x00" + str(dtx).encode() + b"\x00")
+    (dtx / "helm-values-files.txt").write_text(f"{dtx}/mc-values-control.yaml\n{dtx}/mc-values-overrides.yaml")
+    instances = sb.repo / "service_instances"
+    instances.mkdir()
+    (instances / "instance.json").write_text(f'{{"ca": "{cpd}/certs/edb-postgres/ca.crt"}}\n')
+    log = sb.repo / "cpd-cli-workspace/logs/run.log"
+    log.parent.mkdir(parents=True)
+    log.write_text(f"read {cpd}/certs/edb-postgres/ca.crt\n")
+    return cpd, dtx, details
+
+
+def test_paths_inside_moved_configs_follow_the_move():
+    with _sandbox() as sb:
+        cpd, dtx, details = _instance_details_fixture(sb)
+        dry = _run(sb, "--dry-run", check=True)
+        assert "update the moved folders' paths inside the moved config files (3 file(s) found when planned)" in dry.stdout
+        assert f"{cpd}/certs" in details.read_text()
+
+        _run(sb, "--yes", check=True)
+        root = sb.repo / "configs/clusters/itz-a"
+        new_cpd, new_dtx = root / "cp4d_config", root / "datastax_mc_config"
+        moved = new_cpd / "managed-service-instances/edb/edb-postgres-instance_details.sh"
+        text = moved.read_text()
+        assert f"export EDB_SSLROOTCERT={new_cpd}/certs/edb-postgres/ca.crt\n" in text
+        assert f"sslrootcert={new_cpd}/certs/edb-postgres/ca.crt'" in text
+        assert f"export SIBLING={cpd}-old/certs/ca.crt\n" in text
+        assert f"export INSTANCES={root}/service_instances/instance.json\n" in text
+        assert "export ELSEWHERE=/somewhere/else/ca.crt\n" in text
+        assert oct(moved.stat().st_mode)[-3:] == "600"
+        assert (new_dtx / "helm-values-files.txt").read_text() == (
+            f"{new_dtx}/mc-values-control.yaml\n{new_dtx}/mc-values-overrides.yaml"
+        )
+        assert (root / "service_instances/instance.json").read_text() == f'{{"ca": "{new_cpd}/certs/edb-postgres/ca.crt"}}\n'
+        # Binary files and workspaces keep their bytes.
+        assert (new_dtx / "scb/db-scb.zip").read_bytes() == b"PK\x03\x04\x00" + str(dtx).encode() + b"\x00"
+        assert (root / "cpd-cli-workspace/logs/run.log").read_text() == f"read {cpd}/certs/edb-postgres/ca.crt\n"
+        # The backup keeps the paths as they were.
+        backup = next((sb.repo / "configs/old_configs").glob("pre_multi_cluster_*"))
+        assert f"{cpd}/certs" in (backup / "configs/cp4d_config" / details.relative_to(cpd)).read_text()
+        listed = (backup / "rewritten_paths.txt").read_text().splitlines()
+        assert str(moved) in listed and len(listed) == 3
+
+
+def test_paths_rewrite_is_undone_by_rollback():
+    with _sandbox() as sb:
+        cpd, dtx, details = _instance_details_fixture(sb)
+        before = details.read_text()
+        helm = (dtx / "helm-values-files.txt").read_text()
+        _migrate_unfinished(sb)
+        assert f"{sb.repo}/configs/clusters/itz-a/cp4d_config/certs" in (
+            sb.repo / "configs/clusters/itz-a/cp4d_config" / details.relative_to(cpd)
+        ).read_text()
+        _run(sb, "--rollback", "--yes", check=True)
+        assert details.read_text() == before
+        assert (dtx / "helm-values-files.txt").read_text() == helm
+
+
+def test_paths_rewrite_resumes_after_a_failure():
+    with _sandbox() as sb:
+        cpd, _, details = _instance_details_fixture(sb)
+        flag = _break_mv_on(sb, "/.cluster")
+        assert _run(sb, "--yes").returncode == 1
+        flag.unlink()
+        _run(sb, "--yes", check=True)
+        text = (sb.repo / "configs/clusters/itz-a/cp4d_config" / details.relative_to(cpd)).read_text()
+        assert f"{sb.repo}/configs/clusters/itz-a/cp4d_config/certs/edb-postgres/ca.crt" in text
+        assert "/clusters/itz-a/clusters/" not in text
+
+
 def test_mirror_state_to_assigns_destination():
     with _sandbox() as sb:
         _add_fixture(sb)

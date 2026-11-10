@@ -61,8 +61,10 @@ Options:
 
 Steps: preflight (no live lease, no running 'cpd-cli manage', no other script of this
 checkout running, olm-utils idle), plan, back up configs to configs/old_configs/pre_multi_cluster_<timestamp>/ (mode 0700), move
-each item, seed .home/.kube/config from ~/.kube/config (not changed), remove the old
-flat olm-utils container, then register the clusters and turn the mode on.
+each item, update the moved folders' absolute paths inside the moved config files (cert
+paths in instance details, truststores, bundle zips; binary files and workspaces are not
+touched), seed .home/.kube/config from ~/.kube/config (not changed), remove the old flat
+olm-utils container, then register the clusters and turn the mode on.
 
 Routing: each product folder goes to the cluster derived from its OCP_URL. Files in
 openshift_config go by the cluster URL in their comment; no URL or several URLs goes
@@ -170,8 +172,11 @@ MCM_MIG_SWHCC_WORKSPACE="${HOME}/cpd-cli-swhub-control-center"
 # The plan: one row per step, across parallel arrays.
 #   mv       cluster SRC DST [keep]    move; "keep" leaves an empty SRC folder behind
 #   cp       cluster SRC DST           copy, 0600
-#   rewrite  cluster DIR OLD NEW       truststore prefix in DIR/**/*.properties
-#   seed     cluster DST CONTEXT       .kube/config from one ~/.kube/config context
+#   rewrite  cluster DIR OLD NEW       truststore prefix in DIR/**/*.properties (journals
+#                                      written before the paths step; no longer planned)
+#   paths    "" "" "" COUNT            every mv's SRC path rewritten to its DST inside the
+#                                      moved config files (COUNT: files found when planned)
+#   seed    cluster DST CONTEXT       .kube/config from one ~/.kube/config context
 #   rmc      cluster NAME              remove a container, after the idle check
 #   register cluster NAME URL          marker (DELINEATED="true") and MCM_CLUSTERS; the
 #                                      marker it replaced is saved for an undo
@@ -830,10 +835,8 @@ _mcm_mig_build_forward_plan() {
         croot="${MCM_MIG_CLUSTERS_ROOT}/${cluster}"
         _mcm_mig_seen "${cluster}" "${p_has_vars[$name]}"
         _mcm_mig_claim_url "${name}" "${cluster}" "${p_url[$name]}"
+        # Absolute paths inside the folder (truststores, certs) are the paths step's.
         _mcm_mig_add_move "${name}" "${cluster}" "${MCM_MIG_CONFIGS}/${name}" "${croot}/${name}"
-        if [[ "${name}" == confluent_platform_config ]]; then
-            _mcm_mig_add rewrite "${cluster}" "${croot}/${name}" "${MCM_MIG_CONFIGS}/${name}" "${croot}/${name}"
-        fi
     done
 
     # 4. openshift_config, one file at a time.
@@ -1014,6 +1017,14 @@ _mcm_mig_build_forward_plan() {
         return 0
     fi
 
+    # 8b. Generated configs hold absolute paths of what just moved: instance details point
+    # at certs/<instance>/ca.crt, Confluent properties at truststores, DataStax details at
+    # the bundle zip. Every move's old path becomes its new one inside the moved configs.
+    if (( ${MCM_MIG_E_KIND[(Ie)mv]} )); then
+        _mcm_mig_path_candidates src
+        _mcm_mig_add paths "" "" "" "${#reply}"
+    fi
+
     # 9. Seed each cluster's oc session from ~/.kube/config.
     _mcm_mig_read_kubeconfig
     local kube_dst
@@ -1076,6 +1087,7 @@ _mcm_mig_describe() {   # INDEX; prints one line
         mv)         print -r -- "move $(_mcm_mig_short "${a}") -> $(_mcm_mig_short "${b}")" ;;
         cp)         print -r -- "copy $(_mcm_mig_short "${a}") -> $(_mcm_mig_short "${b}")" ;;
         rewrite)    print -r -- "rewrite the truststore path in $(_mcm_mig_short "${a}")/*.properties to $(_mcm_mig_short "${c}")" ;;
+        paths)      print -r -- "update the moved folders' paths inside the moved config files (${c:-0} file(s) found when planned)" ;;
         seed)       print -r -- "seed $(_mcm_mig_short "${a}") from ~/.kube/config context ${b}" ;;
         rmc)        print -r -- "remove container ${a} after the idle check" ;;
         register)   print -r -- "register cluster ${a}${b:+ (${b})}, delineated for good" ;;
@@ -1272,6 +1284,109 @@ _mcm_mig_rewrite_truststores() {   # DIR OLD NEW
     return 0
 }
 
+# --- Paths inside the moved configs -------------------------------------------
+# Folders whose files are scanned: the configs and what sits beside them (certs, instance
+# details, OADP targets, rendered manifests), not the workspaces (logs, caches, downloads,
+# ~/cpd-cli) or the seeded .home.
+_mcm_mig_path_scanned() {   # DST
+    local rel
+    [[ "${1}" == "${MCM_MIG_CLUSTERS_ROOT}/"* ]] || return 1
+    rel="${1#"${MCM_MIG_CLUSTERS_ROOT}/"}"
+    [[ "${rel}" == */* ]] || return 1
+    rel="${rel#*/}"
+    case "${rel%%/*}" in
+        *_workspace|cpd-cli-workspace|.home) return 1 ;;
+    esac
+    return 0
+}
+
+# Every move as FROM<TAB>TO, longest FROM first, so a nested move wins over its parent.
+# fwd: old path to new; back: new path to old. Sets reply.
+_mcm_mig_path_moves() {   # fwd|back
+    local i from to
+    local -a rows
+    for (( i = 1; i <= ${#MCM_MIG_E_KIND}; i++ )); do
+        [[ "${MCM_MIG_E_KIND[$i]}" == mv ]] || continue
+        from="${MCM_MIG_E_A[$i]}"
+        to="${MCM_MIG_E_B[$i]}"
+        if [[ "${1}" == back ]]; then
+            from="${MCM_MIG_E_B[$i]}"
+            to="${MCM_MIG_E_A[$i]}"
+        fi
+        rows+=("${#from}"$'\t'"${from}"$'\t'"${to}")
+    done
+    reply=("${(@On)rows}")
+    reply=("${(@)reply#*$'\t'}")
+    return 0
+}
+
+# The text files of the scanned folders that hold an old path of any move. src: the
+# folders before the move (the plan's count), dst: after it. grep -I leaves binary
+# files (zips, keystores) out, so the rewrite never reads one. Sets reply.
+_mcm_mig_path_candidates() {   # src|dst
+    local i target row out
+    local -a targets patterns
+    for (( i = 1; i <= ${#MCM_MIG_E_KIND}; i++ )); do
+        [[ "${MCM_MIG_E_KIND[$i]}" == mv ]] || continue
+        _mcm_mig_path_scanned "${MCM_MIG_E_B[$i]}" || continue
+        target="${MCM_MIG_E_B[$i]}"
+        [[ "${1}" == dst ]] || target="${MCM_MIG_E_A[$i]}"
+        if [[ -e "${target}" && ! -L "${target}" ]]; then
+            targets+=("${target}")
+        fi
+    done
+    _mcm_mig_path_moves fwd
+    for row in "${reply[@]}"; do
+        patterns+=(-e "${row%%$'\t'*}")
+    done
+    reply=()
+    (( ${#targets} > 0 && ${#patterns} > 0 )) || return 0
+    out="$(LC_ALL=C grep -rlIF "${patterns[@]}" -- "${targets[@]}" 2>/dev/null || true)"
+    reply=("${(@f)out}")
+    reply=("${(@)reply:#}")
+    return 0
+}
+
+# The files this step changed, one path per line in the journal folder, so --rollback
+# changes back only those. Written before each file changes.
+_mcm_mig_paths_list() { print -r -- "${MCM_MIG_JOURNAL_DIR}/rewritten_paths.txt"; }
+
+_mcm_mig_rewrite_paths() {   # fwd|back
+    local direction="$1" list file row from to changed=0
+    local -a moves files listed
+    list="$(_mcm_mig_paths_list)"
+    _mcm_mig_path_moves "${direction}"
+    moves=("${reply[@]}")
+    if [[ "${direction}" == fwd ]]; then
+        _mcm_mig_path_candidates dst
+        files=("${reply[@]}")
+        [[ ! -f "${list}" ]] || listed=("${(@f)$(<"${list}")}")
+    else
+        [[ -f "${list}" ]] || return 0
+        files=("${(@fu)$(<"${list}")}")
+    fi
+    for file in "${files[@]}"; do
+        [[ -n "${file}" && -f "${file}" && ! -L "${file}" ]] || continue
+        if [[ "${direction}" == fwd ]] && (( ! ${listed[(Ie)${file}]} )); then
+            print -r -- "${file}" >> "${list}" || return 1
+            listed+=("${file}")
+        fi
+        for row in "${moves[@]}"; do
+            from="${row%%$'\t'*}"
+            to="${row#*$'\t'}"
+            if ! mcm_replace_path_in_file "${file}" "${from}" "${to}"; then
+                echo "[ERROR] Could not update the paths in $(_mcm_mig_short "${file}")." >&2
+                return 1
+            fi
+        done
+        (( changed += 1 ))
+    done
+    if (( changed > 0 )); then
+        print -r -- "[INFO] Paths updated in ${changed} file(s); the list is in $(_mcm_mig_short "${list}")."
+    fi
+    return 0
+}
+
 # Never fatal: the moves are done and the container is rebuilt on next use.
 _mcm_mig_remove_container() {   # NAME
     local name="${1}" rc=0 running found
@@ -1360,6 +1475,7 @@ _mcm_mig_apply() {   # INDEX
         mv)         _mcm_mig_do_mv "${a}" "${b}" "${c}" ;;
         cp)         _mcm_mig_do_cp "${a}" "${b}" ;;
         rewrite)    _mcm_mig_rewrite_truststores "${a}" "${b}" "${c}" ;;
+        paths)      _mcm_mig_rewrite_paths fwd ;;
         seed)       _mcm_mig_do_seed "${a}" "${b}" ;;
         rmc)        _mcm_mig_remove_container "${a}" ;;
         register)   _mcm_mig_do_register "${a}" "${b}" ;;
@@ -1420,6 +1536,7 @@ _mcm_mig_undo() {   # INDEX
             fi
             ;;
         rewrite) _mcm_mig_rewrite_truststores "${a}" "${c}" "${b}" ;;
+        paths)   _mcm_mig_rewrite_paths back ;;
         seed)
             rm -f "${a}${MCM_MIG_PARTIAL}"
             if [[ -f "${a}" ]]; then

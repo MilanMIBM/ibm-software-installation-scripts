@@ -571,6 +571,36 @@ _mcm_url_key() {
     print -r -- "${host}:${port:-6443}"
 }
 
+# FROM as a whole path, in a text file: rewritten to TO unless the next character could
+# continue the folder name, so a sibling such as FROM-dr/ is not touched. The file is
+# replaced in one rename and keeps its mode; a file without FROM is not rewritten. Used by
+# multi_cluster.sh rename/add --copy-from and migrate_to_multi_cluster.sh. The caller
+# keeps binary files away: the read stops at the first NUL byte.
+mcm_replace_path_in_file() {   # FILE FROM TO
+    emulate -L zsh
+    local file="$1" from="$2" to="$3" text="" rest="" new="" before after tmp
+    IFS= read -rd '' text < "${file}" || true
+    rest="${text}"
+    while [[ "${rest}" == *"${from}"* ]]; do
+        before="${rest%%${(b)from}*}"
+        after="${rest#*${(b)from}}"
+        if [[ "${after}" == [[:alnum:]._-]* ]]; then
+            new+="${before}${from}"
+        else
+            new+="${before}${to}"
+        fi
+        rest="${after}"
+    done
+    new+="${rest}"
+    [[ "${new}" != "${text}" ]] || return 0
+    tmp="$(mktemp "${file}.XXXXXX")" || return 1
+    if ! cp -p "${file}" "${tmp}" || ! print -rn -- "${new}" > "${tmp}" || ! mv -f "${tmp}" "${file}"; then
+        rm -f "${tmp}"
+        return 1
+    fi
+    return 0
+}
+
 mcm_is_registered() {
     emulate -L zsh
     local name="${1:-}"
