@@ -152,7 +152,8 @@ ls scripts/install_cloud_pak_for_data/x_clean_or_debug_cp4d/
 
 After the base install is up:
 
-- `scripts/install_cloud_pak_for_data/4.5_service_instance_setups/` provisions service instances: Db2, EDB Postgres, Databand Postgres, Informix, DataStax HCD, OpenPages and Planning Analytics.
+- `scripts/install_cloud_pak_for_data/4.5_service_instance_setups/` provisions service instances: Db2, Cognos Analytics, EDB Postgres, Databand Postgres, Informix, DataStax HCD, OpenPages and Planning Analytics.
+  - [Cognos CLI provisioning and Db2 sizing](docs/cognos-analytics.md#cli-provisioning): render a private payload, validate a prepared 32K content store, create once and wait for readiness. Db2 supports independent volume sizes and an explicit `DB2_PROFILE=cognos` for new databases.
   - `x_service_instance_manager.sh` lists the add-ons that can create service instances and every existing instance with its state (read-only; `--once`, `--explain <type>`, `--storage-report`, `--help`). It discovers each type's fields from the cluster rather than hardcoding them.
   - `x_repair_cpd_cli_profile.sh` checks that the `cpd-cli` profile points at this cluster and authenticates, and repairs it only when it doesn't (`--check` to only report).
 - Optional data lineage: see [products and integration support](docs/data-lineage.md) for `datalineage` and `mantaflow`.
