@@ -11,12 +11,24 @@
 # first failure, prints [stage/total, %, elapsed] as it goes, and gives up after
 # E2E_LIMIT seconds (default 90). The finer cases live in
 # tests/install_runner_container_test.sh.
+#
+# install_runner_e2e.sh --prepare-only <empty dir> builds just the throwaway repo
+# in <dir>/repo and stops: no podman, no image. tests/test_install_runner.py uses it
+# to check that the copy still loads its env, since the full run needs a built image.
 # =============================================================================
-IMAGE="${1:?usage: install_runner_e2e.sh <image>}"
+PREPARE_ONLY=""
+if [[ "${1:-}" == --prepare-only ]]; then
+    PREPARE_ONLY=1
+    T="${2:?usage: install_runner_e2e.sh --prepare-only <empty dir>}"
+    [[ -d "${T}" && -z "$(ls -A "${T}")" ]] || { print -r -- "need an existing empty folder: ${T}" >&2; exit 2; }
+    IMAGE=""
+else
+    IMAGE="${1:?usage: install_runner_e2e.sh <image> | --prepare-only <empty dir>}"
+    T="$(mktemp -d)"
+fi
 REPO="${0:A:h:h}"
 NAME=ir-e2e-test
 VOL=ir-e2e-test-work
-T="$(mktemp -d)"
 REAL_HOME="${HOME}"   # the podman client finds its machine through HOME
 LIMIT="${E2E_LIMIT:-90}"
 TOTAL=6 STAGE=0 PASS=0
@@ -28,8 +40,10 @@ cleanup() {
     HOME="${REAL_HOME}" podman volume rm -f "${VOL}" >/dev/null 2>&1
     rm -rf "${T}"
 }
-trap cleanup EXIT
-trap 'exit 124' INT TERM
+if [[ -z "${PREPARE_ONLY}" ]]; then
+    trap cleanup EXIT
+    trap 'exit 124' INT TERM
+fi
 
 stage() { (( ++STAGE )); printf '[%d/%d %3d%% %3ds] %s\n' ${STAGE} ${TOTAL} $(( (STAGE - 1) * 100 / TOTAL )) ${SECONDS} "$1"; }
 die() {
@@ -51,12 +65,20 @@ wait_for() {   # <what> <condition>
 }
 
 # --- a throwaway repo with a demo install --------------------------------------
+# The repo's code as the runner would stage it (tracked and new files, nothing
+# git-ignored, so no configs/ or workspaces): a fixed list broke here each time the
+# env load sourced a new helper.
 root="${T}/repo"
-mkdir -p "${root}/src/install_runner/installs" "${root}/scripts/e2e" "${root}/configs/e2e_config" "${root}/src/helpers"
-cp "${REPO}/env_bootstrap.sh" "${REPO}/pyproject.toml" "${root}/"
-cp "${REPO}/scripts/source_env_setup.sh" "${root}/scripts/"
-cp "${REPO}"/src/helpers/{common_helpers,install_runner_helpers,install_runner_journal}.sh "${root}/src/helpers/"
-cp -R "${REPO}/src/install_runner/manifests" "${REPO}/src/install_runner/stream_counter.py" "${root}/src/install_runner/"
+mkdir -p "${root}"
+( cd "${REPO}" && git ls-files -z -c -o --exclude-standard | while IFS= read -r -d '' f; do
+      [[ -f "${f}" ]] && print -rn -- "${f}"$'\0'
+  done | COPYFILE_DISABLE=1 tar --null -T - -cf - ) | tar -xf - -C "${root}" \
+    || die "could not copy the repo"
+# Without pipefail the check above sees only the last tar: a failed `git ls-files` (no checkout, no
+# git) gives an empty copy that would die later at env load with a less clear error.
+[[ -f "${root}/env_bootstrap.sh" && -f "${root}/src/helpers/common_helpers.sh" ]] \
+    || die "could not copy the repo (is ${REPO} a git checkout?)"
+mkdir -p "${root}/scripts/e2e" "${root}/configs/e2e_config"
 cat > "${root}/src/install_runner/installs/e2e.conf" <<'S'
 INSTALL_ID="e2e"
 INSTALL_LABEL="End-to-end demo"
@@ -76,6 +98,10 @@ export OC_LOGIN="true"
 export E2E_SC=demo
 export INSTALL_RUN_MODE=cluster
 S
+# A flat checkout always has a CP4D config, and the workstation's env load keeps its
+# error for an empty configs/cp4d_config; the demo install never reads it.
+mkdir -p "${root}/configs/cp4d_config"
+print -r -- '# placeholder: the e2e demo install has its own config' > "${root}/configs/cp4d_config/cpd_vars.sh"
 print -r -- 'local edit stays' > "${root}/configs/e2e_config/edited.txt"
 print -r -- 'seed' > "${root}/configs/e2e_config/plain.txt"
 cat > "${root}/scripts/e2e/chain.sh" <<'S'
@@ -96,6 +122,10 @@ S
 chmod +x "${root}/scripts/e2e/chain.sh"
 print -r -- 'configs/*' > "${root}/.gitignore"
 ( cd "${root}" && git init -q && git add -A >/dev/null )
+if [[ -n "${PREPARE_ONLY}" ]]; then
+    print -r -- "prepared ${root}"
+    exit 0
+fi
 
 # --- fake oc: everything canned, except that exec reaches the real container ---
 mkdir "${T}/bin"
@@ -141,8 +171,6 @@ check "chain did not run here" '[[ ! -e "${root}/configs/e2e_config/result.sh" ]
 check "state is running, in the pod" '[[ "$(in_pod "cat /work/current/state")" == running ]]'
 
 tool="${root}/scripts/install_runner/x_install_runner.sh"
-mkdir -p "${root}/scripts/install_runner"
-cp "${REPO}/scripts/install_runner/x_install_runner.sh" "${REPO}/scripts/install_runner/x_watch_install.sh" "${root}/scripts/install_runner/"
 # Its own process group with SIGINT on, as a foreground job in a terminal has, so
 # signalling the group is what Ctrl-C does.
 perl -e '$SIG{INT}="DEFAULT"; setpgrp(0,0); exec @ARGV' "${tool}" attach --install e2e --last 5 > "${T}/detach.out" 2>&1 &

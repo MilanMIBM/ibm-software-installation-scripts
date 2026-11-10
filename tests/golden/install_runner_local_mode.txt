@@ -1,0 +1,1798 @@
+# Local-mode chain runs (tests/test_install_runner_local_mode.py). Captured from git archive c204519.
+
+### scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] registry-config      private registry: configure the cluster (scripts/private_registry_mirroring 3.x)
+[INFO]   [run ] certmanager          1.0 set up openshift certmanager
+[INFO]   [run ] pull-secret          1.1 set up global pull credential
+[INFO]   [run ] preliminary          2.0 preliminary setup
+[INFO]   [run ] prereq-operators     2.2 install prerequisite operators
+[INFO]   [run ] softwarehub          3.1 install software hub
+[INFO]   [run ] cpd                  4.0 install cpd components
+[INFO]   [off ] swhub-control-center-config derive swhub_control_center_vars.sh from cpd_vars.sh
+[INFO]   [off ] swhub-control-center optional Software Hub Control Center (INSTALL_SWHUB_CONTROL_CENTER in cpd_vars.sh)
+[TIMER] full_swhub_x_cpd_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_swhub_x_cpd_installprocess.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] registry-config      private registry: configure the cluster (scripts/private_registry_mirroring 3.x)
+[INFO]   [run ] certmanager          1.0 set up openshift certmanager
+[INFO]   [run ] pull-secret          1.1 set up global pull credential
+[INFO]   [run ] preliminary          2.0 preliminary setup
+[INFO]   [run ] prereq-operators     2.2 install prerequisite operators
+[INFO]   [run ] softwarehub          3.1 install software hub
+[INFO]   [run ] cpd                  4.0 install cpd components
+[INFO]   [off ] swhub-control-center-config derive swhub_control_center_vars.sh from cpd_vars.sh
+[INFO]   [off ] swhub-control-center optional Software Hub Control Center (INSTALL_SWHUB_CONTROL_CENTER in cpd_vars.sh)
+[TIMER] full_swhub_x_cpd_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_swhub_x_cpd_installprocess.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh :: default :: flat
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] registry-config      private registry: configure the cluster (scripts/private_registry_mirroring 3.x)
+[INFO]   [run ] certmanager          1.0 set up openshift certmanager
+[INFO]   [run ] pull-secret          1.1 set up global pull credential
+[INFO]   [run ] preliminary          2.0 preliminary setup
+[INFO]   [run ] prereq-operators     2.2 install prerequisite operators
+[INFO]   [run ] softwarehub          3.1 install software hub
+[INFO]   [run ] cpd                  4.0 install cpd components
+[INFO]   [off ] swhub-control-center-config derive swhub_control_center_vars.sh from cpd_vars.sh
+[INFO]   [off ] swhub-control-center optional Software Hub Control Center (INSTALL_SWHUB_CONTROL_CENTER in cpd_vars.sh)
+
+==> Skipping: private registry: configure the cluster (scripts/private_registry_mirroring 3.x)
+
+==> Running:  1.0 set up openshift certmanager
+[TIMER] 1.0_set_up_openshift_certmanager.sh completed in <N>s
+[TIMER] full_swhub_x_cpd_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_swhub_x_cpd_installprocess.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 1.0_set_up_openshift_certmanager.sh: same env as parent (cpd)
+[ERROR] Step 'certmanager' exited 1. Fix the cause, then re-run the same command with --from certmanager added.
+--- calls
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh :: default :: pinned
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] registry-config      private registry: configure the cluster (scripts/private_registry_mirroring 3.x)
+[INFO]   [run ] certmanager          1.0 set up openshift certmanager
+[INFO]   [run ] pull-secret          1.1 set up global pull credential
+[INFO]   [run ] preliminary          2.0 preliminary setup
+[INFO]   [run ] prereq-operators     2.2 install prerequisite operators
+[INFO]   [run ] softwarehub          3.1 install software hub
+[INFO]   [run ] cpd                  4.0 install cpd components
+[INFO]   [off ] swhub-control-center-config derive swhub_control_center_vars.sh from cpd_vars.sh
+[INFO]   [off ] swhub-control-center optional Software Hub Control Center (INSTALL_SWHUB_CONTROL_CENTER in cpd_vars.sh)
+
+==> Skipping: private registry: configure the cluster (scripts/private_registry_mirroring 3.x)
+
+==> Running:  1.0 set up openshift certmanager
+[TIMER] 1.0_set_up_openshift_certmanager.sh completed in <N>s
+[TIMER] full_swhub_x_cpd_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_swhub_x_cpd_installprocess.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 1.0_set_up_openshift_certmanager.sh: same env as parent (cpd)
+[ERROR] Step 'certmanager' exited 1. Fix the cause, then re-run the same command with --from certmanager added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/2_prepare_cluster/2.0-2.1_preliminary_setup/2.0_preliminary_setup.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] projects             2.0.1 preliminary project setup
+[INFO]   [run ] case-download        2.0.2 cluster component CASE download
+[INFO]   [run ] cluster-components   2.1 apply shared cluster CASE packages
+[INFO]   [run ] pull-secret-linking  2.2.x pull secret compatibility linking
+[TIMER] 2.0_preliminary_setup.sh completed in <N>s
+--- stderr
+[ENV] 2.0_preliminary_setup.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_cloud_pak_for_data/2_prepare_cluster/2.0-2.1_preliminary_setup/2.0_preliminary_setup.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] projects             2.0.1 preliminary project setup
+[INFO]   [run ] case-download        2.0.2 cluster component CASE download
+[INFO]   [run ] cluster-components   2.1 apply shared cluster CASE packages
+[INFO]   [run ] pull-secret-linking  2.2.x pull secret compatibility linking
+[TIMER] 2.0_preliminary_setup.sh completed in <N>s
+--- stderr
+[ENV] 2.0_preliminary_setup.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/2_prepare_cluster/2.0-2.1_preliminary_setup/2.0_preliminary_setup.sh :: default :: flat
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] projects             2.0.1 preliminary project setup
+[INFO]   [run ] case-download        2.0.2 cluster component CASE download
+[INFO]   [run ] cluster-components   2.1 apply shared cluster CASE packages
+[INFO]   [run ] pull-secret-linking  2.2.x pull secret compatibility linking
+
+==> Running:  2.0.1 preliminary project setup
+[TIMER] 2.0.1_preliminary_project_setup.sh completed in <N>s
+[TIMER] 2.0_preliminary_setup.sh completed in <N>s
+--- stderr
+[ENV] 2.0_preliminary_setup.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 2.0.1_preliminary_project_setup.sh: same env as parent (cpd)
+[ERROR] Step 'projects' exited 1. Fix the cause, then re-run the same command with --from projects added.
+--- calls
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_cloud_pak_for_data/2_prepare_cluster/2.0-2.1_preliminary_setup/2.0_preliminary_setup.sh :: default :: pinned
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] projects             2.0.1 preliminary project setup
+[INFO]   [run ] case-download        2.0.2 cluster component CASE download
+[INFO]   [run ] cluster-components   2.1 apply shared cluster CASE packages
+[INFO]   [run ] pull-secret-linking  2.2.x pull secret compatibility linking
+
+==> Running:  2.0.1 preliminary project setup
+[TIMER] 2.0.1_preliminary_project_setup.sh completed in <N>s
+[TIMER] 2.0_preliminary_setup.sh completed in <N>s
+--- stderr
+[ENV] 2.0_preliminary_setup.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 2.0.1_preliminary_project_setup.sh: same env as parent (cpd)
+[ERROR] Step 'projects' exited 1. Fix the cause, then re-run the same command with --from projects added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/2_prepare_cluster/2.2_install_prerequisite_operators/2.2_install_prerequisite_operators.sh :: list-steps :: flat
+rc=1
+--- stdout
+[TIMER] 2.2_install_prerequisite_operators.sh completed in <N>s
+--- stderr
+[ENV] 2.2_install_prerequisite_operators.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_cloud_pak_for_data/2_prepare_cluster/2.2_install_prerequisite_operators/2.2_install_prerequisite_operators.sh :: list-steps :: pinned
+rc=1
+--- stdout
+[TIMER] 2.2_install_prerequisite_operators.sh completed in <N>s
+--- stderr
+[ENV] 2.2_install_prerequisite_operators.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/2_prepare_cluster/2.2_install_prerequisite_operators/2.2_install_prerequisite_operators.sh :: default :: flat
+rc=1
+--- stdout
+[TIMER] 2.2_install_prerequisite_operators.sh completed in <N>s
+--- stderr
+[ENV] 2.2_install_prerequisite_operators.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_cloud_pak_for_data/2_prepare_cluster/2.2_install_prerequisite_operators/2.2_install_prerequisite_operators.sh :: default :: pinned
+rc=1
+--- stdout
+[TIMER] 2.2_install_prerequisite_operators.sh completed in <N>s
+--- stderr
+[ENV] 2.2_install_prerequisite_operators.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/3_install_softwarehub/3.1_full_step_3_installprocess-softwarehub.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] admin                3.2 set up cpd admin
+[INFO]   [run ] softwarehub          3.3 install IBM Software Hub
+[INFO]   [run ] instance-creds       3.3.1 get instance credentials
+[INFO]   [run ] admission-controller 3.3.2 admission controller
+[INFO]   [run ] entitlements         3.4 apply entitlements
+[INFO]   [off ] ccs-cr               3.5 create ccs-cr if missing (ccs in SOFTWARE_HUB / CPD_COMPONENTS)
+[TIMER] 3.1_full_step_3_installprocess-softwarehub.sh completed in <N>s
+--- stderr
+[ENV] 3.1_full_step_3_installprocess-softwarehub.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_cloud_pak_for_data/3_install_softwarehub/3.1_full_step_3_installprocess-softwarehub.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] admin                3.2 set up cpd admin
+[INFO]   [run ] softwarehub          3.3 install IBM Software Hub
+[INFO]   [run ] instance-creds       3.3.1 get instance credentials
+[INFO]   [run ] admission-controller 3.3.2 admission controller
+[INFO]   [run ] entitlements         3.4 apply entitlements
+[INFO]   [off ] ccs-cr               3.5 create ccs-cr if missing (ccs in SOFTWARE_HUB / CPD_COMPONENTS)
+[TIMER] 3.1_full_step_3_installprocess-softwarehub.sh completed in <N>s
+--- stderr
+[ENV] 3.1_full_step_3_installprocess-softwarehub.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/3_install_softwarehub/3.1_full_step_3_installprocess-softwarehub.sh :: default :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] admin                3.2 set up cpd admin
+[INFO]   [run ] softwarehub          3.3 install IBM Software Hub
+[INFO]   [run ] instance-creds       3.3.1 get instance credentials
+[INFO]   [run ] admission-controller 3.3.2 admission controller
+[INFO]   [run ] entitlements         3.4 apply entitlements
+[INFO]   [off ] ccs-cr               3.5 create ccs-cr if missing (ccs in SOFTWARE_HUB / CPD_COMPONENTS)
+
+==> Running:  3.2 set up cpd admin
+[TIMER] 3.2_set_up_cpd_admin.sh completed in <N>s
+
+==> Running:  3.3 install IBM Software Hub
+[TIMER] 3.3_install_ibm_softwarehub.sh completed in <N>s
+
+==> Running:  3.3.1 get instance credentials
+[TIMER] 3.3.1_get_instance_creds.sh completed in <N>s
+
+==> Running:  3.3.2 admission controller
+[TIMER] 3.3.2_softwarehub_admission_controller.sh completed in <N>s
+
+==> Running:  3.4 apply entitlements
+Error: LICENSE_ENTITLEMENTS is not set. Set it in ./cpd_vars.sh before running this script.
+[TIMER] 3.4_apply_entitlements.sh completed in <N>s
+
+==> Skipping: 3.5 create ccs-cr if missing (ccs in SOFTWARE_HUB / CPD_COMPONENTS)
+[TIMER] 3.1_full_step_3_installprocess-softwarehub.sh completed in <N>s
+--- stderr
+[ENV] 3.1_full_step_3_installprocess-softwarehub.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 3.2_set_up_cpd_admin.sh: same env as parent (cpd)
+[WARN] Step 'admin' exited 1; continuing with the rest.
+[ENV] 3.3_install_ibm_softwarehub.sh: same env as parent (cpd)
+[WARN] Step 'softwarehub' exited 1; continuing with the rest.
+[ENV] 3.3.1_get_instance_creds.sh: same env as parent (cpd)
+[WARN] Step 'instance-creds' exited 1; continuing with the rest.
+[ENV] 3.3.2_softwarehub_admission_controller.sh: same env as parent (cpd)
+[WARN] Step 'admission-controller' exited 1; continuing with the rest.
+[ENV] 3.4_apply_entitlements.sh: same env as parent (cpd)
+[WARN] Step 'entitlements' exited 1; continuing with the rest.
+--- calls
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_cloud_pak_for_data/3_install_softwarehub/3.1_full_step_3_installprocess-softwarehub.sh :: default :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] admin                3.2 set up cpd admin
+[INFO]   [run ] softwarehub          3.3 install IBM Software Hub
+[INFO]   [run ] instance-creds       3.3.1 get instance credentials
+[INFO]   [run ] admission-controller 3.3.2 admission controller
+[INFO]   [run ] entitlements         3.4 apply entitlements
+[INFO]   [off ] ccs-cr               3.5 create ccs-cr if missing (ccs in SOFTWARE_HUB / CPD_COMPONENTS)
+
+==> Running:  3.2 set up cpd admin
+[TIMER] 3.2_set_up_cpd_admin.sh completed in <N>s
+
+==> Running:  3.3 install IBM Software Hub
+[TIMER] 3.3_install_ibm_softwarehub.sh completed in <N>s
+
+==> Running:  3.3.1 get instance credentials
+[TIMER] 3.3.1_get_instance_creds.sh completed in <N>s
+
+==> Running:  3.3.2 admission controller
+[TIMER] 3.3.2_softwarehub_admission_controller.sh completed in <N>s
+
+==> Running:  3.4 apply entitlements
+Error: LICENSE_ENTITLEMENTS is not set. Set it in ./cpd_vars.sh before running this script.
+[TIMER] 3.4_apply_entitlements.sh completed in <N>s
+
+==> Skipping: 3.5 create ccs-cr if missing (ccs in SOFTWARE_HUB / CPD_COMPONENTS)
+[TIMER] 3.1_full_step_3_installprocess-softwarehub.sh completed in <N>s
+--- stderr
+[ENV] 3.1_full_step_3_installprocess-softwarehub.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 3.2_set_up_cpd_admin.sh: same env as parent (cpd)
+[WARN] Step 'admin' exited 1; continuing with the rest.
+[ENV] 3.3_install_ibm_softwarehub.sh: same env as parent (cpd)
+[WARN] Step 'softwarehub' exited 1; continuing with the rest.
+[ENV] 3.3.1_get_instance_creds.sh: same env as parent (cpd)
+[WARN] Step 'instance-creds' exited 1; continuing with the rest.
+[ENV] 3.3.2_softwarehub_admission_controller.sh: same env as parent (cpd)
+[WARN] Step 'admission-controller' exited 1; continuing with the rest.
+[ENV] 3.4_apply_entitlements.sh: same env as parent (cpd)
+[WARN] Step 'entitlements' exited 1; continuing with the rest.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/4_install_components/4.0_full_step_4_installprocess-cpd.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] wxo-preverify        4.0 watsonx Orchestrate install preverification (PREP_WXO)
+[INFO]   [run ] components           4.1 install components
+[INFO]   [off ] opensearch           4.1.1 watsonx.data OpenSearch (PREP_OPENSEARCH)
+[INFO]   [run ] profile              4.2 cpd profile
+[TIMER] 4.0_full_step_4_installprocess-cpd.sh completed in <N>s
+--- stderr
+[ENV] 4.0_full_step_4_installprocess-cpd.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_cloud_pak_for_data/4_install_components/4.0_full_step_4_installprocess-cpd.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] wxo-preverify        4.0 watsonx Orchestrate install preverification (PREP_WXO)
+[INFO]   [run ] components           4.1 install components
+[INFO]   [off ] opensearch           4.1.1 watsonx.data OpenSearch (PREP_OPENSEARCH)
+[INFO]   [run ] profile              4.2 cpd profile
+[TIMER] 4.0_full_step_4_installprocess-cpd.sh completed in <N>s
+--- stderr
+[ENV] 4.0_full_step_4_installprocess-cpd.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/4_install_components/4.0_full_step_4_installprocess-cpd.sh :: default :: flat
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] wxo-preverify        4.0 watsonx Orchestrate install preverification (PREP_WXO)
+[INFO]   [run ] components           4.1 install components
+[INFO]   [off ] opensearch           4.1.1 watsonx.data OpenSearch (PREP_OPENSEARCH)
+[INFO]   [run ] profile              4.2 cpd profile
+[INFO] Watch live CR state in another terminal: scripts/install_cloud_pak_for_data/check_cr_status/x_cr_state_dashboard.sh
+
+==> Skipping: 4.0 watsonx Orchestrate install preverification (PREP_WXO)
+
+==> Running:  4.1 install components
+[TIMER] 4.1_install_components.sh completed in <N>s
+[TIMER] 4.0_full_step_4_installprocess-cpd.sh completed in <N>s
+--- stderr
+[ENV] 4.0_full_step_4_installprocess-cpd.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 4.1_install_components.sh: same env as parent (cpd)
+[ERROR] Step 'components' exited 1. Fix the cause, then re-run the same command with --from components added.
+--- calls
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_cloud_pak_for_data/4_install_components/4.0_full_step_4_installprocess-cpd.sh :: default :: pinned
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] wxo-preverify        4.0 watsonx Orchestrate install preverification (PREP_WXO)
+[INFO]   [run ] components           4.1 install components
+[INFO]   [off ] opensearch           4.1.1 watsonx.data OpenSearch (PREP_OPENSEARCH)
+[INFO]   [run ] profile              4.2 cpd profile
+[INFO] Watch live CR state in another terminal: scripts/install_cloud_pak_for_data/check_cr_status/x_cr_state_dashboard.sh
+
+==> Skipping: 4.0 watsonx Orchestrate install preverification (PREP_WXO)
+
+==> Running:  4.1 install components
+[TIMER] 4.1_install_components.sh completed in <N>s
+[TIMER] 4.0_full_step_4_installprocess-cpd.sh completed in <N>s
+--- stderr
+[ENV] 4.0_full_step_4_installprocess-cpd.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 4.1_install_components.sh: same env as parent (cpd)
+[ERROR] Step 'components' exited 1. Fix the cause, then re-run the same command with --from components added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/5_component_specific_scripts/cp4d_streamsets/5.x_full_streamsets_setup.sh :: list-steps :: flat
+rc=1
+--- stdout
+[TIMER] 5.x_full_streamsets_setup.sh completed in <N>s
+--- stderr
+[ENV] 5.x_full_streamsets_setup.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ERROR] unknown argument: --list-steps
+--- calls
+
+
+### scripts/install_cloud_pak_for_data/5_component_specific_scripts/cp4d_streamsets/5.x_full_streamsets_setup.sh :: list-steps :: pinned
+rc=1
+--- stdout
+[TIMER] 5.x_full_streamsets_setup.sh completed in <N>s
+--- stderr
+[ENV] 5.x_full_streamsets_setup.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ERROR] unknown argument: --list-steps
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/5_component_specific_scripts/cp4d_streamsets/5.x_full_streamsets_setup.sh :: default :: flat
+rc=1
+--- stdout
+[TIMER] 5.x_full_streamsets_setup.sh completed in <N>s
+--- stderr
+[ENV] 5.x_full_streamsets_setup.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ERROR] CPD_URL is not set. Check configs/cp4d_config/cpd_instance_details.sh.
+--- calls
+
+
+### scripts/install_cloud_pak_for_data/5_component_specific_scripts/cp4d_streamsets/5.x_full_streamsets_setup.sh :: default :: pinned
+rc=1
+--- stdout
+[TIMER] 5.x_full_streamsets_setup.sh completed in <N>s
+--- stderr
+[ENV] 5.x_full_streamsets_setup.sh
+[ENV]   target   cpd (script folder scripts/install_cloud_pak_for_data/)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/cpd_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ERROR] CPD_URL is not set. Check configs/cp4d_config/cpd_instance_details.sh.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/full_installprocess-swhub_control_center.sh :: list-steps :: flat
+rc=0
+--- stdout
+==============================================================================
+ Software Hub Control Center full install - project '?'
+==============================================================================
+[INFO] Release 5.4.0 patch 8, side container ? on ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 control center prep
+[INFO]   [off ] shared-components    1.0.1 shared cluster components (different cluster only)
+[INFO]   [run ] install              1.1 control center install
+[INFO]   [run ] status               1.2 control center status
+[INFO]   [run ] instance-details     1.3 control center get instance details
+[INFO]   [run ] oauth                1.4 control center OAuth client
+[INFO]   [run ] cluster-admins       give OpenShift cluster-admins the Control Center admin role (CONTROL_ADD_CLUSTER_ADMINS)
+[INFO]   [run ] autodetect-instances auto-detect and add the Software Hub instances (AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES)
+[INFO]   [run ] other-workloads-indicator other workloads indicator (CONTROL_OTHER_WORKLOADS_INDICATOR)
+[TIMER] full_installprocess-swhub_control_center.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-swhub_control_center.sh
+[ENV]   target   swhub_control_center (Software Hub Control Center script folder)
+[ENV]   loaded   configs/cp4d_config/swhub_control_center/swhub_control_center_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/full_installprocess-swhub_control_center.sh :: list-steps :: pinned
+rc=0
+--- stdout
+==============================================================================
+ Software Hub Control Center full install - project '?'
+==============================================================================
+[INFO] Release 5.4.0 patch 8, side container ? on ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 control center prep
+[INFO]   [off ] shared-components    1.0.1 shared cluster components (different cluster only)
+[INFO]   [run ] install              1.1 control center install
+[INFO]   [run ] status               1.2 control center status
+[INFO]   [run ] instance-details     1.3 control center get instance details
+[INFO]   [run ] oauth                1.4 control center OAuth client
+[INFO]   [run ] cluster-admins       give OpenShift cluster-admins the Control Center admin role (CONTROL_ADD_CLUSTER_ADMINS)
+[INFO]   [run ] autodetect-instances auto-detect and add the Software Hub instances (AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES)
+[INFO]   [run ] other-workloads-indicator other workloads indicator (CONTROL_OTHER_WORKLOADS_INDICATOR)
+[TIMER] full_installprocess-swhub_control_center.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-swhub_control_center.sh
+[ENV]   target   swhub_control_center (Software Hub Control Center script folder)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/swhub_control_center/swhub_control_center_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/full_installprocess-swhub_control_center.sh :: default :: flat
+rc=1
+--- stdout
+==============================================================================
+ Software Hub Control Center full install - project '?'
+==============================================================================
+[INFO] Release 5.4.0 patch 8, side container ? on ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 control center prep
+[INFO]   [off ] shared-components    1.0.1 shared cluster components (different cluster only)
+[INFO]   [run ] install              1.1 control center install
+[INFO]   [run ] status               1.2 control center status
+[INFO]   [run ] instance-details     1.3 control center get instance details
+[INFO]   [run ] oauth                1.4 control center OAuth client
+[INFO]   [run ] cluster-admins       give OpenShift cluster-admins the Control Center admin role (CONTROL_ADD_CLUSTER_ADMINS)
+[INFO]   [run ] autodetect-instances auto-detect and add the Software Hub instances (AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES)
+[INFO]   [run ] other-workloads-indicator other workloads indicator (CONTROL_OTHER_WORKLOADS_INDICATOR)
+
+==> Running:  1.0 control center prep
+[TIMER] 1.0_swhub_control_center_prep.sh completed in <N>s
+[TIMER] full_installprocess-swhub_control_center.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-swhub_control_center.sh
+[ENV]   target   swhub_control_center (Software Hub Control Center script folder)
+[ENV]   loaded   configs/cp4d_config/swhub_control_center/swhub_control_center_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 1.0_swhub_control_center_prep.sh: same env as parent (swhub_control_center)
+[ERROR] Not set: CONTROL_CLUSTER_MODE CONTROL_OCP_URL CONTROL_OLM_UTILS_IMAGE CONTROL_OLM_UTILS_CONTAINER CONTROL_CPD_CLI_WORKSPACE CONTROL_PROJECT_OPERATORS CONTROL_PROJECT_OPERANDS CONTROL_STG_CLASS_BLOCK. Check <ROOT>/repo/configs/cp4d_config/swhub_control_center/swhub_control_center_vars.sh, or write it with 0_swhub_control_center_generate_config.sh.
+[ERROR] Step 'prep' exited 1. Fix the cause, then re-run the same command with --from prep added.
+--- calls
+
+
+### scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/full_installprocess-swhub_control_center.sh :: default :: pinned
+rc=1
+--- stdout
+==============================================================================
+ Software Hub Control Center full install - project '?'
+==============================================================================
+[INFO] Release 5.4.0 patch 8, side container ? on ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 control center prep
+[INFO]   [off ] shared-components    1.0.1 shared cluster components (different cluster only)
+[INFO]   [run ] install              1.1 control center install
+[INFO]   [run ] status               1.2 control center status
+[INFO]   [run ] instance-details     1.3 control center get instance details
+[INFO]   [run ] oauth                1.4 control center OAuth client
+[INFO]   [run ] cluster-admins       give OpenShift cluster-admins the Control Center admin role (CONTROL_ADD_CLUSTER_ADMINS)
+[INFO]   [run ] autodetect-instances auto-detect and add the Software Hub instances (AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES)
+[INFO]   [run ] other-workloads-indicator other workloads indicator (CONTROL_OTHER_WORKLOADS_INDICATOR)
+
+==> Running:  1.0 control center prep
+[TIMER] 1.0_swhub_control_center_prep.sh completed in <N>s
+[TIMER] full_installprocess-swhub_control_center.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-swhub_control_center.sh
+[ENV]   target   swhub_control_center (Software Hub Control Center script folder)
+[ENV]   loaded   configs/clusters/itz-a/cp4d_config/swhub_control_center/swhub_control_center_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 1.0_swhub_control_center_prep.sh: same env as parent (swhub_control_center)
+[ERROR] Not set: CONTROL_CLUSTER_MODE CONTROL_OCP_URL CONTROL_OLM_UTILS_IMAGE CONTROL_OLM_UTILS_CONTAINER CONTROL_CPD_CLI_WORKSPACE CONTROL_PROJECT_OPERATORS CONTROL_PROJECT_OPERANDS CONTROL_STG_CLASS_BLOCK. Check <ROOT>/repo/configs/clusters/itz-a/cp4d_config/swhub_control_center/swhub_control_center_vars.sh, or write it with 0_swhub_control_center_generate_config.sh.
+[ERROR] Step 'prep' exited 1. Fix the cause, then re-run the same command with --from prep added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_confluent_platform/full_installprocess-confluent_platform.sh :: list-steps :: flat
+rc=0
+--- stdout
+==============================================================================
+ Confluent Platform full install - project 'confluent'
+==============================================================================
+[INFO] Version: ?  Control Center: ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 confluent prep
+[INFO]   [run ] install              1.1 confluent install
+[INFO]   [run ] status               1.2 confluent status
+[INFO]   [run ] instance-details     1.3 confluent get instance details
+[INFO]   [off ] iceberg              iceberg watsonx.data integration
+[INFO]   [off ] flink                flink addon full install (no Flink settings in confluent_vars.sh - add them with 0_flink_prepare_template_config.sh or the notebook)
+[TIMER] full_installprocess-confluent_platform.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-confluent_platform.sh
+[ENV]   target   confluent (ENV_TARGET)
+[ENV]   loaded   configs/confluent_platform_config/confluent_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_confluent_platform/full_installprocess-confluent_platform.sh :: list-steps :: pinned
+rc=0
+--- stdout
+==============================================================================
+ Confluent Platform full install - project 'confluent'
+==============================================================================
+[INFO] Version: ?  Control Center: ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 confluent prep
+[INFO]   [run ] install              1.1 confluent install
+[INFO]   [run ] status               1.2 confluent status
+[INFO]   [run ] instance-details     1.3 confluent get instance details
+[INFO]   [off ] iceberg              iceberg watsonx.data integration
+[INFO]   [off ] flink                flink addon full install (no Flink settings in confluent_vars.sh - add them with 0_flink_prepare_template_config.sh or the notebook)
+[TIMER] full_installprocess-confluent_platform.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-confluent_platform.sh
+[ENV]   target   confluent (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/confluent_platform_config/confluent_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_confluent_platform/full_installprocess-confluent_platform.sh :: default :: flat
+rc=1
+--- stdout
+==============================================================================
+ Confluent Platform full install - project 'confluent'
+==============================================================================
+[INFO] Version: ?  Control Center: ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 confluent prep
+[INFO]   [run ] install              1.1 confluent install
+[INFO]   [run ] status               1.2 confluent status
+[INFO]   [run ] instance-details     1.3 confluent get instance details
+[INFO]   [off ] iceberg              iceberg watsonx.data integration
+[INFO]   [off ] flink                flink addon full install (no Flink settings in confluent_vars.sh - add them with 0_flink_prepare_template_config.sh or the notebook)
+
+==> Running:  1.0 confluent prep
+[TIMER] 1.0_confluent_prep.sh completed in <N>s
+[TIMER] full_installprocess-confluent_platform.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-confluent_platform.sh
+[ENV]   target   confluent (ENV_TARGET)
+[ENV]   loaded   configs/confluent_platform_config/confluent_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 1.0_confluent_prep.sh: same env as parent (confluent)
+[ERROR] Step 'prep' exited 1. Fix the cause, then re-run the same command with --from prep added.
+--- calls
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_confluent_platform/full_installprocess-confluent_platform.sh :: default :: pinned
+rc=1
+--- stdout
+==============================================================================
+ Confluent Platform full install - project 'confluent'
+==============================================================================
+[INFO] Version: ?  Control Center: ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 confluent prep
+[INFO]   [run ] install              1.1 confluent install
+[INFO]   [run ] status               1.2 confluent status
+[INFO]   [run ] instance-details     1.3 confluent get instance details
+[INFO]   [off ] iceberg              iceberg watsonx.data integration
+[INFO]   [off ] flink                flink addon full install (no Flink settings in confluent_vars.sh - add them with 0_flink_prepare_template_config.sh or the notebook)
+
+==> Running:  1.0 confluent prep
+[TIMER] 1.0_confluent_prep.sh completed in <N>s
+[TIMER] full_installprocess-confluent_platform.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-confluent_platform.sh
+[ENV]   target   confluent (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/confluent_platform_config/confluent_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 1.0_confluent_prep.sh: same env as parent (confluent)
+[ERROR] Step 'prep' exited 1. Fix the cause, then re-run the same command with --from prep added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc whoami | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+oc login https://api.itz-a.example.com:6443 --token=fake-token | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_confluent_platform/install_confluent_platform_flink_addon/full_installprocess-confluent_flink.sh :: list-steps :: flat
+rc=0
+--- stdout
+==============================================================================
+ Confluent Platform for Apache Flink full install - project 'flink'
+==============================================================================
+[INFO] CMF chart: ?  Operator chart: ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 flink prep
+[INFO]   [run ] install              1.1 flink install
+[INFO]   [run ] status               1.2 flink status
+[INFO]   [run ] instance-details     1.3 flink get instance details
+[TIMER] full_installprocess-confluent_flink.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-confluent_flink.sh
+[ENV]   target   confluent (ENV_TARGET)
+[ENV]   loaded   configs/confluent_platform_config/confluent_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_confluent_platform/install_confluent_platform_flink_addon/full_installprocess-confluent_flink.sh :: list-steps :: pinned
+rc=0
+--- stdout
+==============================================================================
+ Confluent Platform for Apache Flink full install - project 'flink'
+==============================================================================
+[INFO] CMF chart: ?  Operator chart: ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 flink prep
+[INFO]   [run ] install              1.1 flink install
+[INFO]   [run ] status               1.2 flink status
+[INFO]   [run ] instance-details     1.3 flink get instance details
+[TIMER] full_installprocess-confluent_flink.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-confluent_flink.sh
+[ENV]   target   confluent (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/confluent_platform_config/confluent_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_confluent_platform/install_confluent_platform_flink_addon/full_installprocess-confluent_flink.sh :: default :: flat
+rc=1
+--- stdout
+==============================================================================
+ Confluent Platform for Apache Flink full install - project 'flink'
+==============================================================================
+[INFO] CMF chart: ?  Operator chart: ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 flink prep
+[INFO]   [run ] install              1.1 flink install
+[INFO]   [run ] status               1.2 flink status
+[INFO]   [run ] instance-details     1.3 flink get instance details
+
+==> Running:  1.0 flink prep
+[TIMER] 1.0_flink_prep.sh completed in <N>s
+[TIMER] full_installprocess-confluent_flink.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-confluent_flink.sh
+[ENV]   target   confluent (ENV_TARGET)
+[ENV]   loaded   configs/confluent_platform_config/confluent_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 1.0_flink_prep.sh: same env as parent (confluent)
+[ERROR] Missing required variables in configs/confluent_platform_config/confluent_vars.sh: FLINK_HELM_REPO_NAME FLINK_HELM_REPO_URL FLINK_CMF_CHART_VERSION FLINK_OPERATOR_CHART_VERSION FLINK_CMF_STORAGE_CLASS FLINK_CMF_STORAGE_SIZE FLINK_STATE_BACKEND FLINK_ENVIRONMENT FLINK_COMPUTE_POOL
+[ERROR] Run install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh first.
+[ERROR] Step 'prep' exited 1. Fix the cause, then re-run the same command with --from prep added.
+--- calls
+
+
+### scripts/install_confluent_platform/install_confluent_platform_flink_addon/full_installprocess-confluent_flink.sh :: default :: pinned
+rc=1
+--- stdout
+==============================================================================
+ Confluent Platform for Apache Flink full install - project 'flink'
+==============================================================================
+[INFO] CMF chart: ?  Operator chart: ?
+[INFO] Steps:
+[INFO]   [run ] prep                 1.0 flink prep
+[INFO]   [run ] install              1.1 flink install
+[INFO]   [run ] status               1.2 flink status
+[INFO]   [run ] instance-details     1.3 flink get instance details
+
+==> Running:  1.0 flink prep
+[TIMER] 1.0_flink_prep.sh completed in <N>s
+[TIMER] full_installprocess-confluent_flink.sh completed in <N>s
+--- stderr
+[ENV] full_installprocess-confluent_flink.sh
+[ENV]   target   confluent (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/confluent_platform_config/confluent_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 1.0_flink_prep.sh: same env as parent (confluent)
+[ERROR] Missing required variables in configs/confluent_platform_config/confluent_vars.sh: FLINK_HELM_REPO_NAME FLINK_HELM_REPO_URL FLINK_CMF_CHART_VERSION FLINK_OPERATOR_CHART_VERSION FLINK_CMF_STORAGE_CLASS FLINK_CMF_STORAGE_SIZE FLINK_STATE_BACKEND FLINK_ENVIRONMENT FLINK_COMPUTE_POOL
+[ERROR] Run install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh first.
+[ERROR] Step 'prep' exited 1. Fix the cause, then re-run the same command with --from prep added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_datastax_mc_standalone/0_x_full_quick_install_script/full_datastax_mc_installprocess.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] oc                   0.0 install oc (macOS, CP4D script)
+[INFO]   [run ] helm                 0.1 helm for Mission Control
+[INFO]   [run ] cert-manager         1.0 cert-manager operator
+[INFO]   [run ] preflight            1.1 preflight
+[INFO]   [run ] namespace            1.2 namespace and pull secrets
+[INFO]   [run ] label-nodes          1.3 platform node labels
+[INFO]   [run ] scc                  1.4 SCC (restricted-v2)
+[INFO]   [run ] install              2.1 install Mission Control 1.0.0 (control plane)
+[INFO]   [run ] route                2.2 UI Route
+[INFO]   [run ] wait                 2.3 wait for Mission Control
+[INFO]   [run ] details              2.4 instance details
+[INFO]   [run ] projects             3.1 projects (auto-prepare: true, base project: hcd)
+[INFO]   [off ] networkpolicy        3.0 internode NetworkPolicy
+[TIMER] full_datastax_mc_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_datastax_mc_installprocess.sh
+[ENV]   target   datastax_mc (ENV_TARGET)
+[ENV]   loaded   configs/datastax_mc_config/datastax_mc_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_datastax_mc_standalone/0_x_full_quick_install_script/full_datastax_mc_installprocess.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] oc                   0.0 install oc (macOS, CP4D script)
+[INFO]   [run ] helm                 0.1 helm for Mission Control
+[INFO]   [run ] cert-manager         1.0 cert-manager operator
+[INFO]   [run ] preflight            1.1 preflight
+[INFO]   [run ] namespace            1.2 namespace and pull secrets
+[INFO]   [run ] label-nodes          1.3 platform node labels
+[INFO]   [run ] scc                  1.4 SCC (restricted-v2)
+[INFO]   [run ] install              2.1 install Mission Control 1.0.0 (control plane)
+[INFO]   [run ] route                2.2 UI Route
+[INFO]   [run ] wait                 2.3 wait for Mission Control
+[INFO]   [run ] details              2.4 instance details
+[INFO]   [run ] projects             3.1 projects (auto-prepare: true, base project: hcd)
+[INFO]   [off ] networkpolicy        3.0 internode NetworkPolicy
+[TIMER] full_datastax_mc_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_datastax_mc_installprocess.sh
+[ENV]   target   datastax_mc (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/datastax_mc_config/datastax_mc_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_datastax_mc_standalone/0_x_full_quick_install_script/full_datastax_mc_installprocess.sh :: default :: flat
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] oc                   0.0 install oc (macOS, CP4D script)
+[INFO]   [run ] helm                 0.1 helm for Mission Control
+[INFO]   [run ] cert-manager         1.0 cert-manager operator
+[INFO]   [run ] preflight            1.1 preflight
+[INFO]   [run ] namespace            1.2 namespace and pull secrets
+[INFO]   [run ] label-nodes          1.3 platform node labels
+[INFO]   [run ] scc                  1.4 SCC (restricted-v2)
+[INFO]   [run ] install              2.1 install Mission Control 1.0.0 (control plane)
+[INFO]   [run ] route                2.2 UI Route
+[INFO]   [run ] wait                 2.3 wait for Mission Control
+[INFO]   [run ] details              2.4 instance details
+[INFO]   [run ] projects             3.1 projects (auto-prepare: true, base project: hcd)
+[INFO]   [off ] networkpolicy        3.0 internode NetworkPolicy
+
+==> Skipping: 0.0 install oc (macOS, CP4D script)
+
+==> Running:  0.1 helm for Mission Control
+[TIMER] full_datastax_mc_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_datastax_mc_installprocess.sh
+[ENV]   target   datastax_mc (ENV_TARGET)
+[ENV]   loaded   configs/datastax_mc_config/datastax_mc_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 0.1_fetch_helm.sh: same env as parent (datastax_mc)
+[ERROR] Step 'helm' exited 1. Fix the cause, then re-run the same command with --from helm added.
+--- calls
+helm version --template '{{.Version}}' | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_datastax_mc_standalone/0_x_full_quick_install_script/full_datastax_mc_installprocess.sh :: default :: pinned
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] oc                   0.0 install oc (macOS, CP4D script)
+[INFO]   [run ] helm                 0.1 helm for Mission Control
+[INFO]   [run ] cert-manager         1.0 cert-manager operator
+[INFO]   [run ] preflight            1.1 preflight
+[INFO]   [run ] namespace            1.2 namespace and pull secrets
+[INFO]   [run ] label-nodes          1.3 platform node labels
+[INFO]   [run ] scc                  1.4 SCC (restricted-v2)
+[INFO]   [run ] install              2.1 install Mission Control 1.0.0 (control plane)
+[INFO]   [run ] route                2.2 UI Route
+[INFO]   [run ] wait                 2.3 wait for Mission Control
+[INFO]   [run ] details              2.4 instance details
+[INFO]   [run ] projects             3.1 projects (auto-prepare: true, base project: hcd)
+[INFO]   [off ] networkpolicy        3.0 internode NetworkPolicy
+
+==> Skipping: 0.0 install oc (macOS, CP4D script)
+
+==> Running:  0.1 helm for Mission Control
+[TIMER] full_datastax_mc_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_datastax_mc_installprocess.sh
+[ENV]   target   datastax_mc (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/datastax_mc_config/datastax_mc_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 0.1_fetch_helm.sh: same env as parent (datastax_mc)
+[ERROR] Step 'helm' exited 1. Fix the cause, then re-run the same command with --from helm added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+helm version --template '{{.Version}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_ibm_concert/0_x_full_quick_install_script/full_concert_installprocess.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] oc                   0.0 install oc (macOS, CP4D script)
+[INFO]   [run ] fetch-installer      0.1 fetch IBM Concert installer
+[INFO]   [run ] runner               0.2 prepare installer runner
+[INFO]   [off ] pull-secret          1.0 global pull secret (optional)
+[INFO]   [off ] mirror-config        1.3 apply mirror configuration
+[INFO]   [off ] faas-registry        1.4 FaaS insecure registry
+[INFO]   [run ] preflight            2.0 cluster preflight
+[INFO]   [run ] worker-capacity      2.0.1 worker capacity
+[INFO]   [run ] projects             2.1 create projects
+[INFO]   [off ] service-mesh         2.2 Service Mesh + Istio for Workflows
+[INFO]   [run ] datastores           2.3 provision data stores
+[INFO]   [run ] datastore-secrets    2.4 data store secrets
+[INFO]   [run ] concert              3 install IBM Concert
+[INFO]   [off ] optimize             5 install Concert Optimize (Turbonomic)
+[INFO]   [off ] admin-password       4.0 rotate admin password
+[INFO]   [off ] keycloak-users       4.1 Keycloak users
+[TIMER] full_concert_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_concert_installprocess.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_ibm_concert/0_x_full_quick_install_script/full_concert_installprocess.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] oc                   0.0 install oc (macOS, CP4D script)
+[INFO]   [run ] fetch-installer      0.1 fetch IBM Concert installer
+[INFO]   [run ] runner               0.2 prepare installer runner
+[INFO]   [off ] pull-secret          1.0 global pull secret (optional)
+[INFO]   [off ] mirror-config        1.3 apply mirror configuration
+[INFO]   [off ] faas-registry        1.4 FaaS insecure registry
+[INFO]   [run ] preflight            2.0 cluster preflight
+[INFO]   [run ] worker-capacity      2.0.1 worker capacity
+[INFO]   [run ] projects             2.1 create projects
+[INFO]   [off ] service-mesh         2.2 Service Mesh + Istio for Workflows
+[INFO]   [run ] datastores           2.3 provision data stores
+[INFO]   [run ] datastore-secrets    2.4 data store secrets
+[INFO]   [run ] concert              3 install IBM Concert
+[INFO]   [off ] optimize             5 install Concert Optimize (Turbonomic)
+[INFO]   [off ] admin-password       4.0 rotate admin password
+[INFO]   [off ] keycloak-users       4.1 Keycloak users
+[TIMER] full_concert_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_concert_installprocess.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_ibm_concert/0_x_full_quick_install_script/full_concert_installprocess.sh :: default :: flat
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] oc                   0.0 install oc (macOS, CP4D script)
+[INFO]   [run ] fetch-installer      0.1 fetch IBM Concert installer
+[INFO]   [run ] runner               0.2 prepare installer runner
+[INFO]   [off ] pull-secret          1.0 global pull secret (optional)
+[INFO]   [off ] mirror-config        1.3 apply mirror configuration
+[INFO]   [off ] faas-registry        1.4 FaaS insecure registry
+[INFO]   [run ] preflight            2.0 cluster preflight
+[INFO]   [run ] worker-capacity      2.0.1 worker capacity
+[INFO]   [run ] projects             2.1 create projects
+[INFO]   [off ] service-mesh         2.2 Service Mesh + Istio for Workflows
+[INFO]   [run ] datastores           2.3 provision data stores
+[INFO]   [run ] datastore-secrets    2.4 data store secrets
+[INFO]   [run ] concert              3 install IBM Concert
+[INFO]   [off ] optimize             5 install Concert Optimize (Turbonomic)
+[INFO]   [off ] admin-password       4.0 rotate admin password
+[INFO]   [off ] keycloak-users       4.1 Keycloak users
+
+==> Skipping: 0.0 install oc (macOS, CP4D script)
+
+==> Running:  0.1 fetch IBM Concert installer
+[INFO] Downloading https://github.com/IBM/Concert/releases/download/v2.2.0/concert.tgz
+[TIMER] full_concert_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_concert_installprocess.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 0.1_fetch_concert_installer.sh: same env as parent (concert)
+[ERROR] Step 'fetch-installer' exited 1. Fix the cause, then re-run the same command with --from fetch-installer added.
+--- calls
+curl -fSL --retry 3 -o <ROOT>/repo/concert_workspace/archives/v2.2.0/concert.tgz.part https://github.com/IBM/Concert/releases/download/v2.2.0/concert.tgz | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/install_ibm_concert/0_x_full_quick_install_script/full_concert_installprocess.sh :: default :: pinned
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [off ] oc                   0.0 install oc (macOS, CP4D script)
+[INFO]   [run ] fetch-installer      0.1 fetch IBM Concert installer
+[INFO]   [run ] runner               0.2 prepare installer runner
+[INFO]   [off ] pull-secret          1.0 global pull secret (optional)
+[INFO]   [off ] mirror-config        1.3 apply mirror configuration
+[INFO]   [off ] faas-registry        1.4 FaaS insecure registry
+[INFO]   [run ] preflight            2.0 cluster preflight
+[INFO]   [run ] worker-capacity      2.0.1 worker capacity
+[INFO]   [run ] projects             2.1 create projects
+[INFO]   [off ] service-mesh         2.2 Service Mesh + Istio for Workflows
+[INFO]   [run ] datastores           2.3 provision data stores
+[INFO]   [run ] datastore-secrets    2.4 data store secrets
+[INFO]   [run ] concert              3 install IBM Concert
+[INFO]   [off ] optimize             5 install Concert Optimize (Turbonomic)
+[INFO]   [off ] admin-password       4.0 rotate admin password
+[INFO]   [off ] keycloak-users       4.1 Keycloak users
+
+==> Skipping: 0.0 install oc (macOS, CP4D script)
+
+==> Running:  0.1 fetch IBM Concert installer
+[INFO] Downloading https://github.com/IBM/Concert/releases/download/v2.2.0/concert.tgz
+[TIMER] full_concert_installprocess.sh completed in <N>s
+--- stderr
+[ENV] full_concert_installprocess.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 0.1_fetch_concert_installer.sh: same env as parent (concert)
+[ERROR] Step 'fetch-installer' exited 1. Fix the cause, then re-run the same command with --from fetch-installer added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -fSL --retry 3 -o <ROOT>/repo/configs/clusters/itz-a/concert_workspace/archives/v2.2.0/concert.tgz.part https://github.com/IBM/Concert/releases/download/v2.2.0/concert.tgz | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_ibm_concert/2_prepare_cluster/2.3_provision_datastores/2.3_full_step_2.3_provision_datastores.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] pg-operator          2.3.1 CloudNativePG operator
+[INFO]   [run ] postgres             2.3.2 PostgreSQL cluster + databases
+[INFO]   [run ] object-gateway       2.3.3 Multicloud Object Gateway
+[INFO]   [run ] buckets              2.3.4 S3 bucket claims
+[INFO]   [run ] mysql                2.3.5 MySQL for Workflows
+[INFO]   [run ] redis                2.3.6 Redis for Data Apps
+[INFO]   [run ] neo4j                2.3.7 Neo4j for the Concert graph
+[TIMER] 2.3_full_step_2.3_provision_datastores.sh completed in <N>s
+--- stderr
+[ENV] 2.3_full_step_2.3_provision_datastores.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_ibm_concert/2_prepare_cluster/2.3_provision_datastores/2.3_full_step_2.3_provision_datastores.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] pg-operator          2.3.1 CloudNativePG operator
+[INFO]   [run ] postgres             2.3.2 PostgreSQL cluster + databases
+[INFO]   [run ] object-gateway       2.3.3 Multicloud Object Gateway
+[INFO]   [run ] buckets              2.3.4 S3 bucket claims
+[INFO]   [run ] mysql                2.3.5 MySQL for Workflows
+[INFO]   [run ] redis                2.3.6 Redis for Data Apps
+[INFO]   [run ] neo4j                2.3.7 Neo4j for the Concert graph
+[TIMER] 2.3_full_step_2.3_provision_datastores.sh completed in <N>s
+--- stderr
+[ENV] 2.3_full_step_2.3_provision_datastores.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_ibm_concert/2_prepare_cluster/2.3_provision_datastores/2.3_full_step_2.3_provision_datastores.sh :: default :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] pg-operator          2.3.1 CloudNativePG operator
+[INFO]   [run ] postgres             2.3.2 PostgreSQL cluster + databases
+[INFO]   [run ] object-gateway       2.3.3 Multicloud Object Gateway
+[INFO]   [run ] buckets              2.3.4 S3 bucket claims
+[INFO]   [run ] mysql                2.3.5 MySQL for Workflows
+[INFO]   [run ] redis                2.3.6 Redis for Data Apps
+[INFO]   [run ] neo4j                2.3.7 Neo4j for the Concert graph
+
+==> Running:  2.3.1 CloudNativePG operator
+[INFO] PostgreSQL is not provisioned by these scripts - skipping the CloudNativePG operator.
+[TIMER] 2.3.1_install_cloudnative_pg_operator.sh completed in <N>s
+
+==> Running:  2.3.2 PostgreSQL cluster + databases
+[INFO] No consumer uses an external PostgreSQL - skipping.
+[TIMER] 2.3.2_provision_postgres.sh completed in <N>s
+
+==> Running:  2.3.3 Multicloud Object Gateway
+[INFO] S3 is not provisioned by these scripts - skipping the object gateway.
+[TIMER] 2.3.3_install_object_gateway.sh completed in <N>s
+
+==> Running:  2.3.4 S3 bucket claims
+[INFO] S3 is not provisioned by these scripts - skipping bucket claims.
+[TIMER] 2.3.4_provision_buckets.sh completed in <N>s
+
+==> Running:  2.3.5 MySQL for Workflows
+[INFO] MySQL is not provisioned by these scripts - skipping.
+[TIMER] 2.3.5_provision_mysql.sh completed in <N>s
+
+==> Running:  2.3.6 Redis for Data Apps
+[INFO] Redis is not provisioned by these scripts - skipping.
+[TIMER] 2.3.6_provision_redis.sh completed in <N>s
+
+==> Running:  2.3.7 Neo4j for the Concert graph
+[INFO] Neo4j is not provisioned by these scripts (VEIAS/graph off or existing server) - skipping.
+[TIMER] 2.3.7_provision_neo4j.sh completed in <N>s
+[TIMER] 2.3_full_step_2.3_provision_datastores.sh completed in <N>s
+--- stderr
+[ENV] 2.3_full_step_2.3_provision_datastores.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 2.3.1_install_cloudnative_pg_operator.sh: same env as parent (concert)
+[ENV] 2.3.2_provision_postgres.sh: same env as parent (concert)
+[ENV] 2.3.3_install_object_gateway.sh: same env as parent (concert)
+[ENV] 2.3.4_provision_buckets.sh: same env as parent (concert)
+[ENV] 2.3.5_provision_mysql.sh: same env as parent (concert)
+[ENV] 2.3.6_provision_redis.sh: same env as parent (concert)
+[ENV] 2.3.7_provision_neo4j.sh: same env as parent (concert)
+--- calls
+
+
+### scripts/install_ibm_concert/2_prepare_cluster/2.3_provision_datastores/2.3_full_step_2.3_provision_datastores.sh :: default :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] pg-operator          2.3.1 CloudNativePG operator
+[INFO]   [run ] postgres             2.3.2 PostgreSQL cluster + databases
+[INFO]   [run ] object-gateway       2.3.3 Multicloud Object Gateway
+[INFO]   [run ] buckets              2.3.4 S3 bucket claims
+[INFO]   [run ] mysql                2.3.5 MySQL for Workflows
+[INFO]   [run ] redis                2.3.6 Redis for Data Apps
+[INFO]   [run ] neo4j                2.3.7 Neo4j for the Concert graph
+
+==> Running:  2.3.1 CloudNativePG operator
+[INFO] PostgreSQL is not provisioned by these scripts - skipping the CloudNativePG operator.
+[TIMER] 2.3.1_install_cloudnative_pg_operator.sh completed in <N>s
+
+==> Running:  2.3.2 PostgreSQL cluster + databases
+[INFO] No consumer uses an external PostgreSQL - skipping.
+[TIMER] 2.3.2_provision_postgres.sh completed in <N>s
+
+==> Running:  2.3.3 Multicloud Object Gateway
+[INFO] S3 is not provisioned by these scripts - skipping the object gateway.
+[TIMER] 2.3.3_install_object_gateway.sh completed in <N>s
+
+==> Running:  2.3.4 S3 bucket claims
+[INFO] S3 is not provisioned by these scripts - skipping bucket claims.
+[TIMER] 2.3.4_provision_buckets.sh completed in <N>s
+
+==> Running:  2.3.5 MySQL for Workflows
+[INFO] MySQL is not provisioned by these scripts - skipping.
+[TIMER] 2.3.5_provision_mysql.sh completed in <N>s
+
+==> Running:  2.3.6 Redis for Data Apps
+[INFO] Redis is not provisioned by these scripts - skipping.
+[TIMER] 2.3.6_provision_redis.sh completed in <N>s
+
+==> Running:  2.3.7 Neo4j for the Concert graph
+[INFO] Neo4j is not provisioned by these scripts (VEIAS/graph off or existing server) - skipping.
+[TIMER] 2.3.7_provision_neo4j.sh completed in <N>s
+[TIMER] 2.3_full_step_2.3_provision_datastores.sh completed in <N>s
+--- stderr
+[ENV] 2.3_full_step_2.3_provision_datastores.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 2.3.1_install_cloudnative_pg_operator.sh: same env as parent (concert)
+[ENV] 2.3.2_provision_postgres.sh: same env as parent (concert)
+[ENV] 2.3.3_install_object_gateway.sh: same env as parent (concert)
+[ENV] 2.3.4_provision_buckets.sh: same env as parent (concert)
+[ENV] 2.3.5_provision_mysql.sh: same env as parent (concert)
+[ENV] 2.3.6_provision_redis.sh: same env as parent (concert)
+[ENV] 2.3.7_provision_neo4j.sh: same env as parent (concert)
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_ibm_concert/3_install_concert/3_full_step_3_installprocess-concert.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] render-params        3.0 render params.ini
+[INFO]   [off ] preview              3.1 preview (experimental)
+[INFO]   [run ] setup                3.2 run IBM Concert setup
+[INFO]   [run ] status               3.3 wait for Concert
+[INFO]   [run ] details              3.4 instance details
+[TIMER] 3_full_step_3_installprocess-concert.sh completed in <N>s
+--- stderr
+[ENV] 3_full_step_3_installprocess-concert.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_ibm_concert/3_install_concert/3_full_step_3_installprocess-concert.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] render-params        3.0 render params.ini
+[INFO]   [off ] preview              3.1 preview (experimental)
+[INFO]   [run ] setup                3.2 run IBM Concert setup
+[INFO]   [run ] status               3.3 wait for Concert
+[INFO]   [run ] details              3.4 instance details
+[TIMER] 3_full_step_3_installprocess-concert.sh completed in <N>s
+--- stderr
+[ENV] 3_full_step_3_installprocess-concert.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_ibm_concert/3_install_concert/3_full_step_3_installprocess-concert.sh :: default :: flat
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] render-params        3.0 render params.ini
+[INFO]   [off ] preview              3.1 preview (experimental)
+[INFO]   [run ] setup                3.2 run IBM Concert setup
+[INFO]   [run ] status               3.3 wait for Concert
+[INFO]   [run ] details              3.4 instance details
+
+==> Running:  3.0 render params.ini
+[TIMER] 3.0_render_params_ini.sh completed in <N>s
+[TIMER] 3_full_step_3_installprocess-concert.sh completed in <N>s
+--- stderr
+[ENV] 3_full_step_3_installprocess-concert.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV] 3.0_render_params_ini.sh: same env as parent (concert)
+[ERROR] CONCERT_ACCEPT_LICENSE is not true - accept the IBM Concert license in the notebook first.
+[ERROR] Step 'render-params' exited 1. Fix the cause, then re-run the same command with --from render-params added.
+--- calls
+
+
+### scripts/install_ibm_concert/3_install_concert/3_full_step_3_installprocess-concert.sh :: default :: pinned
+rc=1
+--- stdout
+[INFO] Steps:
+[INFO]   [run ] render-params        3.0 render params.ini
+[INFO]   [off ] preview              3.1 preview (experimental)
+[INFO]   [run ] setup                3.2 run IBM Concert setup
+[INFO]   [run ] status               3.3 wait for Concert
+[INFO]   [run ] details              3.4 instance details
+
+==> Running:  3.0 render params.ini
+[TIMER] 3.0_render_params_ini.sh completed in <N>s
+[TIMER] 3_full_step_3_installprocess-concert.sh completed in <N>s
+--- stderr
+[ENV] 3_full_step_3_installprocess-concert.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[ENV] 3.0_render_params_ini.sh: same env as parent (concert)
+[ERROR] CONCERT_ACCEPT_LICENSE is not true - accept the IBM Concert license in the notebook first.
+[ERROR] Step 'render-params' exited 1. Fix the cause, then re-run the same command with --from render-params added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_ibm_concert/5_install_optimize/5_full_step_5_install_optimize.sh :: list-steps :: flat
+rc=0
+--- stdout
+[INFO] Optimize is not selected (CONCERT_INSTALL_OPTIMIZE) - nothing to do.
+[TIMER] 5_full_step_5_install_optimize.sh completed in <N>s
+--- stderr
+[ENV] 5_full_step_5_install_optimize.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_ibm_concert/5_install_optimize/5_full_step_5_install_optimize.sh :: list-steps :: pinned
+rc=0
+--- stdout
+[INFO] Optimize is not selected (CONCERT_INSTALL_OPTIMIZE) - nothing to do.
+[TIMER] 5_full_step_5_install_optimize.sh completed in <N>s
+--- stderr
+[ENV] 5_full_step_5_install_optimize.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/install_ibm_concert/5_install_optimize/5_full_step_5_install_optimize.sh :: default :: flat
+rc=0
+--- stdout
+[INFO] Optimize is not selected (CONCERT_INSTALL_OPTIMIZE) - nothing to do.
+[TIMER] 5_full_step_5_install_optimize.sh completed in <N>s
+--- stderr
+[ENV] 5_full_step_5_install_optimize.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+--- calls
+
+
+### scripts/install_ibm_concert/5_install_optimize/5_full_step_5_install_optimize.sh :: default :: pinned
+rc=0
+--- stdout
+[INFO] Optimize is not selected (CONCERT_INSTALL_OPTIMIZE) - nothing to do.
+[TIMER] 5_full_step_5_install_optimize.sh completed in <N>s
+--- stderr
+[ENV] 5_full_step_5_install_optimize.sh
+[ENV]   target   concert (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/concert_config/concert_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh :: list-steps :: flat
+rc=0
+--- stdout
+Phase: mirror
+[INFO] Steps:
+[INFO]   [run ] detect               0.1 detect the registry
+[INFO]   [run ] tools                0.2 tools
+[INFO]   [run ] rh-secret            0.4 Red Hat pull secret
+[INFO]   [run ] map                  1.0 build the inventory
+[INFO]   [run ] check                1.1 check the sources
+[INFO]   [off ] estimate             1.2 estimate the size
+[INFO]   [run ] native               2.0 install-native content
+[INFO]   [run ] images               2.1 images
+[INFO]   [run ] catalogs             2.2 operator catalogs
+[INFO]   [run ] charts               2.3 charts and files
+[INFO]   [run ] verify               2.4 verify the registry
+[INFO]   [run ] preflight            3.0 cluster preflight
+[INFO]   [run ] pull-secret          3.1 global pull secret
+[INFO]   [run ] ca                   3.2 trust the registry CA
+[INFO]   [run ] mirror-sets          3.3 image mirror sets
+[INFO]   [run ] op-catalogs          3.4 operator catalogs
+[INFO]   [run ] tap                  3.5 point the installs at the registry
+[INFO]   [run ] verify-cluster       3.6 verify cluster pulls
+[TIMER] full_registry_mirror_process.sh completed in <N>s
+--- stderr
+[ENV] full_registry_mirror_process.sh
+[ENV]   target   registry_mirror (ENV_TARGET)
+[ENV]   loaded   configs/registry_mirror_config/registry_mirror_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[INFO] Phase: mirror (internet reachable: true, registry reachable: true)
+--- calls
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh :: list-steps :: pinned
+rc=0
+--- stdout
+Phase: mirror
+[INFO] Steps:
+[INFO]   [run ] detect               0.1 detect the registry
+[INFO]   [run ] tools                0.2 tools
+[INFO]   [run ] rh-secret            0.4 Red Hat pull secret
+[INFO]   [run ] map                  1.0 build the inventory
+[INFO]   [run ] check                1.1 check the sources
+[INFO]   [off ] estimate             1.2 estimate the size
+[INFO]   [run ] native               2.0 install-native content
+[INFO]   [run ] images               2.1 images
+[INFO]   [run ] catalogs             2.2 operator catalogs
+[INFO]   [run ] charts               2.3 charts and files
+[INFO]   [run ] verify               2.4 verify the registry
+[INFO]   [run ] preflight            3.0 cluster preflight
+[INFO]   [run ] pull-secret          3.1 global pull secret
+[INFO]   [run ] ca                   3.2 trust the registry CA
+[INFO]   [run ] mirror-sets          3.3 image mirror sets
+[INFO]   [run ] op-catalogs          3.4 operator catalogs
+[INFO]   [run ] tap                  3.5 point the installs at the registry
+[INFO]   [run ] verify-cluster       3.6 verify cluster pulls
+[TIMER] full_registry_mirror_process.sh completed in <N>s
+--- stderr
+[ENV] full_registry_mirror_process.sh
+[ENV]   target   registry_mirror (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/registry_mirror_config/registry_mirror_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[INFO] Phase: mirror (internet reachable: true, registry reachable: true)
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh :: default :: flat
+rc=1
+--- stdout
+Phase: mirror
+[INFO] Steps:
+[INFO]   [run ] detect               0.1 detect the registry
+[INFO]   [run ] tools                0.2 tools
+[INFO]   [run ] rh-secret            0.4 Red Hat pull secret
+[INFO]   [run ] map                  1.0 build the inventory
+[INFO]   [run ] check                1.1 check the sources
+[INFO]   [off ] estimate             1.2 estimate the size
+[INFO]   [run ] native               2.0 install-native content
+[INFO]   [run ] images               2.1 images
+[INFO]   [run ] catalogs             2.2 operator catalogs
+[INFO]   [run ] charts               2.3 charts and files
+[INFO]   [run ] verify               2.4 verify the registry
+[INFO]   [run ] preflight            3.0 cluster preflight
+[INFO]   [run ] pull-secret          3.1 global pull secret
+[INFO]   [run ] ca                   3.2 trust the registry CA
+[INFO]   [run ] mirror-sets          3.3 image mirror sets
+[INFO]   [run ] op-catalogs          3.4 operator catalogs
+[INFO]   [run ] tap                  3.5 point the installs at the registry
+[INFO]   [run ] verify-cluster       3.6 verify cluster pulls
+
+==> Running:  0.1 detect the registry
+Registry
+  config                 configs/registry_mirror_config/registry_mirror_vars.sh
+  pull root (cluster)    registry.mirror.internal:5000
+  push root (here)       registry.mirror.internal:5000
+  classified as          local - local DNS suffix
+  image source           private (set: MIRROR_IMAGE_SOURCE=private)
+
+Reachability from this machine
+  internet (cp.icr.io)   reachable
+  push root              HTTP 401
+  push credentials       not set (MIRROR_REGISTRY_PUSH_USER / _PASSWORD)
+
+Phase with MIRROR_PHASE=auto
+  suggested              mirror (direct: this machine reaches both)
+
+[TIMER] 0.1_detect_registry.sh completed in <N>s
+[TIMER] full_registry_mirror_process.sh completed in <N>s
+--- stderr
+[ENV] full_registry_mirror_process.sh
+[ENV]   target   registry_mirror (ENV_TARGET)
+[ENV]   loaded   configs/registry_mirror_config/registry_mirror_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[INFO] Phase: mirror (internet reachable: true, registry reachable: true)
+[ENV] 0.1_detect_registry.sh: same env as parent (registry_mirror)
+[WARN] MIRROR_IMAGE_SOURCE=private but the host looks local (local DNS suffix) - check the setting.
+[WARN] push credentials are empty
+[ERROR] Step 'detect' exited 1. Fix the cause, then re-run the same command with --from detect added.
+--- calls
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/private_registry_mirroring/0_x_full_quick_mirror_script/full_registry_mirror_process.sh :: default :: pinned
+rc=1
+--- stdout
+Phase: mirror
+[INFO] Steps:
+[INFO]   [run ] detect               0.1 detect the registry
+[INFO]   [run ] tools                0.2 tools
+[INFO]   [run ] rh-secret            0.4 Red Hat pull secret
+[INFO]   [run ] map                  1.0 build the inventory
+[INFO]   [run ] check                1.1 check the sources
+[INFO]   [off ] estimate             1.2 estimate the size
+[INFO]   [run ] native               2.0 install-native content
+[INFO]   [run ] images               2.1 images
+[INFO]   [run ] catalogs             2.2 operator catalogs
+[INFO]   [run ] charts               2.3 charts and files
+[INFO]   [run ] verify               2.4 verify the registry
+[INFO]   [run ] preflight            3.0 cluster preflight
+[INFO]   [run ] pull-secret          3.1 global pull secret
+[INFO]   [run ] ca                   3.2 trust the registry CA
+[INFO]   [run ] mirror-sets          3.3 image mirror sets
+[INFO]   [run ] op-catalogs          3.4 operator catalogs
+[INFO]   [run ] tap                  3.5 point the installs at the registry
+[INFO]   [run ] verify-cluster       3.6 verify cluster pulls
+
+==> Running:  0.1 detect the registry
+Registry
+  config                 configs/clusters/itz-a/registry_mirror_config/registry_mirror_vars.sh
+  pull root (cluster)    registry.mirror.internal:5000
+  push root (here)       registry.mirror.internal:5000
+  classified as          local - local DNS suffix
+  image source           private (set: MIRROR_IMAGE_SOURCE=private)
+
+Reachability from this machine
+  internet (cp.icr.io)   reachable
+  push root              HTTP 401
+  push credentials       not set (MIRROR_REGISTRY_PUSH_USER / _PASSWORD)
+
+Phase with MIRROR_PHASE=auto
+  suggested              mirror (direct: this machine reaches both)
+
+[TIMER] 0.1_detect_registry.sh completed in <N>s
+[TIMER] full_registry_mirror_process.sh completed in <N>s
+--- stderr
+[ENV] full_registry_mirror_process.sh
+[ENV]   target   registry_mirror (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/registry_mirror_config/registry_mirror_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[INFO] Phase: mirror (internet reachable: true, registry reachable: true)
+[ENV] 0.1_detect_registry.sh: same env as parent (registry_mirror)
+[WARN] MIRROR_IMAGE_SOURCE=private but the host looks local (local DNS suffix) - check the setting.
+[WARN] push credentials are empty
+[ERROR] Step 'detect' exited 1. Fix the cause, then re-run the same command with --from detect added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/private_registry_mirroring/4_update_cpd_patch/4.x_full_cpd_patch_update.sh :: list-steps :: flat
+rc=0
+--- stdout
+Phase: mirror
+[INFO] Steps:
+[INFO]   [run ] plan                 4.0 plan the patch update
+[INFO]   [run ] copy                 4.1 copy the patch delta
+[INFO]   [run ] record               4.2 verify and record the patch
+[TIMER] 4.x_full_cpd_patch_update.sh completed in <N>s
+--- stderr
+[ENV] 4.x_full_cpd_patch_update.sh
+[ENV]   target   registry_mirror (ENV_TARGET)
+[ENV]   loaded   configs/registry_mirror_config/registry_mirror_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[INFO] Phase: mirror (internet reachable: true, registry reachable: true)
+--- calls
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/private_registry_mirroring/4_update_cpd_patch/4.x_full_cpd_patch_update.sh :: list-steps :: pinned
+rc=0
+--- stdout
+Phase: mirror
+[INFO] Steps:
+[INFO]   [run ] plan                 4.0 plan the patch update
+[INFO]   [run ] copy                 4.1 copy the patch delta
+[INFO]   [run ] record               4.2 verify and record the patch
+[TIMER] 4.x_full_cpd_patch_update.sh completed in <N>s
+--- stderr
+[ENV] 4.x_full_cpd_patch_update.sh
+[ENV]   target   registry_mirror (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/registry_mirror_config/registry_mirror_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[INFO] Phase: mirror (internet reachable: true, registry reachable: true)
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+
+### scripts/private_registry_mirroring/4_update_cpd_patch/4.x_full_cpd_patch_update.sh :: default :: flat
+rc=1
+--- stdout
+Phase: mirror
+[INFO] Steps:
+[INFO]   [run ] plan                 4.0 plan the patch update
+[INFO]   [run ] copy                 4.1 copy the patch delta
+[INFO]   [run ] record               4.2 verify and record the patch
+
+==> Running:  4.0 plan the patch update
+[TIMER] 4.0_plan_cpd_patch_update.sh completed in <N>s
+[TIMER] 4.x_full_cpd_patch_update.sh completed in <N>s
+--- stderr
+[ENV] 4.x_full_cpd_patch_update.sh
+[ENV]   target   registry_mirror (ENV_TARGET)
+[ENV]   loaded   configs/registry_mirror_config/registry_mirror_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[INFO] Phase: mirror (internet reachable: true, registry reachable: true)
+[ENV] 4.0_plan_cpd_patch_update.sh: same env as parent (registry_mirror)
+[ERROR] cpd is not in MIRROR_INSTALLS - nothing to update.
+[ERROR] Step 'plan' exited 1. Fix the cause, then re-run the same command with --from-step plan added.
+--- calls
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG= | OLM_UTILS_CONTAINER=olm-utils-play-v4
+
+### scripts/private_registry_mirroring/4_update_cpd_patch/4.x_full_cpd_patch_update.sh :: default :: pinned
+rc=1
+--- stdout
+Phase: mirror
+[INFO] Steps:
+[INFO]   [run ] plan                 4.0 plan the patch update
+[INFO]   [run ] copy                 4.1 copy the patch delta
+[INFO]   [run ] record               4.2 verify and record the patch
+
+==> Running:  4.0 plan the patch update
+[TIMER] 4.0_plan_cpd_patch_update.sh completed in <N>s
+[TIMER] 4.x_full_cpd_patch_update.sh completed in <N>s
+--- stderr
+[ENV] 4.x_full_cpd_patch_update.sh
+[ENV]   target   registry_mirror (ENV_TARGET)
+[ENV]   loaded   configs/clusters/itz-a/registry_mirror_config/registry_mirror_vars.sh
+[ENV]   cluster  https://api.itz-a.example.com:6443
+[ENV]   mcm      itz-a (current cluster)
+[WARN] podman is not reachable; skipping the container sync, the run continues.
+[INFO] Phase: mirror (internet reachable: true, registry reachable: true)
+[ENV] 4.0_plan_cpd_patch_update.sh: same env as parent (registry_mirror)
+[ERROR] cpd is not in MIRROR_INSTALLS - nothing to update.
+[ERROR] Step 'plan' exited 1. Fix the cause, then re-run the same command with --from-step plan added.
+--- calls
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 8 -w '%{http_code}' https://cp.icr.io/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+curl -s -o /dev/null -m 10 -w '%{http_code}' https://registry.mirror.internal:5000/v2/ | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman ps -a --format '{{.Names}} {{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a
+podman machine inspect --format '{{.State}}' | cwd=<ROOT>/repo | KUBECONFIG=<ROOT>/repo/configs/clusters/itz-a/.home/.kube/config | OLM_UTILS_CONTAINER=olm-utils-play-v4-itz-a

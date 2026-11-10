@@ -12,6 +12,7 @@ olm-utils container.
 
 import os
 import re
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -188,6 +189,17 @@ class CpdmLoginWrapper(unittest.TestCase):
             export OC_LOGIN="${{FAKE_OC_FORCE:-echo OC-FORCE}}"
             export CPDM_OC_LOGIN="${{FAKE_CPDM_FORCE:-echo CPDM-FORCE}}"
         """))
+        # A private copy of the code, so the env load never reads the real configs/ (whose
+        # layout depends on the developer's machine) or writes the real state file.
+        repo = root / "repo"
+        for rel in ("scripts/source_env_setup.sh", "env_bootstrap.sh", "pyproject.toml"):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO / rel, repo / rel)
+        shutil.copytree(REPO / "src" / "helpers", repo / "src" / "helpers")
+        # The flat layout expects a CP4D config folder (source_env_setup.sh copies it).
+        (repo / "configs" / "cp4d_config").mkdir(parents=True)
+        (repo / "configs" / "cp4d_config" / "README.txt").write_text("placeholder\n")
+        cls.repo = repo
         cls.root = root
 
     @classmethod
@@ -196,10 +208,11 @@ class CpdmLoginWrapper(unittest.TestCase):
 
     def run_login(self, **env):
         script = (f'set -euo pipefail; ENV_TARGET="{self.root}/t_vars.sh" ENV_SETUP_QUIET=1 '
-                  f'source "{REPO}/scripts/source_env_setup.sh"; eval "${{CPDM_OC_LOGIN}}"; echo REACHED')
+                  f'source "{self.repo}/scripts/source_env_setup.sh"; eval "${{CPDM_OC_LOGIN}}"; echo REACHED')
         full_env = {
             "PATH": f"{self.root}/bin:/usr/bin:/bin", "HOME": str(self.root),
             "FAKE_OC_SERVER": URL, "FAKE_CTR_SERVER": URL, "FAKE_CTR_IMAGE": IMAGE,
+            "MCM_STATE_FILE": str(self.root / "multi_cluster_management.sh"),
             **env,
         }
         r = subprocess.run(["zsh", "-c", script], env=full_env, capture_output=True, text=True)

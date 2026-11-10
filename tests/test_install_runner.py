@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from mcm_harness import make_sandbox
 
 REPO = Path(__file__).resolve().parents[1]
 HELPERS = REPO / "src/helpers/install_runner_helpers.sh"
@@ -141,35 +142,79 @@ def test_unfilled_placeholder_is_refused():
     assert "Unfilled placeholder" in result.stderr + result.stdout
 
 
-def handoff(fake, *args, env=None):
-    base = {"OCP_URL": "https://api.x:6443", "OLM_UTILS_IMAGE": "icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8",
-            "PROJECT_CPD_INST_OPERANDS": "cpd-op", "STG_CLASS_BLOCK": "blk", "STG_CLASS_FILE": "fil",
-            "VERSION": "5.4.0", "INSTALL_RUNNER_CPD_CLI_URL": "https://x/cli.tgz", "INSTALL_RUN_MODE": "cluster"}
-    base.update(env or {})
-    chain = fake / "chain.sh"
-    chain.write_text(textwrap.dedent(f"""\
-        #!/bin/zsh
-        set -euo pipefail
-        ZSH_ARGZERO="{REPO}/{CPD_CHAIN}"
-        source "{REPO}/src/helpers/common_helpers.sh"
-        ir_dispatch "$@"
-        print -r -- CHAIN-RAN-LOCALLY
-        """))
-    run_env = {k: v for k, v in os.environ.items() if not k.startswith(("IR_", "INSTALL_RUN"))}
-    run_env.update({"_CP4D_REPO_ROOT": str(REPO), "OC_LOGIN": "true", "PATH": f"{fake}/bin:{run_env['PATH']}",
-                    "FAKE_DIR": str(fake), **base})
-    return subprocess.run(["zsh", str(chain), *args], capture_output=True, text=True, env=run_env, timeout=120, check=False)
+# --- sandboxed hand-off --------------------------------------------------------
+# The hand-off, snapshot and collect tests run in a tests/mcm_harness.py sandbox: a
+# throwaway repo with the real env_bootstrap.sh, source_env_setup.sh and helper copies,
+# its own HOME and a fake config. So they go through the same env load as a real chain,
+# and never read the developer's configs/ or the real checkout's files.
+SANDBOX_EXTRA = [".gitignore", "pyproject.toml", "src/install_runner", "scripts/install_runner"]
+# What a broken env load prints even when the line it was meant to stop at still runs.
+LOAD_NOISE = ("command not found", "no such file", "no matches found")
+SANDBOX_URL = "https://api.x:6443"
+# The cpd config values the runner reads; the harness adds OCP_URL, the logins and OLM_UTILS_IMAGE.
+HANDOFF_CONFIG = {"PROJECT_CPD_INST_OPERANDS": "cpd-op", "STG_CLASS_BLOCK": "blk", "STG_CLASS_FILE": "fil",
+                  "VERSION": "5.4.0", "INSTALL_RUNNER_CPD_CLI_URL": "https://x/cli.tgz"}
+# A chain entry point as the real ones start: env load, dispatch, then its own work.
+STAND_IN_CHAIN = textwrap.dedent("""\
+    #!/bin/zsh
+    set -euo pipefail
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+    source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+    ir_dispatch "$@"
+    print -r -- CHAIN-RAN-LOCALLY
+    """)
 
 
-def test_handoff_builds_everything_and_never_runs_locally(fake):
-    (fake / "state").write_text("completed\n")
-    result = handoff(fake, "--from", "cpd", "--skip", "my step")
+def assert_clean_load(result):
+    text = result.stderr.lower()
+    for noise in LOAD_NOISE:
+        assert noise not in text, result.stderr
+
+
+@pytest.fixture
+def sb():
+    """A sandbox repo (a git checkout, so the snapshot can list it) with the runner's fake oc.
+
+    sb.fake holds the fake oc's answers and logs, as the `fake` fixture does. The harness's own
+    podman and cpd-cli fakes stay in place and log every call: none may happen on the workstation."""
+    with make_sandbox(extra=SANDBOX_EXTRA) as box:
+        box.fake = box.root / "fake"
+        box.fake.mkdir()
+        (box.bin / "oc").write_text(FAKE_OC)
+        subprocess.run(["git", "init", "-q"], cwd=box.repo, env=box.env(), check=True, capture_output=True)
+        yield box
+
+
+def no_local_tools(box):
+    """Neither cpd-cli nor podman ran on the workstation."""
+    return box.calls("podman") == [] and box.calls("cpd-cli") == []
+
+
+def handoff(box, *args, mode="cluster", env=None, chain=CPD_CHAIN):
+    """Runs a stand-in for `chain` in the sandbox. mode=None leaves INSTALL_RUN_MODE out of the config."""
+    config = dict(HANDOFF_CONFIG)
+    if mode is not None:
+        config["INSTALL_RUN_MODE"] = mode
+    box.write_config("cpd", ocp_url=SANDBOX_URL, extra=config)
+    script = box.repo / chain
+    if not script.exists():
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(STAND_IN_CHAIN)
+        script.chmod(0o755)
+    return box.run_script(chain, env={"FAKE_DIR": box.fake, **(env or {})}, args=args, timeout=120)
+
+
+def test_handoff_builds_everything_and_never_runs_locally(sb):
+    (sb.fake / "state").write_text("completed\n")
+    result = handoff(sb, "--from", "cpd", "--skip", "my step")
     assert result.returncode == 0, result.stdout + result.stderr
+    assert_clean_load(result)
     assert "CHAIN-RAN-LOCALLY" not in result.stdout
     assert "hello from the pod" in result.stdout
-    assert not (fake / "tripwire").exists(), "cpd-cli or podman ran on the workstation"
+    assert no_local_tools(sb), "cpd-cli or podman ran on the workstation"
 
-    docs = [d for d in yaml.safe_load_all((fake / "applied.yaml").read_text()) if d]
+    docs = [d for d in yaml.safe_load_all((sb.fake / "applied.yaml").read_text()) if d]
     kinds = {d["kind"] for d in docs}
     assert {"Namespace", "ServiceAccount", "StatefulSet", "PersistentVolumeClaim", "ClusterRoleBinding"} <= kinds
 
@@ -190,84 +235,90 @@ def test_handoff_builds_everything_and_never_runs_locally(fake):
     assert not any(d["kind"] == "PodDisruptionBudget" for d in docs)
 
 
-def test_run_env_keeps_arguments_exact(fake):
-    (fake / "state").write_text("completed\n")
-    result = handoff(fake, "--skip", "two words", "--from", "it's", env={"DO_X": "false", "DO_API_TOKEN": "nope"})
+def test_run_env_keeps_arguments_exact(sb):
+    (sb.fake / "state").write_text("completed\n")
+    result = handoff(sb, "--skip", "two words", "--from", "it's", env={"DO_X": "false", "DO_API_TOKEN": "nope"})
     assert result.returncode == 0, result.stderr
-    run_env = (fake / "run.env").read_text()
+    run_env = (sb.fake / "run.env").read_text()
     assert "export DO_X=" in run_env
     assert "nope" not in run_env
-    read_back = subprocess.run(["zsh", "-c", f'source {fake}/run.env; print -l -- "${{IR_ARGS[@]}}"; print -r -- "$IR_CHAIN"'],
+    read_back = subprocess.run(["zsh", "-c", f'source {sb.fake}/run.env; print -l -- "${{IR_ARGS[@]}}"; print -r -- "$IR_CHAIN"'],
                                capture_output=True, text=True, check=False)
     assert read_back.stdout.split("\n")[:5] == ["--skip", "two words", "--from", "it's", CPD_CHAIN]
 
 
-def test_snapshot_has_code_and_config_but_not_secrets_of_others(fake):
-    (fake / "state").write_text("completed\n")
-    assert handoff(fake).returncode == 0
-    with tarfile.open(fake / "snapshot.tar") as tar:
+def test_snapshot_has_code_and_config_but_not_secrets_of_others(sb):
+    (sb.fake / "state").write_text("completed\n")
+    # Things a real checkout holds that must stay home: another product's config, a venv,
+    # a mirror workspace and payloads in service_instances/.
+    sb.write_config("concert", ocp_url=SANDBOX_URL)
+    for rel in (".venv/lib/site.py", "registry_mirror_workspace/inventory.tsv", "service_instances/payload.json"):
+        (sb.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (sb.repo / rel).write_text("stays home\n")
+    assert handoff(sb).returncode == 0
+    with tarfile.open(sb.fake / "snapshot.tar") as tar:
         names = set(tar.getnames())
     assert CPD_CHAIN in names
     assert "src/helpers/common_helpers.sh" in names
+    assert "src/helpers/multi_cluster_helpers.sh" in names
     assert "pyproject.toml" in names, "1.1 and 3.3.1 walk up to it"
-    assert not any(n.startswith((".venv/", "registry_mirror_workspace/")) for n in names)
+    assert "configs/cp4d_config/cpd_vars.sh" in names, "the module's own config is staged"
+    assert not any(n.startswith((".venv/", "registry_mirror_workspace/", "service_instances/", ".git/")) for n in names)
     assert not any(n.startswith("configs/") and not n.startswith("configs/cp4d_config/") for n in names)
 
 
-def test_image_is_reused_when_unchanged(fake):
-    (fake / "state").write_text("completed\n")
-    assert handoff(fake).returncode == 0
-    assert "start-build" not in (fake / "oc.log").read_text()
+def test_image_is_reused_when_unchanged(sb):
+    (sb.fake / "state").write_text("completed\n")
+    assert handoff(sb).returncode == 0
+    assert "start-build" not in (sb.fake / "oc.log").read_text()
 
 
-def test_image_is_built_when_missing(fake):
-    (fake / "state").write_text("completed\n")
-    (fake / "image_missing").touch()
-    assert handoff(fake).returncode == 0
-    assert "start-build" in (fake / "oc.log").read_text()
-    docs = [d for d in yaml.safe_load_all((fake / "applied.yaml").read_text()) if d]
+def test_image_is_built_when_missing(sb):
+    (sb.fake / "state").write_text("completed\n")
+    (sb.fake / "image_missing").touch()
+    assert handoff(sb).returncode == 0
+    assert "start-build" in (sb.fake / "oc.log").read_text()
+    docs = [d for d in yaml.safe_load_all((sb.fake / "applied.yaml").read_text()) if d]
     build = next(d for d in docs if d["kind"] == "BuildConfig")
     args = {a["name"]: a["value"] for a in build["spec"]["strategy"]["dockerStrategy"]["buildArgs"]}
     assert args == {"BASE_IMAGE": "icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8", "CPD_CLI_URL": "https://x/cli.tgz"}
 
 
-def test_failed_run_returns_failure(fake):
-    (fake / "state").write_text("failed\n")
-    result = handoff(fake)
+def test_failed_run_returns_failure(sb):
+    (sb.fake / "state").write_text("failed\n")
+    result = handoff(sb)
     assert result.returncode != 0
     assert "resume" in result.stderr
 
 
 # --- mode switch ---------------------------------------------------------------
-@pytest.mark.parametrize("env", [{}, {"INSTALL_RUN_MODE": "local"}, {"INSTALL_RUN_MODE": "cluster", "IR_IN_RUNNER": "1"}])
-def test_dispatch_leaves_the_chain_alone(fake, env):
-    full = {"INSTALL_RUN_MODE": "", **env}
-    result = handoff(fake, env=full) if env else handoff(fake, env={"INSTALL_RUN_MODE": "local"})
+@pytest.mark.parametrize("mode,env", [(None, {}), ("local", {}), ("cluster", {"IR_IN_RUNNER": "1"})])
+def test_dispatch_leaves_the_chain_alone(sb, mode, env):
+    result = handoff(sb, mode=mode, env=env)
+    assert result.returncode == 0, result.stderr
+    assert_clean_load(result)
     assert "CHAIN-RAN-LOCALLY" in result.stdout, result.stderr
-    assert not (fake / "oc.log").exists()
+    assert not (sb.fake / "oc.log").exists()
+    assert no_local_tools(sb)
 
 
-def test_bad_mode_is_refused(fake):
-    result = handoff(fake, env={"INSTALL_RUN_MODE": "pod"})
+def test_bad_mode_is_refused(sb):
+    result = handoff(sb, mode="pod")
     assert result.returncode != 0
     assert "INSTALL_RUN_MODE" in result.stderr
 
 
 @pytest.mark.parametrize("flag", ["--list-steps", "--help", "-h"])
-def test_questions_about_a_chain_stay_local(fake, flag):
-    assert "CHAIN-RAN-LOCALLY" in handoff(fake, flag).stdout
-    assert not (fake / "oc.log").exists()
+def test_questions_about_a_chain_stay_local(sb, flag):
+    assert "CHAIN-RAN-LOCALLY" in handoff(sb, flag).stdout
+    assert not (sb.fake / "oc.log").exists()
 
 
-def test_chain_without_a_module_is_refused_not_run_locally(fake):
-    chain = fake / "other.sh"
-    chain.write_text(f'#!/bin/zsh\nset -euo pipefail\nZSH_ARGZERO="{REPO}/scripts/other.sh"\n'
-                     f'source "{REPO}/src/helpers/common_helpers.sh"\nir_dispatch "$@"\nprint LOCAL\n')
-    env = {**os.environ, "_CP4D_REPO_ROOT": str(REPO), "OC_LOGIN": "true", "INSTALL_RUN_MODE": "cluster",
-           "PATH": f"{fake}/bin:{os.environ['PATH']}", "FAKE_DIR": str(fake)}
-    result = subprocess.run(["zsh", str(chain)], capture_output=True, text=True, env=env, check=False)
+def test_chain_without_a_module_is_refused_not_run_locally(sb):
+    # Under scripts/install_cloud_pak_for_data/, so it loads the cpd config like a real CP4D script.
+    result = handoff(sb, chain="scripts/install_cloud_pak_for_data/other.sh")
     assert result.returncode != 0
-    assert "LOCAL" not in result.stdout
+    assert "CHAIN-RAN-LOCALLY" not in result.stdout
     assert "no install module" in result.stderr
 
 
@@ -332,51 +383,56 @@ def sha(text):
 
 
 @pytest.fixture
-def collect_repo(fake, tmp_path):
-    """A stand-in repo root with one module, so collect writes nowhere real."""
-    root = tmp_path / "root"
-    (root / "src/install_runner/installs").mkdir(parents=True)
-    (root / "src/helpers").mkdir()
-    for name in ("common_helpers.sh", "install_runner_helpers.sh"):
-        (root / "src/helpers" / name).write_text((REPO / "src/helpers" / name).read_text())
-    (root / "src/install_runner/installs/demo.conf").write_text('INSTALL_ID="demo"\nRUNNER_COLLECT_PATHS="configs"\n')
-    (root / "configs").mkdir()
-    (root / "configs/unchanged_here.sh").write_text("old\n")
-    (root / "configs/edited_here.sh").write_text("my edit\n")
-    pod = tmp_path / "pod"
-    (pod / "configs").mkdir(parents=True)
+def collect_repo(sb):
+    """A demo module with its own config in the sandbox, collected through x_install_runner.sh."""
+    (sb.repo / "src/install_runner/installs/demo.conf").write_text(
+        'INSTALL_ID="demo"\nINSTALL_ENV_TARGET="demo"\nRUNNER_COLLECT_PATHS="configs/demo_config"\n')
+    local = sb.repo / "configs/demo_config"
+    local.mkdir(parents=True)
+    (local / "demo_vars.sh").write_text(f'export OCP_URL="{SANDBOX_URL}"\nexport OC_LOGIN="oc login {SANDBOX_URL} --token=fake"\n')
+    (local / "unchanged_here.sh").write_text("old\n")
+    (local / "edited_here.sh").write_text("my edit\n")
+    # A flat workstation load still needs configs/cp4d_config (source_env_setup.sh keeps its
+    # error for an empty one outside a cluster folder or a runner pod), as a real checkout has.
+    sb.write_config("cpd", ocp_url=SANDBOX_URL)
+    pod = sb.root / "pod"
+    (pod / "configs/demo_config").mkdir(parents=True)
     for name in ("unchanged_here.sh", "edited_here.sh", "new.sh"):
-        (pod / "configs" / name).write_text("from pod\n")
-    with tarfile.open(fake / "collect.tar", "w") as tar:
+        (pod / "configs/demo_config" / name).write_text("from pod\n")
+    with tarfile.open(sb.fake / "collect.tar", "w") as tar:
         tar.add(pod / "configs", arcname="configs")
-    (fake / "collect_list").write_text("".join([
-        f"{sha('old' + chr(10))}\t{sha('from pod' + chr(10))}\tconfigs/unchanged_here.sh\n",
-        f"{sha('old' + chr(10))}\t{sha('from pod' + chr(10))}\tconfigs/edited_here.sh\n",
-        f"-\t{sha('from pod' + chr(10))}\tconfigs/new.sh\n"]))
-    (fake / "state").write_text("completed\n")
-    return root
+    (sb.fake / "collect_list").write_text("".join([
+        f"{sha('old' + chr(10))}\t{sha('from pod' + chr(10))}\tconfigs/demo_config/unchanged_here.sh\n",
+        f"{sha('old' + chr(10))}\t{sha('from pod' + chr(10))}\tconfigs/demo_config/edited_here.sh\n",
+        f"-\t{sha('from pod' + chr(10))}\tconfigs/demo_config/new.sh\n"]))
+    (sb.fake / "state").write_text("completed\n")
+    return local
 
 
-def collect(fake, root, args=""):
-    return zsh(f"ir_collect demo slot {args}", fake, {"_CP4D_REPO_ROOT": str(root), "TMPDIR": str(fake)})
+def collect(box, *args):
+    return box.run_script("scripts/install_runner/x_install_runner.sh",
+                          args=("collect", "--install", "demo", "--slot", "slot", *args),
+                          env={"FAKE_DIR": box.fake}, timeout=120)
 
 
-def test_collect_takes_changes_and_never_overwrites_local_edits(fake, collect_repo):
-    result = collect(fake, collect_repo)
+def test_collect_takes_changes_and_never_overwrites_local_edits(sb, collect_repo):
+    result = collect(sb)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (collect_repo / "configs/unchanged_here.sh").read_text() == "from pod\n"
-    assert (collect_repo / "configs/new.sh").read_text() == "from pod\n"
-    assert (collect_repo / "configs/edited_here.sh").read_text() == "my edit\n"
-    assert (collect_repo / "configs/edited_here.sh.in-cluster-run1").read_text() == "from pod\n"
+    assert_clean_load(result)
+    assert (collect_repo / "unchanged_here.sh").read_text() == "from pod\n"
+    assert (collect_repo / "new.sh").read_text() == "from pod\n"
+    assert (collect_repo / "edited_here.sh").read_text() == "my edit\n"
+    assert (collect_repo / "edited_here.sh.in-cluster-run1").read_text() == "from pod\n"
     assert "Kept your local" in result.stderr
-    assert "touch /work/current/collected" in (fake / "oc.log").read_text()
+    assert "touch /work/current/collected" in (sb.fake / "oc.log").read_text()
+    assert no_local_tools(sb)
 
 
-def test_collect_waits_for_the_run(fake, collect_repo):
-    (fake / "state").write_text("running\n")
-    assert collect(fake, collect_repo).returncode != 0
-    assert (collect_repo / "configs/unchanged_here.sh").read_text() == "old\n"
-    assert collect(fake, collect_repo, "--force").returncode == 0
+def test_collect_waits_for_the_run(sb, collect_repo):
+    (sb.fake / "state").write_text("running\n")
+    assert collect(sb).returncode != 0
+    assert (collect_repo / "unchanged_here.sh").read_text() == "old\n"
+    assert collect(sb, "--force").returncode == 0
 
 
 # --- teardown ------------------------------------------------------------------
@@ -490,30 +546,28 @@ def test_journal_ignores_steps_that_are_off(tmp_path):
 
 
 # --- runner environment --------------------------------------------------------
-def test_runner_login_is_a_session_check(tmp_path):
-    (tmp_path / "scripts").mkdir()
-    for name in ("source_env_setup.sh",):
-        (tmp_path / "scripts" / name).write_text((REPO / "scripts" / name).read_text())
-    cfg = tmp_path / "configs/cp4d_config"
-    cfg.mkdir(parents=True)
-    (cfg / "cpd_vars.sh").write_text('export OCP_URL=https://api.x:6443\nexport OC_LOGIN="oc login"\n'
-                                     'export CPDM_OC_LOGIN="cpd-cli manage login-to-ocp"\n')
-    env = {**os.environ, "HOME": str(tmp_path), "ENV_TARGET": "cpd", "ENV_SETUP_QUIET": "1", "IR_IN_RUNNER": "1"}
-    probe = f'source {tmp_path}/scripts/source_env_setup.sh; print -r -- "$OC_LOGIN|$CPDM_OC_LOGIN"'
-    result = subprocess.run(["zsh", "-c", probe], capture_output=True, text=True, env=env, check=False)
+# Strict, as run-attempt.sh runs a chain, and through the real env_bootstrap.sh, so a load
+# that breaks half way (a missing helper, an empty glob) fails here instead of passing.
+def test_runner_login_is_a_session_check():
+    with make_sandbox() as box:
+        box.write_config("cpd", ocp_url=SANDBOX_URL)
+        result = box.run_zsh('source "${0:A:h}/env_bootstrap.sh"\nprint -r -- "$OC_LOGIN|$CPDM_OC_LOGIN"\n',
+                             env={"ENV_TARGET": "cpd", "ENV_SETUP_QUIET": "1", "IR_IN_RUNNER": "1"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_clean_load(result)
     assert result.stdout.strip().split("\n")[-1] == "oc whoami >/dev/null|oc whoami >/dev/null", result.stderr
 
 
-def test_env_loads_without_a_cp4d_config(tmp_path):
+def test_env_loads_without_a_cp4d_config():
     """A non-CP4D slot's snapshot holds only its own config."""
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts/source_env_setup.sh").write_text((REPO / "scripts/source_env_setup.sh").read_text())
-    cfg = tmp_path / "configs/other_config"
-    cfg.mkdir(parents=True)
-    (cfg / "other_vars.sh").write_text("export OTHER_LOADED=yes\n")
-    env = {**os.environ, "HOME": str(tmp_path), "ENV_TARGET": "other", "ENV_SETUP_QUIET": "1"}
-    probe = f'source {tmp_path}/scripts/source_env_setup.sh; print -r -- "loaded=$OTHER_LOADED"'
-    result = subprocess.run(["zsh", "-c", probe], capture_output=True, text=True, env=env, check=False)
+    with make_sandbox() as box:
+        other = box.repo / "configs/other_config/other_vars.sh"
+        other.parent.mkdir(parents=True)
+        other.write_text("export OTHER_LOADED=yes\n")
+        result = box.run_zsh('source "${0:A:h}/env_bootstrap.sh"\nprint -r -- "loaded=$OTHER_LOADED"\n',
+                             env={"ENV_TARGET": "other", "ENV_SETUP_QUIET": "1", "IR_IN_RUNNER": "1"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_clean_load(result)
     assert "loaded=yes" in result.stdout, result.stderr
 
 
@@ -535,3 +589,39 @@ def test_attach_to_an_empty_slot_says_so_and_ends(fake):
     result = zsh("ir_attach slot", fake)
     assert result.returncode != 0
     assert "no run to watch" in result.stderr
+
+
+# --- end-to-end harness --------------------------------------------------------
+E2E = REPO / "tests/install_runner_e2e.sh"
+
+
+def test_e2e_script_parses():
+    result = subprocess.run(["zsh", "-n", str(E2E)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+
+
+def test_e2e_repo_copy_loads_its_env(tmp_path):
+    """The full e2e needs a built image (IR_TEST_IMAGE). Its throwaway repo is checked here: the
+    demo chain must get through the real env load and dispatch, which a fixed copy list once broke
+    (rc 127 on a helper the load sources)."""
+    prep, home, bin_dir = tmp_path / "e2e", tmp_path / "home", tmp_path / "bin"
+    for folder in (prep, home, bin_dir):
+        folder.mkdir()
+    for tool in ("oc", "podman", "cpd-cli"):
+        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "{tmp_path}/tripwire"\nexit 0\n')
+        (bin_dir / tool).chmod(0o755)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home), "TMPDIR": str(tmp_path), "_CP4D_PREP_DONE": "1",
+           "LOGNAME": "e2e-tester", "USER": "e2e-tester"}
+    made = subprocess.run(["zsh", str(E2E), "--prepare-only", str(prep)], capture_output=True, text=True, env=env,
+                          timeout=120, check=False)
+    assert made.returncode == 0, made.stdout + made.stderr
+    root = prep / "repo"
+    for rel in ("env_bootstrap.sh", "src/helpers/multi_cluster_helpers.sh", "src/install_runner/installs/e2e.conf",
+                "scripts/install_runner/x_install_runner.sh", "scripts/e2e/chain.sh"):
+        assert (root / rel).is_file(), rel
+    result = subprocess.run(["zsh", "scripts/e2e/chain.sh", "--list-steps"], cwd=root, capture_output=True,
+                            text=True, env=env, timeout=120, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_clean_load(result)
+    assert "step one" in result.stdout + result.stderr
+    assert not (tmp_path / "tripwire").exists()
