@@ -42,6 +42,7 @@ unset _mcm_targets
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/private_registry_helpers.sh"
+ir_dispatch "$@"
 preg_require_config
 
 # ==============================================================================

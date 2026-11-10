@@ -1,0 +1,17 @@
+# Exists only while a run needs it: the supervisor removes it when the run ends,
+# `resume` applies it again. INSTALL_RUNNER_KEEP_ADMIN=true keeps it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: @ADMIN_BINDING@
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+    install-runner/slot: @SLOT@
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: install-runner
+  namespace: @NAMESPACE@

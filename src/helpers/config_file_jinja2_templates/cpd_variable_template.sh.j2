@@ -20,6 +20,11 @@ unset _CPD_VARS_DIR
 # Cluster
 # ------------------------------------------------------------------------------
 
+# local   = chains run on this machine.
+# cluster = chains run in a pod on the cluster, so this machine can go off: see
+#           "Running an install in the cluster" in the README.
+export INSTALL_RUN_MODE="local"
+
 export OCP_URL="{{ cluster_url_input.value }}"
 export OPENSHIFT_TYPE="{{ cluster_type_select.value }}"
 export IMAGE_ARCH="{{ cluster_arch_select.value }}"

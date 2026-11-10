@@ -264,6 +264,14 @@ if [[ -n "${CPDM_OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
     export CPDM_OC_LOGIN
 fi
 
+# In an in-cluster runner pod the session is the pod's own (a kubeconfig on its
+# rotating service account token, written by the supervisor) and there is no
+# container to log in to, so logging in means checking that session.
+if [[ -n "${IR_IN_RUNNER:-}" ]]; then
+    export OC_LOGIN="oc whoami >/dev/null" CPDM_OC_LOGIN="oc whoami >/dev/null"
+    export OC_LOGIN_FORCE="${OC_LOGIN}" CPDM_OC_LOGIN_FORCE="${CPDM_OC_LOGIN}"
+fi
+
 # CPD_CLI_HOME is where the binary is installed; CPD_CLI_MANAGE_WORKSPACE is the workspace root.
 export CPD_CLI_HOME="$HOME/cpd-cli"
 export CPD_CLI_MANAGE_WORKSPACE="${MCM_CPD_CLI_WORKSPACE:-${CPD_CLI_HOME}}"
@@ -281,9 +289,9 @@ _CONFIG_WORK_DIR="${CPD_CLI_WORK_PATH}/cp4d_config"
 mkdir -p "${_CONFIG_WORK_DIR}"
 # Top-level files only: subdirs (e.g. certs/) are host-side outputs and plain cp would fail on them.
 _cfg_copy_ok=1
-# A cluster folder may have no CP4D config at all (Concert-only, mirror-only), so an
-# empty glob is fine there. The flat layout keeps its error for a missing cp4d_config.
-if [[ -n "${MCM_CLUSTER:-}" ]]; then
+# A cluster folder (or an in-cluster runner slot of another product) may have no CP4D
+# config at all (Concert-only, mirror-only), so an empty glob is fine there. The flat layout keeps its error for a missing cp4d_config.
+if [[ -n "${MCM_CLUSTER:-}" || -n "${IR_IN_RUNNER:-}" ]]; then
     _cfg_files=("${CONFIG_DIR}/"*(N))
 else
     _cfg_files=("${CONFIG_DIR}/"*)

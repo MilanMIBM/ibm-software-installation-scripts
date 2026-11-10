@@ -1,0 +1,16 @@
+# Lets one slot's pod pull the runner image from the shared ImageStream.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: image-puller-@NAMESPACE@
+  namespace: @SYSTEM_NAMESPACE@
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:image-puller
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:serviceaccounts:@NAMESPACE@

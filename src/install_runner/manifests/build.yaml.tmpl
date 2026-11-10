@@ -1,0 +1,32 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: install-runner
+  namespace: @SYSTEM_NAMESPACE@
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: @BUILD_NAME@
+  namespace: @SYSTEM_NAMESPACE@
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+spec:
+  runPolicy: Serial
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile
+      buildArgs:
+      - name: BASE_IMAGE
+        value: "@BASE_IMAGE@"
+      - name: CPD_CLI_URL
+        value: "@CPD_CLI_URL@"
+  output:
+    to:
+      kind: ImageStreamTag
+      name: install-runner:@IMAGE_TAG@

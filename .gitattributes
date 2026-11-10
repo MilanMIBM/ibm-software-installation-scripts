@@ -8,3 +8,4 @@
 *.zsh      text eol=lf
 *.sh.j2    text eol=lf
 src/helpers/concert_runner/bin/* text eol=lf
+src/install_runner/image/shims/* text eol=lf
