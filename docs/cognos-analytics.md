@@ -251,16 +251,25 @@ Choose the installed Cognos service version explicitly. IBM maps Software Hub
 `30.0.0`. Apply verifies that the installed service advertises the requested
 version. Do not pass `5.4.0` as the Cognos service version.
 
-Render a new private payload for local review (no cluster calls from the Python
-helper):
+Render a new private payload for local review. Without `--apply` or
+`--wait-only` the wrapper loads repository configuration but does not log in,
+and the Python helper makes no cluster calls:
 
 ```sh
-python3 src/helpers/cognos_provisioning.py \
+./scripts/install_cloud_pak_for_data/4.5_service_instance_setups/4.5_provision_cognos.sh \
   --name cognos-new --version 30.0.4 --namespace cognos-new-ns \
   --file-class file-storage --block-class block-storage --size small \
   --content-connection cognos-new-store --audit-connection cognos-new-store \
-  --output service_instances/cognos-new-review.json
+  --output cognos-new-review.json
 ```
+
+The wrapper writes a bare `--output` file name (or a path starting with
+`service_instances/`) into the service-instance folder: `service_instances/`
+with multi-cluster management off, or `configs/clusters/<cluster>/service_instances/`
+for a cluster with its own folder (see README "Managing several clusters").
+Absolute and other relative paths are used as given. This wrapper and
+`5_prep_cognos_content_store.sh` both accept `--target-cluster NAME`; with
+several target clusters, a bare file name gives each cluster its own payload.
 
 Create with the same reviewed inputs and a **new** output path. This wrapper
 loads repository configuration and runs the established `OC_LOGIN` flow. It
@@ -272,7 +281,7 @@ container:
   --apply --name cognos-new --version 30.0.4 --namespace cognos-new-ns \
   --size small --content-connection cognos-new-store --audit-connection cognos-new-store \
   --db2-namespace database-ns --db2-instance db2-cognos-new --db2-user cognos_svc \
-  --output service_instances/cognos-new-submitted.json
+  --output cognos-new-submitted.json
 ```
 
 File/block classes default to `STG_CLASS_FILE`/`STG_CLASS_BLOCK`. For tethered
@@ -290,8 +299,9 @@ Use `--fips` only on a FIPS-enabled cluster. Extra JDBC properties are read from
 `COGNOS_CONTENT_CONNECTION_PROPS` and `COGNOS_AUDIT_CONNECTION_PROPS` in the
 environment/configuration, not command-line password arguments. Payloads are
 created exclusively with mode 0600 and never printed or overwritten. Keep them
-in the gitignored `service_instances/` directory. Do not commit credentials or
-payloads containing sensitive JDBC properties.
+in the gitignored service-instance folder (`service_instances/`, or
+`configs/clusters/<cluster>/service_instances/` with multi-cluster management
+on). Do not commit credentials or payloads containing sensitive JDBC properties.
 
 Apply checks the installed registry, target CR and platform inventories, and
 storage-class existence before submitting once. Class capabilities, database

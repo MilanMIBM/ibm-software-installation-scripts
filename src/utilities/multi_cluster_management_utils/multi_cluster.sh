@@ -1302,7 +1302,7 @@ _mcm_cli_containers_start() {   # NAME
             fi
         done
         if [[ "${any}" == false ]]; then
-            _mcm_cli_info "Cluster ${name} has no container yet; the next cpd-cli manage creates it."
+            _mcm_cli_info "Cluster ${name} has no container yet; the next 'cpd-cli manage' command creates it."
         fi
     fi
     for container in "${pending[@]}"; do

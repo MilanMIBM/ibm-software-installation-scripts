@@ -68,6 +68,13 @@ def _runnable_scripts():
         yield rel, text
 
 
+# Lines that only print a message: echo/print/printf and message helpers such as preg_info,
+# concert_info, _mcm_cli_info or _mcm_cli_bad_usage. Their text may name a command
+# ("the next cpd-cli manage creates it") without running it. A helper's definition
+# ("_mcm_cli_info() { ... }") is code, so it is not skipped.
+MESSAGE_LINE_RE = re.compile(r"(?:echo|print|printf|\w+_(?:info|warn|warning|die|error|bad_usage))\b(?!\s*\()")
+
+
 def _code_lines(text):
     """Lines that are code, not comments, help text or echo'd hints."""
     in_heredoc = None
@@ -80,7 +87,7 @@ def _code_lines(text):
         m = re.search(r"<<-?\s*['\"]?([A-Z_]+)['\"]?", line)
         if m:
             in_heredoc = m.group(1)
-        if not s or s.startswith("#") or re.match(r"(echo|print|printf|preg_info|preg_warn|concert_info)\b", s):
+        if not s or s.startswith("#") or MESSAGE_LINE_RE.match(s):
             continue
         # Drop trailing comments and anything echo'd later in the line (hints like "(oc get storageclass)").
         yield re.sub(r"\b(echo|print|printf)\b.*|\s#\s.*", "", line)
@@ -128,6 +135,41 @@ esac
 """
 URL = "https://api.test.example:6443"
 IMAGE = "icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8"
+
+
+class CodeLinesSkipMessages(unittest.TestCase):
+    """_code_lines must skip message text, so words in it are not read as commands."""
+
+    def cmds(self, text):
+        return {m.group(1) for line in _code_lines(text) for m in CPD_CLI_RE.finditer(line)}
+
+    def test_message_helper_text_is_not_a_cpd_cli_call(self):
+        # multi_cluster.sh prints this through its own print wrapper; it runs no cpd-cli.
+        for helper in ("_mcm_cli_info", "_mcm_cli_die", "_mcm_cli_bad_usage", "_mcm_warn",
+                       "preg_info", "concert_info"):
+            with self.subTest(helper=helper):
+                text = f'    {helper} "Cluster x has no container yet; the next cpd-cli manage creates it."\n'
+                self.assertEqual(self.cmds(text), set())
+
+    def test_real_calls_are_still_seen(self):
+        text = textwrap.dedent("""\
+            _mcm_cli_info() { print -r -- "[INFO] $*"; }
+            cpd-cli manage apply-olm --release=5.4.0
+            result=$(cpd-cli manage get-cr-status)
+        """)
+        self.assertEqual(self.cmds(text), {"apply-olm", "get-cr-status"})
+
+    def test_helper_definition_with_a_call_is_still_code(self):
+        text = '_mcm_cli_die() { cpd-cli manage restart-container; oc get pods; exit 1; }\n'
+        lines = list(_code_lines(text))
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(LOCAL_CLUSTER_RE.search(lines[0]))
+
+    def test_multi_cluster_sh_has_no_cluster_cpd_cli_call(self):
+        # It only manages the cluster registry; it must not log in or recreate a container.
+        text = (REPO / "src/utilities/multi_cluster_management_utils/multi_cluster.sh").read_text()
+        self.assertEqual(self.cmds(text) - OFFLINE_CPD_CLI, set())
+        self.assertNotRegex(text, CPDM_LOGIN_RE)
 
 
 class CpdmLoginWrapper(unittest.TestCase):
