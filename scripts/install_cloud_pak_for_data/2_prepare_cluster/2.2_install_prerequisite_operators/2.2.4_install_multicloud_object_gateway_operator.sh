@@ -86,8 +86,6 @@ if [[ "${MCG_ALREADY_INSTALLED}" == "false" ]]; then
     done
 fi
 
-eval "${OC_LOGIN}"
-
 # ------------------------------------------------------------------------------
 # Step 2: Discover NooBaa secrets
 # ------------------------------------------------------------------------------
@@ -141,8 +139,6 @@ cpd-cli manage setup-mcg \
     --cpd_instance_ns="${PROJECT_CPD_INST_OPERANDS}" \
     --noobaa_account_secret="${NOOBAA_ACCOUNT_CREDENTIALS_SECRET}" \
     --noobaa_cert_secret="${NOOBAA_ACCOUNT_CERTIFICATE_SECRET}"
-
-eval "${OC_LOGIN}"
 
 # ------------------------------------------------------------------------------
 # Step 4: Verify the secrets that setup-mcg is expected to have created

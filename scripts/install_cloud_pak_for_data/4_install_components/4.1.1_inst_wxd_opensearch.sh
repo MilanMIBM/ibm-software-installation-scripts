@@ -47,8 +47,6 @@ cpd-cli manage case-download \
     --cluster_resources=true \
     --from_oci=${CP_OPEN_DOWNLOAD}
 
-eval "${OC_LOGIN}"
-
 # Switch to the operands project if the login landed elsewhere. OC_LOGIN leaves
 # the session on whatever project was last used, and the SCC access check below
 # is namespace-scoped.

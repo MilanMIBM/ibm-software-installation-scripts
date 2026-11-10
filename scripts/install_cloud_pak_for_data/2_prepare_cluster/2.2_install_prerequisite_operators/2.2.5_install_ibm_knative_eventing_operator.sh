@@ -76,7 +76,6 @@ cpd-cli manage deploy-events-operator \
   --cluster_resources=true
 
 # Step 3: Apply the CRDs
-eval "${OC_LOGIN}"
 
 oc apply \
   -f "${CPD_CLI_WORK_PATH}/ibm-events-operator-crds.yaml" \
