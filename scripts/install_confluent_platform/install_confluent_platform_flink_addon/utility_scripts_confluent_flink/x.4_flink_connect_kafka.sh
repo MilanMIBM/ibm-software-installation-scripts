@@ -63,8 +63,8 @@ source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 #   --no-schema-registry      register the cluster without Schema Registry
 #   --catalog NAME            catalog name (default: FLINK_CATALOG)
 #   --database NAME           database name for this cluster (default: FLINK_KAFKA_DATABASE)
-#   --allow-network           add a NetworkPolicy in the Confluent project
-#                             permitting the Flink namespace to reach Kafka
+#   --allow-network           permit Flink through existing ingress policies
+#                             without isolating additional Confluent pods
 #   --replace                 delete and recreate an existing catalog
 #   --test                    after wiring it up, verify by listing the tables
 #   --dry-run                 print the resources, create nothing
@@ -291,82 +291,29 @@ echo ""
 # ==============================================================================
 # NetworkPolicy
 # ==============================================================================
-# The Confluent install can restrict ingress to its own pods. Flink lives in
-# another namespace, so its connections are dropped - and the symptom is a
-# catalog that creates cleanly and then times out on every query, which is a
-# genuinely difficult thing to diagnose after the fact.
+# Matching existing ingress selectors preserves which pods are isolated. Counting
+# unrelated policies (such as monitoring-only rules) cannot establish that Kafka
+# needs an allow rule. Owner references remove grants with their source policies.
 if [[ "${_discovered}" == "true" && "${NS}" != "${KAFKA_NS}" ]]; then
-    _policies="$(oc get networkpolicy -n "${KAFKA_NS}" -o name 2>/dev/null | wc -l | tr -d ' ')"
-    if (( _policies > 0 )); then
-        if [[ "${ALLOW_NETWORK}" == "true" ]]; then
-            if [[ "${DRY_RUN}" == "true" ]]; then
-                echo "  [DRY-RUN] oc apply networkpolicy/allow-flink -n ${KAFKA_NS}"
-            else
-                # Selects the Flink namespace by label. The kubernetes.io/metadata.name
-                # label is set automatically on every namespace, so nothing has to be
-                # labelled by hand.
-                #
-                # EVERY rule below the first is required, and none may be dropped.
-                # podSelector: {} in the spec selects every pod in the Confluent
-                # namespace, and in Kubernetes the moment any NetworkPolicy selects
-                # a pod, all ingress that is not explicitly allowed becomes DENIED.
-                # A policy with only the Flink rule therefore silently cuts off:
-                #
-                #   broker-to-broker    the KRaft quorum loses its heartbeats, no
-                #                       controller is elected, and Schema Registry
-                #                       fails to write to _schemas with
-                #                       "error code: 50001"
-                #   the OpenShift router  EVERY route in the namespace stops
-                #                       answering - Control Center's oauth login
-                #                       page included - and times out with no
-                #                       response at all rather than an error
-                #   cluster monitoring  Prometheus can no longer scrape the pods
-                #
-                # In all three cases the pods stay "Running", which makes this very
-                # easy to misread as a fault in whatever stopped working.
-                oc apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-flink
-  namespace: ${KAFKA_NS}
-  labels:
-    app.kubernetes.io/part-of: confluent
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-  ingress:
-    # Flink, from its own namespace.
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ${NS}
-    # Everything already inside this namespace: brokers to each other, and the
-    # components to the brokers.
-    - from:
-        - podSelector: {}
-    # The OpenShift router, so the routes keep working. The label is the
-    # standard one OpenShift puts on openshift-ingress for exactly this.
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              policy-group.network.openshift.io/ingress: ""
-    # Cluster monitoring, so Prometheus can still scrape.
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              network.openshift.io/policy-group: monitoring
-EOF
-                echo "[INFO] NetworkPolicy 'allow-flink' added to '${KAFKA_NS}'."
-            fi
+    _network_args=(--kafka-namespace "${KAFKA_NS}" --flink-namespace "${NS}")
+    [[ "${USE_SR}" == "true" ]] || _network_args+=(--no-schema-registry)
+    _network_plan="$(oc get networkpolicy,pods -n "${KAFKA_NS}" -o json \
+        | python3 "${_CP4D_REPO_ROOT}/src/helpers/confluent_flink_network.py" "${_network_args[@]}")"
+    _policy_count="$(print -r -- "${_network_plan}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))')"
+    if (( _policy_count == 0 )); then
+        echo "[INFO] No ingress policies select Kafka/Schema Registry pods; no Flink allow policy needed."
+    elif [[ "${ALLOW_NETWORK}" == "true" ]]; then
+        if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "  [DRY-RUN] Flink ingress grants (${_policy_count} existing policy selectors):"
+            print -r -- "${_network_plan}"
         else
-            echo "[WARN] ${_policies} NetworkPolicy object(s) exist in '${KAFKA_NS}'. If they"
-            echo "[WARN] restrict ingress, Flink's connections from '${NS}' will be dropped"
-            echo "[WARN] and every query will time out. Re-run with --allow-network to add"
-            echo "[WARN] a policy permitting this namespace."
-            echo ""
+            print -r -- "${_network_plan}" | oc apply -f -
+            echo "[INFO] Flink ingress granted for ${_policy_count} existing policy selector(s) in '${KAFKA_NS}'."
         fi
+    else
+        echo "[WARN] Ingress policies select Kafka/Schema Registry pods in '${KAFKA_NS}'."
+        echo "[WARN] If Flink connections time out, re-run with --allow-network to permit '${NS}'."
+        echo ""
     fi
 fi
 

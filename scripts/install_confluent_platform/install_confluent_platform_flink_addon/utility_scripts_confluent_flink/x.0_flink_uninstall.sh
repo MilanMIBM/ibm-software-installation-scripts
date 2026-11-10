@@ -18,8 +18,8 @@ source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 # Removes everything 1.0_flink_prep.sh and 1.1_flink_install.sh create.
 #
 # The Confluent Platform installation is NOT touched. The only thing this can
-# leave behind in the Kafka project is the 'allow-flink' NetworkPolicy added by
-# x.4_flink_connect_kafka.sh --allow-network, which is removed here too.
+# leave behind in the Kafka project are the Flink ingress policies added by
+# x.4_flink_connect_kafka.sh --allow-network, which are removed here too.
 #
 # DESTRUCTIVE: running Flink jobs are stopped and the checkpoint volume is
 # deleted, so in-flight state is lost. Kafka topics are not affected - Flink
@@ -186,6 +186,8 @@ run oc delete serviceaccount flink -n "${NS}" --ignore-not-found
 # 3. NetworkPolicy in the Kafka project
 # ==============================================================================
 # The one piece of this installation that lives outside the Flink namespace.
+run oc delete networkpolicy -n "${KAFKA_NS}" \
+    -l "confluent.platform/flink-namespace=${NS}" --ignore-not-found
 if oc get networkpolicy allow-flink -n "${KAFKA_NS}" &>/dev/null; then
     echo "[INFO] Removing the 'allow-flink' NetworkPolicy from '${KAFKA_NS}'..."
     run oc delete networkpolicy allow-flink -n "${KAFKA_NS}" --ignore-not-found
