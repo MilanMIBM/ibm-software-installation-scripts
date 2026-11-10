@@ -32,7 +32,8 @@ SCRIPTS_ROOT="$(cd "${CURRENT_DIR}/../.." && pwd)"
 # which sources configs/cp4d_config/cpd_instance_details.sh.
 #
 # Optional overrides via environment / flags:
-#   ENV_NAME            name to register the environment under (default: cpd-onprem)
+#   ENV_NAME            name to register the environment under (default: cpd-onprem,
+#                       or cpd-onprem-<cluster> on a run pinned to a cluster)
 #   --name <name>       same as ENV_NAME
 #   --no-activate       add the environment but don't activate it
 #   --secure            verify SSL (default is --insecure for self-signed certs)
@@ -41,7 +42,18 @@ SCRIPTS_ROOT="$(cd "${CURRENT_DIR}/../.." && pwd)"
 # --- Defaults ---
 # Prefer an explicit ENV_NAME, then any previously-persisted WXO_ENV_NAME
 # (sourced from cpd_instance_details.sh), otherwise fall back to cpd-onprem.
-ENV_NAME="${ENV_NAME:-${WXO_ENV_NAME:-cpd-onprem}}"
+# The ADK keeps one environment list per user, so a run on a cluster (pinned by the
+# env load, whatever the repo-wide mode says) names the cluster in the fallback and
+# two clusters cannot replace each other's entry. The env load leaves MCM_CLUSTER set
+# only for a valid pin; the state file's current cluster counts only with the mode on.
+_WXO_DEFAULT_ENV_NAME="cpd-onprem"
+source "${_CP4D_REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
+if [[ -n "${MCM_CLUSTER:-}" ]]; then
+  _WXO_DEFAULT_ENV_NAME="cpd-onprem-${MCM_CLUSTER}"
+elif mcm_is_on && [[ -n "${MCM_CURRENT_CLUSTER:-}" ]]; then
+  _WXO_DEFAULT_ENV_NAME="cpd-onprem-${MCM_CURRENT_CLUSTER}"
+fi
+ENV_NAME="${ENV_NAME:-${WXO_ENV_NAME:-${_WXO_DEFAULT_ENV_NAME}}}"
 ACTIVATE=1
 INSECURE=1
 
@@ -97,7 +109,7 @@ orchestrate "${add_args[@]}"
 # --- Persist the env name to cpd_instance_details.sh so later scripts can
 #     activate the same environment (e.g. before importing models). ---
 REPO_ROOT="$(cd "${CURRENT_DIR}" && while [[ "${PWD}" != "/" && ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"
+VARS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/cpd_instance_details.sh"
 
 if [[ -f "${VARS_FILE}" ]]; then
   # Drop any previous WXO_ENV_NAME export so re-runs don't pile up duplicates.

@@ -69,7 +69,7 @@ fi
 CPD_BASE="${API_URL%/}"
 
 UTILS="${REPO_ROOT}/src/utilities/redhat_openshift_utils"
-CREDENTIALS_FILE="${SERVICE_ID_CREDENTIALS_FILE:-${REPO_ROOT}/configs/openshift_config/service_id_credentials.txt}"
+CREDENTIALS_FILE="${SERVICE_ID_CREDENTIALS_FILE:-${CONFIGS_ROOT:-${REPO_ROOT}/configs}/openshift_config/service_id_credentials.txt}"
 
 # The API key saved under a user in the credentials file (the last one, if several).
 saved_key() {

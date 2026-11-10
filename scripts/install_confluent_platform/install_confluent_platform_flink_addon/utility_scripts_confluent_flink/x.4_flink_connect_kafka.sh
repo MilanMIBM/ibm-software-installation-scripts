@@ -136,7 +136,7 @@ if ! oc get namespace "${NS}" &>/dev/null; then
     echo "[WARN] Flink project '${NS}' does not exist - rendering anyway (--dry-run)."
 fi
 
-RESOURCE_DIR="${SCRIPT_DIR}/../flink_vars/rendered"
+RESOURCE_DIR="${MCM_CLUSTER_ROOT:-${SCRIPT_DIR}/..}/flink_vars/rendered"
 mkdir -p "${RESOURCE_DIR}"
 
 # ==============================================================================

@@ -20,16 +20,27 @@
 _OADP_BR_HELPERS_LOADED=1
 
 _OADP_REPO_ROOT="${${(%):-%x}:A:h:h:h}"
+# Multi-cluster mode: these scripts read per-cluster configs before the env load, so
+# the target is resolved here, with the script's own arguments. Several targets fan
+# out from this point; the flags never reach the scripts' option parsers.
+source "${_OADP_REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
+mcm_take_target_flags "$@" || { [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
+set -- "${_MCM_ARGV[@]}"
+mcm_env_setup "$@" || { [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
 OADP_UTILS_DIR="${_OADP_REPO_ROOT}/src/utilities/oadp_backup_restore_cp4d_utils"
 # Generated configs, both gitignored (see the repo .gitignore). Their names do
 # not end in configs/*/*_vars.sh, so source_env_setup.sh never picks them up on
 # its own: a restore target's OCP_URL cannot leak into the normal install env.
-BUCKET_CONFIG_DIR="${OADP_UTILS_DIR}/backup_bucket_configs"
-TARGET_CONFIG_DIR="${OADP_UTILS_DIR}/restore_target_configs"
+# Multi-cluster mode keeps them inside the cluster's folder; the extra oadp/ level
+# keeps them out of that same scan.
+_OADP_CONFIG_BASE="${${MCM_CLUSTER_ROOT:+${MCM_CLUSTER_ROOT}/oadp}:-${OADP_UTILS_DIR}}"
+BUCKET_CONFIG_DIR="${_OADP_CONFIG_BASE}/backup_bucket_configs"
+TARGET_CONFIG_DIR="${_OADP_CONFIG_BASE}/restore_target_configs"
 BUCKET_CONFIG_SUFFIX="_bucket.sh"
 TARGET_CONFIG_SUFFIX="_vars.sh"
-# cpd-cli output is tee'd here (cpd-cli-workspace/ is gitignored).
-OADP_LOG_DIR="${_OADP_REPO_ROOT}/cpd-cli-workspace/oadp"
+# cpd-cli output is tee'd here (cpd-cli-workspace/ is gitignored). Multi-cluster
+# mode has already exported the cluster's own folder above.
+OADP_LOG_DIR="${OADP_LOG_DIR:-${_OADP_REPO_ROOT}/cpd-cli-workspace/oadp}"
 
 # Defaults, overridable from cpd_vars.sh / the target config / the shell.
 : "${OADP_PROJECT:=oadp-operator}"

@@ -31,7 +31,7 @@ export MC_WORKSPACE="${MC_WORKSPACE:-${_CP4D_REPO_ROOT}/datastax_mc_workspace}"
 if [[ "${ENV_TARGET_FILE:-}" == *datastax_mc_vars.sh ]]; then
     export MC_CONFIG_DIR="${ENV_TARGET_FILE:h}"
 else
-    export MC_CONFIG_DIR="${DATASTAX_MC_CONFIG_DIR:-${_CP4D_REPO_ROOT}/configs/datastax_mc_config}"
+    export MC_CONFIG_DIR="${DATASTAX_MC_CONFIG_DIR:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/datastax_mc_config}"
 fi
 # Mission Control projects (3.1_prepare_mc_projects.sh). Defaults for configs
 # generated before these settings existed; an empty MC_BASE_PROJECT means none.

@@ -132,7 +132,7 @@ CLEAR_ROKS_USER_PREFIX=true
 # ------------------------------------------------------------------------------
 
 # configs/ is gitignored, so the plain-text passwords never get committed.
-CREDENTIALS_FILE="${REPO_ROOT}/configs/openshift_config/service_id_credentials.txt"
+CREDENTIALS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/openshift_config/service_id_credentials.txt"
 
 PRUNE=false
 RESET_ALL=false

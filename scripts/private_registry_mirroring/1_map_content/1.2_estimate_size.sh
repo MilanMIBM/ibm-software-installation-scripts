@@ -91,7 +91,7 @@ fi
 
 if [[ -s "${WS}/$(preg_install_path cpd)/native.jsonl" ]]; then
     REL="$(preg_python -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline()).get("release",""))' "${WS}/$(preg_install_path cpd)/native.jsonl")"
-    csv="${HOME}/cpd-cli/work/offline/${REL}/list_images.csv"
+    csv="${CPD_CLI_WORK_PATH:-${HOME}/cpd-cli/work}/offline/${REL}/list_images.csv"
     if ${WITH_CPD} && [[ -f "${csv}" ]]; then
         # registry,image_name,tag,digest,...  -> registry/image_name@digest
         awk -F, 'NR > 1 && $4 ~ /^sha256:/ { print $1 "/" $2 "@" $4 }' "${csv}" | sort -u > "${RUN}/refs.cpd"
@@ -105,7 +105,7 @@ printf '  %-40s %s\n' "TOTAL (estimated above)" "$(human "${total}")"
 print -r -- ""
 print -r -- "Free space"
 free_of() { df -k "$1" 2>/dev/null | awk 'NR==2 { print $4 * 1024 }'; }
-for d in "${WS}" "$(preg_bundle_dir)" "${LOCAL_REGISTRY_DIR:-${WS}/local-registry/data}"; do
+for d in "${WS}" "$(preg_bundle_dir)" "${LOCAL_REGISTRY_DIR:-$(preg_local_registry_dir)/data}"; do
     probe="${d}"
     while [[ ! -d "${probe}" && "${probe}" != / ]]; do probe="${probe:h}"; done
     f="$(free_of "${probe}")"

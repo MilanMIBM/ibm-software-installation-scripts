@@ -114,7 +114,10 @@ def plan(details: Path) -> tuple[list[tuple[str, str, dict[str, str], str]], str
 def legacy_files(repo: Path, managed: Path) -> list[tuple[Path, str, str, dict[str, str], list[str]]]:
     """Old KEY=VALUE credential files -> (path, type, instance, exports (prefixed), trailer comments)."""
     out = []
-    cands = sorted((repo / "service_instances").glob("*-credentials.txt")) + sorted(managed.glob("*/*-credentials.txt"))
+    # resolve(): the env loader exports <repo>/scripts/../service_instances, and callers print paths relative to repo.
+    env_dir = os.environ.get("SERVICE_INSTANCE_FILE_DIR")
+    instances = Path(env_dir).resolve() if env_dir else repo / "service_instances"
+    cands = sorted(instances.glob("*-credentials.txt")) + sorted(managed.glob("*/*-credentials.txt"))
     for f in cands:
         kv, trailer = {}, []
         for ln in f.read_text().splitlines():
@@ -141,7 +144,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Move service-instance details into managed-service-instances/")
     ap.add_argument("--apply", action="store_true", help="write the files (default: show what would move)")
     args = ap.parse_args(argv)
-    cfg = config_dir()
+    try:
+        cfg = config_dir()
+    except ValueError as error:
+        print(f"[ERROR] {error}", file=sys.stderr)
+        return 1
     details = cfg / "cpd_instance_details.sh"
     repo = next((p for p in Path(__file__).resolve().parents if (p / "env_bootstrap.sh").is_file()), Path.cwd())
     ns = os.environ.get("PROJECT_CPD_INST_OPERANDS", "?")

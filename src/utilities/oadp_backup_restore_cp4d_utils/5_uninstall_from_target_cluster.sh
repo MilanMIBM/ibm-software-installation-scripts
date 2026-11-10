@@ -131,6 +131,8 @@ if [[ "${SHARED_KUBECONFIG}" != "true" ]]; then
         ( umask 077; oc config view --raw > "${TARGET_KUBECONFIG}" 2>/dev/null || : )
     fi
     export KUBECONFIG="${TARGET_KUBECONFIG}"
+    # Multi-cluster mode: keep this kubeconfig instead of the current cluster's (plan 5.5).
+    export MCM_KUBECONFIG_OVERRIDE=1
 fi
 
 # --- Env load (repo root found above) ---

@@ -74,7 +74,7 @@ fi
 # Air-gapped: the transfer bundle was restored to the regular work dir.
 if [[ "${CPD_CASE_SOURCE:-online}" == offline ]]; then
     mkdir -p "${CPD_CLI_WORK_PATH}/offline"
-    cp -R "${HOME}/cpd-cli/work/offline/." "${CPD_CLI_WORK_PATH}/offline/"
+    cp -R "${CPD_CLI_BASE_WORK_PATH:-${HOME}/cpd-cli/work}/offline/." "${CPD_CLI_WORK_PATH}/offline/"
 fi
 cp4d_offline_case_check
 

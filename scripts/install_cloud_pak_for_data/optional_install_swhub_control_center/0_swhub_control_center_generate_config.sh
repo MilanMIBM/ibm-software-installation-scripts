@@ -9,6 +9,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # scripts load, so it may not exist yet. Find the repo root the same way.
 REPO_ROOT="${SCRIPT_DIR}"; while [[ "${REPO_ROOT}" != "/" && ! -f "${REPO_ROOT}/env_bootstrap.sh" ]]; do REPO_ROOT="$(dirname "${REPO_ROOT}")"; done
 
+# Multi-cluster: --target-cluster NAME writes into that cluster's folder; flat configs/ stays the default.
+if [[ -f "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh" ]]; then
+    source "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh"
+    # Flat files this generator reads or rewrites: one pointing at a cluster with its own folder sends the write there.
+    MCM_GENERATOR_URL_FILES=(cp4d_config/cpd_vars.sh cp4d_config/swhub_control_center/swhub_control_center_vars.sh)
+    mcm_generator_setup "$@" || exit 1
+    set -- "${reply[@]}"
+else
+    mcm_generator_register() { :; }
+fi
+
 usage() {
     cat <<'USAGE'
 Write configs/cp4d_config/swhub_control_center/swhub_control_center_vars.sh for the
@@ -70,6 +81,8 @@ Options:
   --out FILE                Write somewhere else
   --force                   Overwrite an existing file (a timestamped .bak is kept)
   --dry-run                 Print the file instead of writing it
+  --target-cluster NAME     Write into configs/clusters/NAME (mode on, or a cluster with its folder;
+                            not the same thing as --cluster same|different)
   -h, --help                Show this help
 
 The OAuth client secret is generated, and kept when an existing file is rewritten.
@@ -79,8 +92,8 @@ USAGE
 }
 
 MODE=""
-CPD_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_vars.sh"
-OUT_FILE="${REPO_ROOT}/configs/cp4d_config/swhub_control_center/swhub_control_center_vars.sh"
+CPD_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/cpd_vars.sh"
+OUT_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/swhub_control_center/swhub_control_center_vars.sh"
 CLUSTER_MODE=""
 OPERATORS_PROJECT=""
 OPERANDS_PROJECT=""
@@ -220,5 +233,6 @@ if [[ -f "${OUT_FILE}" ]]; then
 fi
 "${render[@]}" --out "${OUT_FILE}"
 echo "[INFO] Wrote ${OUT_FILE} (${MODE}, cluster: ${CLUSTER_MODE})"
+mcm_generator_register "${CPD_FILE}"
 [[ "${MODE}" == empty ]] && echo "[INFO] Fill in the cluster login and IBM_ENTITLEMENT_KEY before installing."
 echo "[INFO] Next: ${SCRIPT_DIR}/full_installprocess-swhub_control_center.sh"

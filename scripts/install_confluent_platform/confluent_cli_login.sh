@@ -64,6 +64,34 @@ REFRESH=false
 NO_INSTALL=false
 STATUS_ONLY=false
 
+# ------------------------------------------------------------------------------
+# Locate the repo and the generated details file
+# ------------------------------------------------------------------------------
+REPO_ROOT="${SCRIPT_DIR}"
+while [[ "${REPO_ROOT}" != "/" && ! -f "${REPO_ROOT}/pyproject.toml" ]]; do
+    REPO_ROOT="$(dirname "${REPO_ROOT}")"
+done
+[[ -f "${REPO_ROOT}/pyproject.toml" ]] || _fail "Could not locate the repo root from ${SCRIPT_DIR}."
+
+# Multi-cluster mode: this script loads no env and may be sourced, so it picks one
+# cluster and exports nothing. Flags: --target-cluster NAME, as everywhere else.
+_CLI_CLUSTER=""
+source "${REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
+if ! mcm_take_target_flags "$@" || ! _CLI_CLUSTER="$(mcm_resolve_one)"; then
+    mcm_clear_target_flags
+    _fail "Could not resolve the cluster for this login."
+    return 1
+fi
+mcm_clear_target_flags
+set -- "${_MCM_ARGV[@]}"
+if [[ -n "${_CLI_CLUSTER}" ]]; then
+    _CLI_CONFIGS_ROOT="$(mcm_cluster_root "${_CLI_CLUSTER}")"
+else
+    # Mode off. A shell loaded from another checkout, or pinned to a cluster before the
+    # mode went off, still exports its own CONFIGS_ROOT.
+    _CLI_CONFIGS_ROOT="$(mcm_flat_configs_root)"
+fi
+
 for _a in "$@"; do
     case "${_a}" in
         --refresh)    REFRESH=true ;;
@@ -75,20 +103,12 @@ for _a in "$@"; do
     esac
 done
 
-# ------------------------------------------------------------------------------
-# Locate the repo and the generated details file
-# ------------------------------------------------------------------------------
-REPO_ROOT="${SCRIPT_DIR}"
-while [[ "${REPO_ROOT}" != "/" && ! -f "${REPO_ROOT}/pyproject.toml" ]]; do
-    REPO_ROOT="$(dirname "${REPO_ROOT}")"
-done
-[[ -f "${REPO_ROOT}/pyproject.toml" ]] || _fail "Could not locate the repo root from ${SCRIPT_DIR}."
-
-DETAILS="${REPO_ROOT}/configs/confluent_platform_config/confluent_instance_details.sh"
+DETAILS="${_CLI_CONFIGS_ROOT}/confluent_platform_config/confluent_instance_details.sh"
 
 if $REFRESH; then
     echo "[INFO] Refreshing instance details..."
-    if ! "${SCRIPT_DIR}/1.3_confluent_get_instance_details.sh" >/dev/null 2>&1; then
+    # In a subshell so a one-off cluster pin never reaches a sourcing shell.
+    if ! ( if [[ -n "${_CLI_CLUSTER}" ]]; then export MCM_CLUSTER="${_CLI_CLUSTER}"; fi; "${SCRIPT_DIR}/1.3_confluent_get_instance_details.sh" ) >/dev/null 2>&1; then
         echo "[WARN] Could not refresh (is oc logged in?). Using the existing file."
     fi
 fi
@@ -156,7 +176,7 @@ export CONFLUENT_PLATFORM_PASSWORD="${CONFLUENT_PLATFORM_PASSWORD:-${CONFLUENT_M
 # external routes when they exist, since this shell is usually off-cluster.
 export CONFLUENT_BOOTSTRAP="${CONFLUENT_BOOTSTRAP_EXTERNAL:-${CONFLUENT_BOOTSTRAP_INTERNAL:-}}"
 
-_ca="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
+_ca="${_CLI_CONFIGS_ROOT}/confluent_platform_config/confluent_kafka_ca.crt"
 [[ -f "${_ca}" ]] && export CONFLUENT_PLATFORM_CERTIFICATE_AUTHORITY_PATH="${_ca}"
 
 # ------------------------------------------------------------------------------

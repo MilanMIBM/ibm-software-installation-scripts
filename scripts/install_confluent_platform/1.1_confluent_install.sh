@@ -790,7 +790,7 @@ BOOTSTRAP="broker-headless:${CONFLUENT_BROKER_INTERNAL_PORT}"
 SR_URL="http://schema-registry:${CONFLUENT_SCHEMA_REGISTRY_PORT}"
 
 # Rendered YAML is collected here so a failure leaves the manifests inspectable.
-MANIFEST_DIR="${SCRIPT_DIR}/confluent_platform_vars/rendered"
+MANIFEST_DIR="${MCM_CLUSTER_ROOT:-${SCRIPT_DIR}}/confluent_platform_vars/rendered"
 mkdir -p "${MANIFEST_DIR}"
 
 # ------------------------------------------------------------------------------

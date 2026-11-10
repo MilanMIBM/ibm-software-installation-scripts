@@ -85,6 +85,8 @@ for _entry in "${LANES[@]}"; do
   oc config view --raw > "${KUBE_DIR}/${_lane}.kubeconfig"
   (
     export KUBECONFIG="${KUBE_DIR}/${_lane}.kubeconfig"
+    # Multi-cluster mode: the children keep this copy instead of the cluster's shared one.
+    export MCM_KUBECONFIG_OVERRIDE=1
     run_lane ${=_entry#*:} && _rc=0 || _rc=$?
     print -r -- "${_rc}" > "${LOG_DIR}/${_lane}.rc"
   ) 2>&1 | tee "${LOG_DIR}/${_lane}.log" | prefix_lines "${_lane}" &

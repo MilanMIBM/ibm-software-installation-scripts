@@ -12,6 +12,7 @@ with app.setup:
     import shutil
     import uuid
     import os
+    from src.helpers import multi_cluster_notebook as mcm_nb
 
 
 @app.cell
@@ -923,6 +924,7 @@ def _(widget_labels):
     cluster_url_input = mo.ui.text(
         label=widget_labels.get("cluster_url"),
         kind="url",
+        debounce=300,  # the "Save to" line follows the typing
         full_width=True,
     )
     return (cluster_url_input,)
@@ -1465,7 +1467,7 @@ def _():
 @app.cell
 def _():
     save_to_config_dir_button = mo.ui.run_button(
-        label="**Save directly to ./configs/confluent_platform_config/**",
+        label="**Save to the folder shown above**",
         kind="neutral",
     )
     return (save_to_config_dir_button,)
@@ -1548,13 +1550,148 @@ def _(
 
 
 @app.cell
+def _():
+    mcm_enable_checkbox = mo.ui.checkbox(
+        label="**Manage multiple clusters**", value=mcm_nb.mode_default()
+    )
+    return (mcm_enable_checkbox,)
+
+
+@app.cell
+def _():
+    # Starts blank on purpose: prefilling the current cluster would make a new URL overwrite it.
+    mcm_name_input = mo.ui.text(
+        label="**Cluster name (optional):**",
+        placeholder="taken from the cluster URL",
+        debounce=300,
+    )
+    return (mcm_name_input,)
+
+
+@app.cell
+def _():
+    mcm_migrate_button = mo.ui.run_button(label="**Migrate now**", kind="warn")
+    return (mcm_migrate_button,)
+
+
+@app.cell
+def _(mcm_migrate_button):
+    mcm_migrate_result = mcm_nb.run_migration() if mcm_migrate_button.value else None
+    return (mcm_migrate_result,)
+
+
+@app.cell
+def _(cluster_url_input, mcm_enable_checkbox, mcm_migrate_result, mcm_name_input):
+    _after_migration = mcm_migrate_result  # a migration moves the folders resolved here
+    mcm_target = mcm_nb.resolve_target(
+        "confluent_platform_config",
+        mcm_enable_checkbox.value,
+        mcm_name_input.value,
+        cluster_url_input.value,
+    )
+    return (mcm_target,)
+
+
+@app.cell
+def _(mcm_target):
+    # Rebuilt with every change of target, so a tick never carries over to another cluster.
+    mcm_overwrite_checkbox = mo.ui.checkbox(
+        label=mcm_nb.overwrite_label(mcm_target), value=False
+    )
+    return (mcm_overwrite_checkbox,)
+
+
+@app.cell
+def _(mcm_migrate_result):
+    _after_migration = mcm_migrate_result  # a migration empties this list
+    mcm_flat_configs = mcm_nb.flat_configs()
+    return (mcm_flat_configs,)
+
+
+@app.cell
+def _(cluster_url_input, mcm_migrate_result):
+    _after_migration = mcm_migrate_result  # a migration creates cluster folders
+    # From the URL only, so the cell below does not redraw while a name is typed.
+    mcm_url_cluster = mcm_nb.delineated_owner(cluster_url_input.value)
+    return (mcm_url_cluster,)
+
+
+@app.cell
+def _(mcm_enable_checkbox, mcm_name_input, mcm_url_cluster):
+    # The only cell showing the inputs: the live lines below redraw without taking the focus away.
+    # A cluster with its own folder keeps it for good, so the tick shows forced on for its URL.
+    _forced = bool(mcm_url_cluster) and not mcm_enable_checkbox.value
+    mo.hstack(
+        [
+            mo.ui.checkbox(
+                label=f"**Manage multiple clusters** (always on for cluster {mcm_url_cluster})",
+                value=True,
+                disabled=True,
+            )
+            if _forced
+            else mcm_enable_checkbox,
+            mcm_name_input if mcm_enable_checkbox.value else "",
+        ],
+        justify="start",
+        align="center",
+        gap=2,
+    )
+    return
+
+
+@app.cell
+def _(mcm_overwrite_checkbox, mcm_target):
+    _one_way = mcm_nb.one_way_markdown(mcm_target)
+    mo.vstack(
+        [
+            mo.md(mcm_nb.save_to_markdown(mcm_target)),
+            mo.callout(mo.md(_one_way), kind="warn") if _one_way else "",
+            mcm_overwrite_checkbox if mcm_target.conflict else "",
+        ]
+    )
+    return
+
+
+@app.cell
+def _(mcm_flat_configs, mcm_migrate_button, mcm_migrate_result, mcm_target):
+    _items = []
+    if mcm_migrate_result is not None:
+        _ok, _output = mcm_migrate_result
+        _items.append(
+            mo.callout(
+                mo.vstack(
+                    [
+                        mo.md("**Migration finished.**" if _ok else "**Migration failed.**"),
+                        mo.plain_text(_output[-4000:]),
+                    ]
+                ),
+                kind="success" if _ok else "danger",
+            )
+        )
+    if mcm_target.enabled and mcm_flat_configs:
+        _items.append(
+            mo.callout(
+                mo.vstack(
+                    [
+                        mo.md(mcm_nb.flat_configs_markdown(mcm_flat_configs)),
+                        mcm_migrate_button,
+                    ]
+                ),
+                kind="warn",
+            )
+        )
+    mo.vstack(_items) if _items else None
+    return
+
+
+@app.cell
 def _(confluent_vars_template_editor, save_file_stack):
     config_file_accordion_confluent = mo.accordion(
         items={
             "**Review & Save Results**": mo.vstack(
                 [
                     mo.md(
-                        "*The install scripts only read `configs/confluent_platform_config/confluent_vars.sh` - keep that name unless you rename it afterwards.*"
+                        "*The install scripts only read `confluent_vars.sh` in the folder shown in the **Save to** line - keep that name unless you rename it afterwards.*"
                     ),
                     confluent_vars_template_editor,
                     save_file_stack,
@@ -1570,13 +1707,24 @@ def _(confluent_vars_template_editor, save_file_stack):
 def _(
     confluent_vars_filename,
     confluent_vars_template_editor,
+    mcm_overwrite_checkbox,
+    mcm_target,
     save_to_config_dir_button,
 ):
     _save_result = None
-    if save_to_config_dir_button.value and confluent_vars_template_editor.value:
-        _config_dir = os.path.join(
-            os.path.dirname(__file__), "configs", "confluent_platform_config"
+    _blockers = (
+        mcm_nb.save_blockers(
+            mcm_target, mcm_overwrite_checkbox.value, confluent_vars_template_editor.value
         )
+        if save_to_config_dir_button.value
+        else []
+    )
+    if _blockers:
+        _save_result = mo.callout(
+            mo.md("**Not saved.** " + " ".join(_blockers)), kind="danger"
+        )
+    elif save_to_config_dir_button.value and confluent_vars_template_editor.value:
+        _config_dir = mcm_target.directory
         os.makedirs(_config_dir, exist_ok=True)
 
         _vars_path = os.path.join(_config_dir, confluent_vars_filename)
@@ -1590,10 +1738,13 @@ def _(
             _f.write(confluent_vars_template_editor.value)
         _saved.insert(0, _vars_path)
 
+        _notes = mcm_nb.finish_save(mcm_target)
+
         _save_result = mo.callout(
             mo.md(
-                "**Saved to `./configs/confluent_platform_config/`:**\n"
+                f"**Saved to `{mcm_target.display}`:**\n"
                 + "\n".join(f"- `{p}`" for p in _saved)
+                + "".join(f"\n\n{n}" for n in _notes)
             ),
             kind="success",
         )

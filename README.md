@@ -14,7 +14,7 @@ The Cloud Pak for Data workflow has two stages:
 | Path | What's in it |
 | --- | --- |
 | `*_vars_generation*.py` | Marimo notebooks - the config generators. Branches may include unique streamlined variants with presets for specific installation options. |
-| `configs/` | Your generated configs live here (gitignored), one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts. `openshift_config/` holds the credential files written by the user/service ID utilities, `kubecost_config/<namespace>/` the Kubecost instance details, product keys, pricing files, Postgres settings and features config, plus `kubecost_vars.sh` and the image mirror records. |
+| `configs/` | Your generated configs live here (gitignored), one subfolder per product (`cp4d_config/`, `confluent_platform_config/`, …). Every `.sh` directly inside a subfolder is sourced by the install scripts. `openshift_config/` holds the credential files written by the user/service ID utilities, `kubecost_config/<namespace>/` the Kubecost instance details, product keys, pricing files, Postgres settings and features config, plus `kubecost_vars.sh` and the image mirror records. With [multi-cluster management](#managing-several-clusters) on, each cluster has the same subfolders under `configs/clusters/<name>/`. |
 | `docs/` | Optional setup guidance and integration notes |
 | `scripts/install_cloud_pak_for_data/` | The numbered install steps (0 → 5), service instance provisioning (`4.5_service_instance_setups/`), the live CR state dashboard under `check_cr_status/`, plus cleanup/debug scripts under `x_clean_or_debug_cp4d/` |
 | `scripts/install_confluent_platform/` | Confluent Platform install steps, utility scripts, and the Flink add-on (`install_confluent_platform_flink_addon/`, has its own README) |
@@ -64,7 +64,7 @@ In the browser UI:
 1. Fill in cluster URL, OCP username/password or token, entitlement key, storage classes, project names.
 2. Select the components to install.
 3. Review the rendered `cpd_vars.sh` and `install-options.yml` in the editors at the bottom - you can edit them in place.
-4. Click **Save directly to ./configs/cp4d_config/**.
+4. Click **Save to the folder shown above** (`./configs/cp4d_config/` unless you manage several clusters).
 
 That writes:
 
@@ -225,11 +225,131 @@ Pull secrets: `set_default_pull_secret.sh` and `set_namespace_pull_secret.sh`. S
 
 ---
 
+## Managing several clusters
+
+By default this repo works on one cluster at a time: one `configs/` folder, one `~/cpd-cli/work`, one `olm-utils-play-v4` container and one `~/.kube/config`. Multi-cluster management gives each cluster its own copy of those, so the same scripts can run against several clusters without overwriting each other's configs, CASE files or instance details. It is off by default, and with it off and no cluster folders nothing changes.
+
+With it on, every run picks a cluster first and takes its paths from that cluster's name. A name is one you give, or else the label after `api.` in `OCP_URL` (`https://api.itz-r0247p.example.com:6443` becomes `itz-r0247p`).
+
+| What | Flat layout | Cluster folder |
+| --- | --- | --- |
+| Product configs and instance details | `configs/<product>_config/` | `configs/clusters/<name>/<product>_config/` |
+| Service-instance payloads | `service_instances/` | `configs/clusters/<name>/service_instances/` |
+| CASE files, install state, Ansible logs | `~/cpd-cli/work` | `~/cpd-cli/clusters/<name>/work` |
+| olm-utils container | `olm-utils-play-v4` | `olm-utils-play-v4-<name>` |
+| `oc` session | `~/.kube/config` | `configs/clusters/<name>/.home/.kube/config` |
+| `cpd-cli` profiles | `~/.cpd-cli/config` | `configs/clusters/<name>/.home/.cpd-cli/config` |
+| `cpd-cli`, Concert, Mission Control, Kubecost and OADP workspaces | Repo root | Inside `configs/clusters/<name>/` |
+
+A plain terminal keeps using `~/.kube/config`, so its `oc` may point somewhere else. Run `source s_env.sh` (or `source s_env.sh --target-cluster NAME`) to load one cluster's variables and `oc` session in that terminal. That terminal then stays on that cluster, and scripts started from it do too. Two terminals can work on two clusters at the same time.
+
+### One-way per cluster
+
+Giving a cluster its own folder is the preferred setup, but it cannot be undone for that cluster. Once `configs/clusters/<name>/` exists (its `.cluster` marker says `DELINEATED="true"`), that cluster stays in its folder for good. No command moves it back to the flat `configs/<product>_config/` layout, so old and new configs for one cluster never exist side by side.
+
+The switch, `MULTI_CLUSTER_MANAGEMENT`, can still be turned on and off. It only sets the default for new clusters and for runs that name no cluster:
+
+- **Switch on**: every run picks a cluster as described below.
+- **Switch off**: a run that names no cluster uses the flat layout as before. A run that names a cluster with a folder (`--target-cluster NAME`, `--target-clusters a,b`, `--all-clusters` for every registered one, or `MCM_CLUSTER=NAME`) still gets that cluster's folder, container, `oc` session and idle rule. Naming a cluster without a folder, or a removed (retired) one, is an error.
+- **One config per cluster**: a flat config whose `OCP_URL` belongs to a cluster with a folder is refused, and the message names that folder. Run with `--target-cluster NAME` instead, and move an old flat copy to `configs/old_configs/`.
+
+The notebooks and config generators warn when they are about to create a new cluster folder, because of this. Generators only warn; they never prompt.
+
+### Turning it on
+
+```bash
+cd src/utilities/multi_cluster_management_utils
+./multi_cluster.sh on                                                   # offers to migrate existing configs
+./multi_cluster.sh add itz-a --url https://api.itz-a.example.com:6443 --use
+./multi_cluster.sh status
+```
+
+The notebooks do the same from the "Manage multiple clusters" checkbox, whose default follows the switch. When ticked, the config is saved into that cluster's folder and the cluster is registered. If the cluster already has a folder, the box is shown ticked and locked with a note, and the config always goes to that folder. Creating a new folder shows the one-way warning first.
+
+Other commands: `on [--migrate | --no-migrate]`, `off`, `list`, `use NAME`, `targets a,b,c | --clear`, `apply-to-all true|false`, `add [NAME] [--url URL] [--copy-from CLUSTER] [--use]`, `rename OLD NEW`, `remove NAME [--purge]` and `containers status | start NAME | stop NAME | stop-all`.
+
+- `off` turns the default off and stops idle cluster containers. Cluster folders stay as they are, and you can still target those clusters by name.
+- `remove NAME` unregisters a cluster and removes its containers. Its folder stays and the cluster stays one-way: it is marked retired, cannot be targeted, and is not added back when the state file is rebuilt. `add NAME` registers it again.
+- `remove NAME --purge` also deletes the folder, after you type the cluster name. Nothing of that cluster remains.
+- `off`, `rename` and `remove` are refused while a run holds that cluster.
+
+### The state file
+
+`configs/multi_cluster_management.sh` is generated on first use and gitignored. `multi_cluster.sh` and the notebooks update it, and you can edit it by hand as long as the lines stay `export KEY="value"`. If it is deleted it comes back with the switch off and the registered clusters rebuilt from their folders. Retired clusters (see `remove`) stay unregistered.
+
+| Key | Meaning |
+| --- | --- |
+| `MULTI_CLUSTER_MANAGEMENT` | `true` or `false` (default). The default for new clusters and for runs that name no cluster; clusters with a folder keep it either way |
+| `MCM_CLUSTERS` | Registered clusters, the ones you can target, space separated |
+| `MCM_CURRENT_CLUSTER` | The cluster commands run on by default (switch on only) |
+| `APPLY_TO_ALL` | `true` runs each command on every registered cluster (default `false`; switch on only) |
+| `MCM_TARGET_CLUSTERS` | A specific list; beats `APPLY_TO_ALL` when set (switch on only) |
+| `MCM_STOP_INACTIVE_CONTAINERS` | Stop idle containers of clusters no longer targeted (default `true`) |
+| `MCM_CONTAINER_IDLE_TIMEOUT_MINUTES` | Stop a container after this long with no commands (default `120`, `0` never) |
+| `MCM_STOP_IDLE_PODMAN_VM` | Also shut down the podman VM once nothing at all is running (default `true`) |
+
+### Choosing which clusters a command runs on
+
+Scripts that load `env_bootstrap.sh` (the numbered install steps and most utilities) take `--target-cluster NAME`, `--target-clusters a,b` or `--all-clusters`. `source s_env.sh` and the config generators take `--target-cluster NAME` only. Scripts that do not load it do not take these flags: `multi_cluster.sh`, `migrate_to_multi_cluster.sh`, the Secrets Manager utilities (use `MCM_CLUSTER=NAME` or `--prefix`), and a few helpers such as `scripts/0.0_make_executable.sh`. With the switch off the flags still work for registered clusters that have a folder, and are an error for any other name. A config generator given `--target-cluster` writes to that cluster's folder and registers it, which makes that cluster one-way even with the switch off; it prints the warning when the folder is new.
+
+The most specific setting wins:
+
+1. Those flags
+2. `MCM_CLUSTER` in the environment (set by `source s_env.sh`)
+3. `MCM_TARGET_CLUSTERS`
+4. `APPLY_TO_ALL="true"`
+5. `MCM_CURRENT_CLUSTER`
+6. The only registered cluster
+7. `OCP_URL` in the environment, if its derived name is registered
+
+If none of these picks a cluster, the script stops and lists the registered ones. With the switch off only 1 and 2 count; without them the run uses the flat layout.
+
+With more than one target, the script runs once per cluster, one at a time. If one cluster fails the rest still run, a table of results prints at the end and the exit code is non-zero. A cluster with no config for that product is reported as skipped. Scripts with uninstall, reinstall, delete, remove, prune, force, clean, refresh or restore in the file name ask you to type a confirmation first. With no terminal (cron, a pipe) they refuse unless given `--yes-all-clusters`. At a terminal the prompt always appears. TUIs and config generators work on one cluster only and refuse several targets.
+
+### Containers and the 2-hour idle rule
+
+Every cluster has its own olm-utils container, all on the one podman VM. These rules apply whenever a run is on a cluster folder, whatever the switch says. With the switch off, the flat `olm-utils-play-v4` container is left alone. A cluster container runs only while its cluster is targeted:
+
+- It starts when a script actually runs on that cluster, not when the cluster is selected.
+- When a cluster stops being targeted, its container is stopped once it is idle. A busy one is left running with a notice.
+- A targeted container also stops after 2 hours with no commands sent in and nothing running in it.
+- When the last container has stopped and podman runs nothing else (a local registry or a Concert runner counts), the VM shuts down too. The next script starts it again.
+
+A container that was stopped comes back by itself on the next script that needs it. `./multi_cluster.sh containers status` shows each container, whether it is targeted and how long until it stops. Only the repo's own olm-utils and Control Center containers are ever touched.
+
+### Migrating an existing setup
+
+`src/utilities/multi_cluster_management_utils/migrate_to_multi_cluster.sh` moves a single-cluster setup into cluster folders. Start with `--dry-run`, which changes nothing and prints what would move where.
+
+It reads `OCP_URL` from each `configs/*_config`, so products pointing at different clusters are split apart. It refuses to run while a job is active. It backs up configs to `configs/old_configs/pre_multi_cluster_<timestamp>/`, moves `~/cpd-cli/work` into place, and copies the matching `~/.kube/config` context for each cluster without changing that file. It removes the old `olm-utils-play-v4` container, and the Control Center container if its work folder moved; the next `cpd-cli manage` recreates them under the new name. `~/.cpd-cli/config` is copied, not moved. Then it turns the mode on.
+
+Useful flags: `--yes`, `--name NAME`, `--map KEY=CLUSTER` (a product folder, a file in `configs/openshift_config`, or an item listed in `--help`), `--mirror-state-to REGISTRY_ROOT`.
+
+A finished migration is final: the clusters it created are one-way, like any other cluster folder. `--rollback` only recovers a migration that stopped part way, using its journal. After a finished one it refuses and points at the backup in `configs/old_configs/pre_multi_cluster_<timestamp>/`.
+
+### Install types
+
+Each cluster has its own entitled, private registry or local (air-gapped) install, because the settings that decide it live in that cluster's product configs (`CPD_IMAGE_SOURCE`, `CONCERT_IMAGE_SOURCE`, `registry_overrides.sh` and so on). A run across several clusters can mix them.
+
+Mirror state describes what is in one registry, so it is shared by the clusters that use that registry: `registry_mirror_workspace/registries/<destination>/`. Clusters with a different `MIRROR_REGISTRY_ROOT` get a different folder automatically. `MIRROR_WORKSPACE_SCOPE="cluster"` in `registry_mirror_vars.sh` gives one cluster its own. An entitled cluster has no mirror config, so mirror scripts report it as skipped.
+
+### What stays shared
+
+- The `cpd-cli` binary, plugins and licenses in `~/cpd-cli`
+- Podman images, the one podman VM and any local registry
+- Mirror tools (`registry_mirror_workspace/tools/`) and mirror state per destination registry
+- The scale-config cache and `configs/old_configs/`
+- `confluent login --save` and the watsonx Orchestrate ADK's environment list, which are kept per user. The default ADK environment name includes the cluster (`cpd-onprem-<name>`), so two clusters do not replace each other's entry
+
+The IBM Cloud Secrets Manager utilities name their default bundle per cluster (`cpd-config-<name>`) for the same reason, and with the mode on a restore reads only that exact bundle. `--prefix` is used exactly as given. They take no target flags: pick the cluster with `MCM_CLUSTER=NAME`.
+
+---
+
 ## Confluent Platform
 
 Config lives in `configs/confluent_platform_config/confluent_vars.sh`. Create it in one of two ways:
 
-- **Notebook** - `marimo run confluent_platform_vars_generation.py`: pick the cluster login, t-shirt size, storage classes, security options and components (optionally the Flink add-on), then **Save directly to ./configs/confluent_platform_config/**. An existing `confluent_vars.sh` is copied to `confluent_vars.sh.bak` first.
+- **Notebook** - `marimo run confluent_platform_vars_generation.py`: pick the cluster login, t-shirt size, storage classes, security options and components (optionally the Flink add-on), then **Save to the folder shown above** (`./configs/confluent_platform_config/` unless you manage several clusters). An existing `confluent_vars.sh` is copied to `confluent_vars.sh.bak` first.
 - **Templating script** - `./scripts/install_confluent_platform/0_confluent_prepare_template_config.sh --size small` (plus `install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh` for Flink).
 
 The two are compatible: re-running the `0_*` scripts on a notebook-generated file only rewrites the managed sizing blocks.
@@ -288,7 +408,7 @@ Config lives in `configs/concert_config/concert_vars.sh`. Create it with the not
 marimo run ibm_concert_vars_generation.py
 ```
 
-Pick the release, profile (`production` by default, `small`, or `custom` to choose the Hub/Concert scale levels and worker sizing yourself - a live estimate compares resource requests with the workers), product combination, image source (IBM registry, mirrored or air-gapped private registry), where IBM's installer runs, the Hub mode, and which data stores are external, then **Save directly to ./configs/concert_config/**. Every Concert script loads only this file (`ENV_TARGET=concert`); for an interactive shell use `ENV_TARGET=concert source s_env.sh`.
+Pick the release, profile (`production` by default, `small`, or `custom` to choose the Hub/Concert scale levels and worker sizing yourself - a live estimate compares resource requests with the workers), product combination, image source (IBM registry, mirrored or air-gapped private registry), where IBM's installer runs, the Hub mode, and which data stores are external, then **Save to the folder shown above** (`./configs/concert_config/` unless you manage several clusters). Every Concert script loads only this file (`ENV_TARGET=concert`); for an interactive shell use `ENV_TARGET=concert source s_env.sh`.
 
 Then run the full install:
 

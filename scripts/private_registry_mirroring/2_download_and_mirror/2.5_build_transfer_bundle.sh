@@ -65,7 +65,7 @@ done
 # --- cpd-cli work dir (cpd selected with native content) -------------------------------------
 CPD_PATH="$(preg_install_path cpd 2>/dev/null || true)"
 if [[ -n "${CPD_PATH}" && -s "${WS}/${CPD_PATH}/native.jsonl" ]]; then
-    WORK="${HOME}/cpd-cli/work"
+    WORK="${CPD_CLI_WORK_PATH:-${HOME}/cpd-cli/work}"
     [[ -d "${WORK}" ]] || preg_die "cpd-cli work dir not found: ${WORK}"
     preg_info "Copying cpd-cli's work dir (without secrets) -> ${CPD_PATH}/cpd-cli-work"
     mkdir -p "${BUNDLE}/${CPD_PATH}/cpd-cli-work"
@@ -101,7 +101,23 @@ open(sys.argv[2], "w").write("\n".join(out) + "\n")
 PY
 if ${INCLUDE_CONFIGS}; then
     preg_warn "--include-configs: configs/ WITH credentials goes into the bundle."
-    ( cd "${_CP4D_REPO_ROOT}" && tar -czf "${BUNDLE}/config/configs-with-secrets.tar.gz" configs )
+    if [[ -n "${MCM_CLUSTER_ROOT:-}" ]]; then
+        # Only this cluster's *_config folders, under the flat configs/ name so they
+        # unpack as single-cluster inside: no other cluster, no oc session, no state file.
+        _flat="$(mktemp -d)"
+        mkdir "${_flat}/configs"
+        _cluster_configs=("${MCM_CLUSTER_ROOT}"/*_config(N/))
+        (( ${#_cluster_configs} )) && ln -s "${_cluster_configs[@]}" "${_flat}/configs/"
+        ( cd "${_flat}" && tar -czhf "${BUNDLE}/config/configs-with-secrets.tar.gz" configs )
+        rm -rf "${_flat}"
+        unset _flat _cluster_configs
+    else
+        # Flat layout: the folders of a former multi-cluster setup stay on disk with their
+        # oc sessions and other clusters' credentials, so they do not go in the bundle.
+        ( cd "${_CP4D_REPO_ROOT}" && tar -czf "${BUNDLE}/config/configs-with-secrets.tar.gz" \
+            --exclude='configs/clusters' --exclude='configs/old_configs/pre_multi_cluster_*' \
+            --exclude='configs/old_configs/pre_reverse_*' configs )
+    fi
     chmod 600 "${BUNDLE}/config/configs-with-secrets.tar.gz"
 fi
 

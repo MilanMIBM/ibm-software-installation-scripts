@@ -81,7 +81,7 @@ oc project "${NS}" >/dev/null
 
 # Rendered manifests and generated resource files are collected here so a
 # failure leaves them inspectable, exactly as 1.1_confluent_install.sh does.
-MANIFEST_DIR="${SCRIPT_DIR}/flink_vars/rendered"
+MANIFEST_DIR="${MCM_CLUSTER_ROOT:-${SCRIPT_DIR}}/flink_vars/rendered"
 mkdir -p "${MANIFEST_DIR}"
 
 echo "=============================================================================="

@@ -52,7 +52,7 @@ fi
 [[ -d "${RES}" ]] || preg_die "oc-mirror cluster resources not found: ${RES} (run 2.2 first)"
 
 DISABLE="$(preg_auto_bool "${MIRROR_DISABLE_DEFAULT_CATALOGS:-auto}")"
-OUT="${WS}/cluster/catalogs"
+OUT="${MIRROR_CLUSTER_OUT:-${WS}/cluster}/catalogs"
 args=(--in "${RES}" --out "${OUT}" --policy "$(preg_policy)" --rewrite "$(preg_push_root)=$(preg_pull_root)")
 [[ "${DISABLE}" == true ]] && args+=(--rename-defaults)
 preg_is_true "${MIRROR_APPLY_CLUSTERCATALOG:-false}" && args+=(--clustercatalog)

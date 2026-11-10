@@ -65,7 +65,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; REPO_ROOT="${_b}"; source "${_b}/env_bootstrap.sh"; unset _b
 
 # Same file and default as generate_service_id_cpd_apikeys.sh.
-CREDENTIALS_FILE="${SERVICE_ID_CREDENTIALS_FILE:-${REPO_ROOT}/configs/openshift_config/service_id_credentials.txt}"
+CREDENTIALS_FILE="${SERVICE_ID_CREDENTIALS_FILE:-${CONFIGS_ROOT:-${REPO_ROOT}/configs}/openshift_config/service_id_credentials.txt}"
 VAULT_URN="${VAULT_URN:-0000000000:internal}"
 SECRET_FORMATS="${VAULT_SECRET_FORMATS:-key}"
 SECRET_OWNER="${VAULT_SECRET_OWNER:-user}"

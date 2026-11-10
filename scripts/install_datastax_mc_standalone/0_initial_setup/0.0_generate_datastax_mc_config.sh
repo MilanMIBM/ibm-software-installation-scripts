@@ -10,6 +10,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"; while [[ "${REPO_ROOT}" != "/" && ! -f "${REPO_ROOT}/env_bootstrap.sh" ]]; do REPO_ROOT="$(dirname "${REPO_ROOT}")"; done
 source "${REPO_ROOT}/src/helpers/version_resolver.sh"
 
+# Multi-cluster: --target-cluster NAME writes into that cluster's folder; flat configs/ stays the default.
+if [[ -f "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh" ]]; then
+    source "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh"
+    # Flat files this generator reads or rewrites: one pointing at a cluster with its own folder sends the write there.
+    MCM_GENERATOR_URL_FILES=(datastax_mc_config/datastax_mc_vars.sh)
+    # --from-cpd FILE copies that file's OCP_URL, so FILE is checked instead of the flat default.
+    _mcm_from_cpd="$(mcm_generator_flag_file --from-cpd "$@")"
+    if [[ -n "${_mcm_from_cpd}" ]]; then
+        MCM_GENERATOR_URL_FILES+=("${_mcm_from_cpd}")
+    elif (( ${@[(Ie)--from-cpd]} )); then
+        MCM_GENERATOR_URL_FILES+=(cp4d_config/cpd_vars.sh)
+    fi
+    unset _mcm_from_cpd
+    mcm_generator_setup "$@" || exit 1
+    set -- "${reply[@]}"
+else
+    mcm_generator_register() { :; }
+fi
+
 usage() {
     cat <<'EOF'
 Write configs/datastax_mc_config/datastax_mc_vars.sh for the standalone DataStax
@@ -34,6 +53,7 @@ Options:
   --out FILE            Write somewhere else (default:
                         configs/datastax_mc_config/datastax_mc_vars.sh)
   --force               Overwrite an existing file (a timestamped .bak is kept)
+  --target-cluster NAME Write into configs/clusters/NAME (mode on, or a cluster with its folder)
   -h, --help            Show this help
 
 The admin password and the in-cluster MinIO credentials are generated randomly.
@@ -43,8 +63,8 @@ EOF
 }
 
 MODE=""
-CPD_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_vars.sh"
-OUT_FILE="${REPO_ROOT}/configs/datastax_mc_config/datastax_mc_vars.sh"
+CPD_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/cpd_vars.sh"
+OUT_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/datastax_mc_config/datastax_mc_vars.sh"
 NAMESPACE="mission-control"
 RELEASE="mission-control"
 PLANE="control"
@@ -286,6 +306,7 @@ EOF
 mv "${_tmp}" "${OUT_FILE}"
 
 echo "[INFO] Wrote ${OUT_FILE#${REPO_ROOT}/}"
+mcm_generator_register "${OUT_FILE}"
 echo "[INFO] Admin login: ${ADMIN_EMAIL} (password in MC_ADMIN_PASSWORD)"
 [[ -z "${STORAGE_CLASS}" ]] && echo "[WARN] MC_STORAGE_CLASS is empty - set it before installing (oc get storageclass)." >&2
 if [[ "${MODE}" == empty ]]; then

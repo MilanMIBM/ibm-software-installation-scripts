@@ -15,6 +15,7 @@ with app.setup:
     import string
     import urllib.request
     import uuid
+    from src.helpers import multi_cluster_notebook as mcm_nb
 
 
 @app.cell
@@ -210,17 +211,14 @@ def generate_turbonomic_password(length=20):
 
 
 @app.function
-def existing_config_value(key):
-    # Value of a single-quoted export in an already saved concert_vars.sh, so a
-    # re-save keeps credentials that a live install depends on.
+def existing_config_value(key, path):
+    # Value of a single-quoted export in an already saved concert_vars.sh (path: the
+    # selected cluster's file or None), so a re-save keeps credentials that a live
+    # install depends on.
     import re
 
-    path = os.path.join(
-        os.path.dirname(__file__),
-        "configs",
-        "concert_config",
-        "concert_vars.sh",
-    )
+    if not path:
+        return None
     try:
         with open(path) as f:
             text = f.read()
@@ -267,7 +265,9 @@ def _():
     mo.md(r"""
     ## **IBM Concert** - Setup Config Generator
 
-    Writes `configs/concert_config/concert_vars.sh` for `scripts/install_ibm_concert/`.
+    Writes `concert_vars.sh` for `scripts/install_ibm_concert/`: into `configs/concert_config/`, or into
+    `configs/clusters/<cluster>/concert_config/` with **Manage multiple clusters** ticked, and always for a cluster that
+    already has its own folder (that cannot be undone for the cluster). The **Save to** line shows which.
     Defaults follow the plan's decisions: production profile, external data stores provisioned in the cluster,
     Workflows with Istio (FaaS off), Hub in *auto* mode, installer running as a Job in the cluster.
     """)
@@ -920,6 +920,7 @@ def _(widget_labels):
     cluster_url_input = mo.ui.text(
         label=widget_labels.get("cluster_url"),
         kind="url",
+        debounce=300,  # the "Save to" line follows the typing
         full_width=True,
     )
     return (cluster_url_input,)
@@ -977,11 +978,43 @@ def _(default_concert_admin, widget_labels):
 
 
 @app.cell
-def _(widget_labels):
+def _(default_concert_optimize, mcm_vars_file, sortable_kv, widget_controlled_keys):
+    # Its own cell: picking a cluster with a saved file rebuilds these records and no others.
+    # Keep a saved Turbonomic admin password: 5.3 logs in with it on every run
+    concert_optimize_records = sortable_kv(
+        label=(
+            "Optimize / Turbonomic (version = IBM's matrix for Hub 3.0.3; license file from Passport Advantage, "
+            "relative to the cluster's concert_config folder; probes = extra Turbonomic probes, e.g. vcenter,aws,kubeturbo; "
+            "SCC restricted|anyuid; empty route hostname / Hub URL = automatic):"
+        ),
+        value=without_keys(
+            [
+                dict(
+                    r,
+                    value=existing_config_value(r["key"], mcm_vars_file())
+                    or generate_turbonomic_password(),
+                )
+                if r["key"] == "CONCERT_OPTIMIZE_ADMIN_PASSWORD"
+                else r
+                for r in default_concert_optimize
+            ],
+            widget_controlled_keys,
+        ),
+        addable=False,
+        removable=False,
+        editable=True,
+        movable=False,
+    )
+    return (concert_optimize_records,)
+
+
+@app.cell
+def _(mcm_vars_file, widget_labels):
     # Keep the saved password: IBM's installer receives it again on every 3.2 run
     admin_password_input = mo.ui.text(
         label=widget_labels.get("admin_password"),
-        value=existing_config_value("CONCERT_ADMIN_PASSWORD") or generate_password(),
+        value=existing_config_value("CONCERT_ADMIN_PASSWORD", mcm_vars_file())
+        or generate_password(),
         kind="password",
         full_width=False,
     )
@@ -1027,7 +1060,6 @@ def _(
     default_concert_hub,
     default_concert_images,
     default_concert_namespaces,
-    default_concert_optimize,
     default_concert_release,
     default_concert_runner,
     default_concert_securecoder,
@@ -1100,22 +1132,6 @@ def _(
         "Admin password rotation (4_post_install/4.0 changes the password to this value):",
         default_concert_admin,
     )
-    # Keep a saved Turbonomic admin password: 5.3 logs in with it on every run
-    concert_optimize_records = _kv(
-        "Optimize / Turbonomic (version = IBM's matrix for Hub 3.0.3; license file from Passport Advantage, "
-        "relative to configs/concert_config/; probes = extra Turbonomic probes, e.g. vcenter,aws,kubeturbo; "
-        "SCC restricted|anyuid; empty route hostname / Hub URL = automatic):",
-        [
-            dict(
-                r,
-                value=existing_config_value(r["key"])
-                or generate_turbonomic_password(),
-            )
-            if r["key"] == "CONCERT_OPTIMIZE_ADMIN_PASSWORD"
-            else r
-            for r in default_concert_optimize
-        ],
-    )
     return (
         concert_admin_records,
         concert_ai_records,
@@ -1125,7 +1141,6 @@ def _(
         concert_hub_records,
         concert_images_records,
         concert_namespaces_records,
-        concert_optimize_records,
         concert_release_records_kv,
         concert_runner_records_kv,
         concert_securecoder_records,
@@ -1596,6 +1611,7 @@ def _(
     concert_workflows,
     entitlement_key_input,
     login_argument_select,
+    mcm_target,
     sizing_utilization,
 ):
     import re
@@ -1738,10 +1754,8 @@ def _(
         else:
             _license_path = os.path.expanduser(_license)
             if not os.path.isabs(_license_path):
-                _license_path = os.path.join(
-                    os.path.dirname(__file__), "configs", "concert_config", _license_path
-                )
-            if not os.path.isfile(_license_path):
+                _license_path = os.path.join(mcm_target.directory, _license_path)
+            if mcm_target.directory and not os.path.isfile(_license_path):
                 _warnings.append(
                     f"Optimize: license file {_license_path} not found on this workstation."
                 )
@@ -1984,7 +1998,7 @@ def _():
 @app.cell
 def _():
     save_to_config_dir_button = mo.ui.run_button(
-        label="**Save directly to ./configs/concert_config/**",
+        label="**Save to the folder shown above**",
         kind="neutral",
     )
     return (save_to_config_dir_button,)
@@ -2124,13 +2138,166 @@ def _(
 
 
 @app.cell
+def _():
+    mcm_enable_checkbox = mo.ui.checkbox(
+        label="**Manage multiple clusters**", value=mcm_nb.mode_default()
+    )
+    return (mcm_enable_checkbox,)
+
+
+@app.cell
+def _():
+    # Starts blank on purpose: prefilling the current cluster would make a new URL overwrite it.
+    mcm_name_input = mo.ui.text(
+        label="**Cluster name (optional):**",
+        placeholder="taken from the cluster URL",
+        debounce=300,
+    )
+    return (mcm_name_input,)
+
+
+@app.cell
+def _():
+    mcm_migrate_button = mo.ui.run_button(label="**Migrate now**", kind="warn")
+    return (mcm_migrate_button,)
+
+
+@app.cell
+def _(mcm_migrate_button):
+    mcm_migrate_result = mcm_nb.run_migration() if mcm_migrate_button.value else None
+    return (mcm_migrate_result,)
+
+
+@app.cell
+def _(cluster_url_input, mcm_enable_checkbox, mcm_migrate_result, mcm_name_input):
+    _after_migration = mcm_migrate_result  # a migration moves the folders resolved here
+    mcm_target = mcm_nb.resolve_target(
+        "concert_config",
+        mcm_enable_checkbox.value,
+        mcm_name_input.value,
+        cluster_url_input.value,
+    )
+    return (mcm_target,)
+
+
+@app.cell
+def _(mcm_target):
+    # Rebuilt with every change of target, so a tick never carries over to another cluster.
+    mcm_overwrite_checkbox = mo.ui.checkbox(
+        label=mcm_nb.overwrite_label(mcm_target), value=False
+    )
+    return (mcm_overwrite_checkbox,)
+
+
+@app.cell
+def _(mcm_migrate_result):
+    _after_migration = mcm_migrate_result  # a migration empties this list
+    mcm_flat_configs = mcm_nb.flat_configs()
+    return (mcm_flat_configs,)
+
+
+@app.cell
+def _(cluster_url_input, mcm_migrate_result):
+    _after_migration = mcm_migrate_result  # a migration creates cluster folders
+    # From the URL only, so the cell below does not redraw while a name is typed.
+    mcm_url_cluster = mcm_nb.delineated_owner(cluster_url_input.value)
+    return (mcm_url_cluster,)
+
+
+@app.cell
+def _(mcm_enable_checkbox, mcm_name_input, mcm_url_cluster):
+    # The only cell showing the inputs: the live lines below redraw without taking the focus away.
+    # A cluster with its own folder keeps it for good, so the tick shows forced on for its URL.
+    _forced = bool(mcm_url_cluster) and not mcm_enable_checkbox.value
+    mo.hstack(
+        [
+            mo.ui.checkbox(
+                label=f"**Manage multiple clusters** (always on for cluster {mcm_url_cluster})",
+                value=True,
+                disabled=True,
+            )
+            if _forced
+            else mcm_enable_checkbox,
+            mcm_name_input if mcm_enable_checkbox.value else "",
+        ],
+        justify="start",
+        align="center",
+        gap=2,
+    )
+    return
+
+
+@app.cell
+def _(mcm_overwrite_checkbox, mcm_target):
+    _one_way = mcm_nb.one_way_markdown(mcm_target)
+    mo.vstack(
+        [
+            mo.md(mcm_nb.save_to_markdown(mcm_target)),
+            mo.callout(mo.md(_one_way), kind="warn") if _one_way else "",
+            mcm_overwrite_checkbox if mcm_target.conflict else "",
+        ]
+    )
+    return
+
+
+@app.cell
+def _(mcm_flat_configs, mcm_migrate_button, mcm_migrate_result, mcm_target):
+    _items = []
+    if mcm_migrate_result is not None:
+        _ok, _output = mcm_migrate_result
+        _items.append(
+            mo.callout(
+                mo.vstack(
+                    [
+                        mo.md("**Migration finished.**" if _ok else "**Migration failed.**"),
+                        mo.plain_text(_output[-4000:]),
+                    ]
+                ),
+                kind="success" if _ok else "danger",
+            )
+        )
+    if mcm_target.enabled and mcm_flat_configs:
+        _items.append(
+            mo.callout(
+                mo.vstack(
+                    [
+                        mo.md(mcm_nb.flat_configs_markdown(mcm_flat_configs)),
+                        mcm_migrate_button,
+                    ]
+                ),
+                kind="warn",
+            )
+        )
+    mo.vstack(_items) if _items else None
+    return
+
+
+@app.cell
+def _():
+    # The saved concert_vars.sh the credential widgets start from. State, not a plain value, so
+    # those widgets rebuild only when another saved file is selected, not on every keystroke.
+    mcm_vars_file, mcm_set_vars_file = mo.state(
+        mcm_nb.startup_vars_file("concert_config", "concert_vars.sh")
+    )
+    return mcm_set_vars_file, mcm_vars_file
+
+
+@app.cell
+def _(mcm_set_vars_file, mcm_target, mcm_vars_file):
+    _selected = mcm_nb.existing_vars_file(mcm_target, "concert_vars.sh")
+    if _selected != mcm_vars_file():
+        mcm_set_vars_file(_selected)
+    return
+
+
+@app.cell
 def _(concert_vars_template_editor, save_file_stack):
     config_file_accordion_concert = mo.accordion(
         items={
             "**Review & Save Results**": mo.vstack(
                 [
                     mo.md(
-                        "*The install scripts read `configs/concert_config/concert_vars.sh` (with `ENV_TARGET=concert`) - keep that name.*"
+                        "*The install scripts read `concert_vars.sh` in the folder shown in the **Save to** line (with `ENV_TARGET=concert`) - keep that name.*"
                     ),
                     concert_vars_template_editor,
                     save_file_stack,
@@ -2147,18 +2314,29 @@ def _(
     concert_vars_filename,
     concert_vars_template_editor,
     config_errors,
+    mcm_overwrite_checkbox,
+    mcm_target,
     save_to_config_dir_button,
 ):
     _save_result = None
+    _blockers = (
+        mcm_nb.save_blockers(
+            mcm_target, mcm_overwrite_checkbox.value, concert_vars_template_editor.value
+        )
+        if save_to_config_dir_button.value
+        else []
+    )
     if save_to_config_dir_button.value and config_errors:
         _save_result = mo.callout(
             mo.md("**Not saved** - fix the errors listed above first."),
             kind="danger",
         )
-    elif save_to_config_dir_button.value and concert_vars_template_editor.value:
-        _config_dir = os.path.join(
-            os.path.dirname(__file__), "configs", "concert_config"
+    elif _blockers:
+        _save_result = mo.callout(
+            mo.md("**Not saved.** " + " ".join(_blockers)), kind="danger"
         )
+    elif save_to_config_dir_button.value and concert_vars_template_editor.value:
+        _config_dir = mcm_target.directory
         os.makedirs(_config_dir, exist_ok=True)
 
         _vars_path = os.path.join(_config_dir, concert_vars_filename)
@@ -2174,10 +2352,13 @@ def _(
         os.chmod(_vars_path, 0o600)
         _saved.insert(0, _vars_path)
 
+        _notes = mcm_nb.finish_save(mcm_target)
+
         _save_result = mo.callout(
             mo.md(
-                "**Saved to `./configs/concert_config/`:**\n"
+                f"**Saved to `{mcm_target.display}`:**\n"
                 + "\n".join(f"- `{p}`" for p in _saved)
+                + "".join(f"\n\n{n}" for n in _notes)
                 + "\n\nNext: `./scripts/install_ibm_concert/0_x_full_quick_install_script/full_concert_installprocess.sh`"
             ),
             kind="success",

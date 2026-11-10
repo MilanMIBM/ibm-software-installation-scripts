@@ -137,7 +137,7 @@ if $PURGE; then
     # It is no longer generated (confluent_instance_details.sh carries these
     # now), so remove any leftover rather than leave stale credentials behind.
     REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-    rm -f "${REPO_ROOT}/configs/confluent_platform_config/confluent_cli_login.sh"
+    rm -f "${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_cli_login.sh"
 else
     echo "[INFO] Identity provider and secrets kept."
     echo "[INFO] Re-enable with: x.4_confluent_add_mds.sh"

@@ -245,7 +245,7 @@ case "${CONFLUENT_AUTH_MODE_LIVE}" in
 esac
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_instance_details.sh"
+VARS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_instance_details.sh"
 mkdir -p "$(dirname "${VARS_FILE}")"
 
 cat > "${VARS_FILE}" <<EOF
@@ -343,7 +343,7 @@ elif [[ "${CONFLUENT_KAFKA_INTERNAL_PROTOCOL}" != SASL_* ]]; then
 elif (( ${#_sasl_users[@]} == 0 )); then
     echo "[INFO] No SASL credentials in '${CONFLUENT_SASL_SECRET}'; skipping the client properties file."
 else
-    SASL_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_sasl_clients.properties"
+    SASL_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_sasl_clients.properties"
 
     # The admin user is the default the file is configured for; every other
     # client is listed underneath as a ready-to-paste jaas line.
@@ -365,7 +365,7 @@ else
     _mech="${CONFLUENT_KAFKA_INTERNAL_MECHANISM}"
     _truststore=""
     if [[ "${_proto}" == "SASL_SSL" ]]; then
-        _truststore="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_internal_ca.crt"
+        _truststore="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_kafka_internal_ca.crt"
         oc get secret "${CONFLUENT_INTERNAL_TLS_SECRET}" -n "${NS}" \
             -o jsonpath='{.data.ca\.crt}' | base64 --decode > "${_truststore}"
         chmod 644 "${_truststore}"

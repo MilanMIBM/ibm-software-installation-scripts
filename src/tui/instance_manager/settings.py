@@ -21,11 +21,18 @@ def config_dir() -> Path:
     env = os.environ.get("CONFIG_DIR")
     if env:
         return Path(env).resolve()
+    # Writable: this folder receives settings, the cache and instance details. Raises
+    # ValueError with guidance when the mode is on and no cluster is selected.
+    try:
+        from helpers.multi_cluster_state import writable_configs_root
+    except ImportError:
+        from src.helpers.multi_cluster_state import writable_configs_root
+
     here = Path(__file__).resolve()
     for parent in here.parents:
         if (parent / "env_bootstrap.sh").is_file():
-            return parent / "configs" / "cp4d_config"
-    return Path.cwd() / "configs" / "cp4d_config"
+            return writable_configs_root(parent) / "cp4d_config"
+    return writable_configs_root(Path.cwd()) / "cp4d_config"
 
 
 def managed_dir(create: bool = False) -> Path:

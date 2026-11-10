@@ -93,7 +93,7 @@ command -v skopeo >/dev/null 2>&1 || preg_warn "skopeo is not installed - instal
 # --- 4. cpd-cli work dir ---------------------------------------------------------------------------
 CPD_PATH="$(preg_install_path cpd 2>/dev/null || true)"
 if [[ -n "${CPD_PATH}" && -d "${BUNDLE}/${CPD_PATH}/cpd-cli-work" ]]; then
-    WORK="${HOME}/cpd-cli/work"
+    WORK="${CPD_CLI_WORK_PATH:-${HOME}/cpd-cli/work}"
     mkdir -p "${WORK}"
     preg_info "Restoring cpd-cli's work dir -> ${WORK}"
     preg_rsync "bundle -> cpd-cli work dir" -a "${BUNDLE}/${CPD_PATH}/cpd-cli-work/" "${WORK}/"

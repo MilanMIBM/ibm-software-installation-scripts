@@ -95,7 +95,7 @@ fi
 
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-CERTS_ROOT="${REPO_ROOT}/configs/cp4d_config/certs"
+CERTS_ROOT="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/certs"
 
 echo "=== Extracting EDB Postgres credentials ==="
 echo ""

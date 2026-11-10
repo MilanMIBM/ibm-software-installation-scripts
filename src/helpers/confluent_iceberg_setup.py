@@ -19,6 +19,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from multi_cluster_state import configs_root, writable_configs_root
 from softwarehub_service_instance_helpers import APIError, SoftwareHub, request_json
 
 
@@ -71,7 +72,11 @@ class Settings:
         if int(self.interval) <= 0:
             raise ValueError("ICEBERG_COMMIT_INTERVAL_MS must be positive")
         boolean(self.env.get("ICEBERG_COS_PATH_STYLE_ACCESS", "false"))
-        self.output = Path(self.env.get("ICEBERG_OUTPUT_FILE", str(self.root / "configs/confluent_platform_config/iceberg-sink.json"))).resolve()
+        configs = configs_root(self.root, self.env)
+        output_file = self.env.get("ICEBERG_OUTPUT_FILE")
+        if output_file is None:
+            output_file = str(writable_configs_root(self.root, self.env) / "confluent_platform_config/iceberg-sink.json")
+        self.output = Path(output_file).resolve()
         try:
             self.output.relative_to(self.root.resolve())
         except ValueError:
@@ -79,7 +84,7 @@ class Settings:
         check = subprocess.run(["git", "check-ignore", "-q", "--", str(self.output)], cwd=self.root)
         if check.returncode:
             raise ValueError("ICEBERG_OUTPUT_FILE must be ignored by Git and must not be tracked")
-        self.credentials = self.root / "configs/openshift_config/service_id_credentials.txt"
+        self.credentials = configs / "openshift_config/service_id_credentials.txt"
         self.instance_name = self.env.get("ICEBERG_WATSONX_INSTANCE", "lakehouse")
         self.port = str(int(self.env.get("CONFLUENT_CONNECT_PORT", "8083")))
 

@@ -59,7 +59,7 @@ for id in "${(@f)$(preg_installs)}"; do
 done
 
 # --- 2. our mirror sets ----------------------------------------------------------------
-OUT="${WS}/cluster/mirror-sets"
+OUT="${MIRROR_CLUSTER_OUT:-${WS}/cluster}/mirror-sets"
 rm -rf "${OUT}"; mkdir -p "${OUT}"
 extra=()
 CPD_PATH="$(preg_install_path cpd)"

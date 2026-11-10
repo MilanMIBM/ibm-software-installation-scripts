@@ -1,0 +1,56 @@
+#!/bin/zsh
+# Make this script executable if it isn't already, then re-run it
+if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
+# =============================================================================
+# cpd-cli shim for multi-cluster management (plan section 5.6)
+# -----------------------------------------------------------------------------
+# On PATH, ahead of ~/cpd-cli, only while a run is pinned to a delineated cluster
+# (the mode is on, or --target-cluster / MCM_CLUSTER with it off). Stateless:
+# everything it needs comes from the environment of the run that called it.
+#
+#   manage, manage-k8s   the real binary with the real HOME: podman finds its
+#                        machine connection under it, and the container gets
+#                        its work directory from CPD_CLI_MANAGE_WORKSPACE. This
+#                        call may be the one that creates the container, so it
+#                        makes sure the idle watcher runs
+#   health               runs in the cluster's folder with its private HOME;
+#                        cpd-cli writes its output relative to the working
+#                        directory
+#   everything else      the cluster's private HOME, so profiles in
+#                        ~/.cpd-cli/config never mix between clusters
+#
+# Without a pinned cluster it behaves as the plain binary.
+#
+# --help reaches cpd-cli itself; this shim has no options of its own.
+# =============================================================================
+
+_real="${CPD_CLI_HOME:-$HOME/cpd-cli}/cpd-cli"
+
+if [[ ! -x "${_real}" ]]; then
+    print -r -- "[ERROR] cpd-cli is not installed at ${_real} (CPD_CLI_HOME)." >&2
+    exit 127
+fi
+
+if [[ -z "${MCM_CLUSTER_ROOT:-}" ]]; then
+    exec "${_real}" "$@"
+fi
+
+case "${1:-}" in
+    manage|manage-k8s)
+        # The idle watcher reads this file's modified time (plan 5.7.1).
+        [[ -n "${MCM_CPD_CLI_WORKSPACE:-}" ]] && touch "${MCM_CPD_CLI_WORKSPACE}/.last_activity" 2>/dev/null
+        # In a subshell: reading the state file must not change what cpd-cli inherits.
+        ( source "${0:A:h:h}/multi_cluster_helpers.sh" && mcm_ensure_idle_watcher ) </dev/null >/dev/null 2>&1
+        exec "${_real}" "$@"
+        ;;
+    health)
+        cd "${MCM_CLUSTER_ROOT}" || {
+            print -r -- "[ERROR] Cannot enter the cluster folder ${MCM_CLUSTER_ROOT}" >&2
+            exit 1
+        }
+        exec env HOME="${MCM_CLUSTER_ROOT}/.home" "${_real}" "$@"
+        ;;
+    *)
+        exec env HOME="${MCM_CLUSTER_ROOT}/.home" "${_real}" "$@"
+        ;;
+esac

@@ -33,7 +33,7 @@ source "${_CP4D_REPO_ROOT}/scripts/operator_install_helpers.sh"
 source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
 
 export CONCERT_WORKSPACE="${CONCERT_WORKSPACE:-${_CP4D_REPO_ROOT}/concert_workspace}"
-export CONCERT_CONFIG_DIR="${CONCERT_CONFIG_DIR:-${_CP4D_REPO_ROOT}/configs/concert_config}"
+export CONCERT_CONFIG_DIR="${CONCERT_CONFIG_DIR:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/concert_config}"
 CONCERT_RUNNER_SRC_DIR="${_CP4D_REPO_ROOT}/src/helpers/concert_runner"
 CONCERT_MANAGED_BY="concert-install-scripts"
 CONCERT_RUNNER_SA="concert-installer"

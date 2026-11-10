@@ -11,6 +11,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # scripts load, so it may not exist yet. Find the repo root the same way.
 REPO_ROOT="${SCRIPT_DIR}"; while [[ "${REPO_ROOT}" != "/" && ! -f "${REPO_ROOT}/env_bootstrap.sh" ]]; do REPO_ROOT="$(dirname "${REPO_ROOT}")"; done
 
+# Multi-cluster: --target-cluster NAME writes into that cluster's folder; flat configs/ stays the default.
+if [[ -f "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh" ]]; then
+    source "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh"
+    # Flat files this generator reads or rewrites: one pointing at a cluster with its own folder sends the write there.
+    MCM_GENERATOR_URL_FILES=(kubecost_config/kubecost_vars.sh)
+    # --from-cpd FILE copies that file's OCP_URL, so FILE is checked instead of the flat default.
+    _mcm_from_cpd="$(mcm_generator_flag_file --from-cpd "$@")"
+    if [[ -n "${_mcm_from_cpd}" ]]; then
+        MCM_GENERATOR_URL_FILES+=("${_mcm_from_cpd}")
+    elif (( ! ${@[(Ie)--empty]} )); then
+        MCM_GENERATOR_URL_FILES+=(cp4d_config/cpd_vars.sh)
+    fi
+    unset _mcm_from_cpd
+    mcm_generator_setup "$@" || exit 1
+    set -- "${reply[@]}"
+else
+    mcm_generator_register() { :; }
+fi
+
 usage() {
     cat <<'EOF'
 Write configs/kubecost_config/kubecost_vars.sh for the Kubecost operator install,
@@ -59,13 +78,14 @@ Options:
   --out FILE            Write somewhere else (default:
                         configs/kubecost_config/kubecost_vars.sh)
   --force               Overwrite an existing file (a timestamped .bak is kept)
+  --target-cluster NAME Write into configs/clusters/NAME (mode on, or a cluster with its folder)
   -h, --help            Show this help
 EOF
 }
 
 MODE=""
-CPD_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_vars.sh"
-OUT_FILE="${REPO_ROOT}/configs/kubecost_config/kubecost_vars.sh"
+CPD_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/cpd_vars.sh"
+OUT_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/kubecost_config/kubecost_vars.sh"
 NAMESPACE=""
 INSTANCE="__default__"
 FROM_CLUSTER=false
@@ -211,7 +231,7 @@ if [[ -z "${VERSION}" ]]; then
         [[ -n "${VERSION}" ]] && VERSION_FROM="OperatorHub on $(oc whoami --show-server 2>/dev/null)"
     fi
     if [[ -z "${VERSION}" ]]; then
-        VERSION="$(for _r in "${REPO_ROOT}"/configs/kubecost_config/mirror/*/record.json(N); do print -r -- "${${_r:h}:t}"; done \
+        VERSION="$(for _r in "${CONFIGS_ROOT:-${REPO_ROOT}/configs}"/kubecost_config/mirror/*/record.json(N); do print -r -- "${${_r:h}:t}"; done \
             | sort -t. -k1,1nr -k2,2nr -k3,3nr | head -1)"
         [[ -n "${VERSION}" ]] && VERSION_FROM="newest mirrored version (configs/kubecost_config/mirror/)"
     fi
@@ -376,6 +396,7 @@ EOF
 mv "${_tmp}" "${OUT_FILE}"
 
 echo "[INFO] Wrote ${OUT_FILE#${REPO_ROOT}/} (install source: ${SOURCE}${REGISTRY:+, registry ${REGISTRY}}, version ${VERSION:-newest at install}, cluster ID ${CLUSTER_ID})"
+mcm_generator_register "${OUT_FILE}"
 [[ -n "${PRODUCT_KEY}" ]] || echo "[INFO] License: set KUBECOST_PRODUCT_KEY in the file for Enterprise (empty = free tier; --from-cluster takes a linked one)."
 if [[ "${MODE}" == empty ]]; then
     echo "[INFO] Fill in OCP_URL and the login (OCP_USERNAME/OCP_PASSWORD or OCP_TOKEN); for private/local installs the registry too."

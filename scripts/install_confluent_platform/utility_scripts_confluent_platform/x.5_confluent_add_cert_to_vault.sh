@@ -72,7 +72,7 @@ USE_GROUP=true
 RECREATE=false
 DRY_RUN=false
 VERBOSE=true
-CPD_DETAILS_FILE="${CPD_DETAILS_FILE:-${REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh}"
+CPD_DETAILS_FILE="${CPD_DETAILS_FILE:-${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/cpd_instance_details.sh}"
 VAULT_URN="${VAULT_URN:-0000000000:internal}"
 CLI_CPD_URL=""
 

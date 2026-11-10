@@ -62,7 +62,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 
 # Written by set_service_id_user_proxies.sh. configs/ is gitignored.
 # SERVICE_ID_CREDENTIALS_FILE in the environment points it elsewhere.
-CREDENTIALS_FILE="${SERVICE_ID_CREDENTIALS_FILE:-${REPO_ROOT}/configs/openshift_config/service_id_credentials.txt}"
+CREDENTIALS_FILE="${SERVICE_ID_CREDENTIALS_FILE:-${CONFIGS_ROOT:-${REPO_ROOT}/configs}/openshift_config/service_id_credentials.txt}"
 # Start of the comment above each key; also how an earlier run's key is found.
 KEY_COMMENT="# Software Hub API key for"
 # Start of the line at the top that holds the Software Hub URL.

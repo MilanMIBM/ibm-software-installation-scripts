@@ -84,7 +84,7 @@ if command -v confluent &>/dev/null && oc get deployment confluent-manager-for-a
 fi
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_flink_instance_details.sh"
+VARS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_flink_instance_details.sh"
 mkdir -p "$(dirname "${VARS_FILE}")"
 
 cat > "${VARS_FILE}" <<EOF

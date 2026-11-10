@@ -32,7 +32,7 @@ concert_require_config
 concert_product_enabled hub || concert_die "The Hub is remote - manage users on the Hub cluster."
 
 USERS_FILE="${CONCERT_CONFIG_DIR}/concert_users.txt"
-HTPASSWD_FILE="${_CP4D_REPO_ROOT}/configs/openshift_config/htpasswd_credentials.txt"
+HTPASSWD_FILE="${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/openshift_config/htpasswd_credentials.txt"
 FROM_HTPASSWD=false
 for _arg in "$@"; do
     case "${_arg}" in

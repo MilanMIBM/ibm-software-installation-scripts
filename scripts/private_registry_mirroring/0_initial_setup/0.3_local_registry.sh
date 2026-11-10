@@ -45,7 +45,7 @@ preg_require_config
 # ==============================================================================
 
 CMD="${1:-}"; shift || true
-LR="${MIRROR_WORKSPACE}/local-registry"
+LR="$(preg_local_registry_dir)"
 STATE="$(preg_local_state_file)"
 NAME="${LOCAL_REGISTRY_CONTAINER:-mirror-local-registry}"
 ENGINE="${LOCAL_REGISTRY_ENGINE:-distribution}"

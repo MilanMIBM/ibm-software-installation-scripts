@@ -44,7 +44,7 @@ die() { echo "[ERROR] $*" >&2; exit 1; }
 SCOPE="cpd_vars"
 COMPONENTS=""
 PRINT_ONLY=false
-OUT_DIR="${_CP4D_REPO_ROOT}/configs/cp4d_config"
+OUT_DIR="${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/cp4d_config"
 REFRESH=false
 
 while [[ $# -gt 0 ]]; do

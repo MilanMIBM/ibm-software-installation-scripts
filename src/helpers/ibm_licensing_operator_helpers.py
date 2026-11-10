@@ -1246,7 +1246,11 @@ def load_config_env(config_dir: str | Path | None = None) -> dict[str, str]:
     evaluating it would mean running the shell.
     """
     if config_dir is None:
-        config_dir = Path(__file__).resolve().parents[2] / "configs" / "cp4d_config"
+        try:
+            from .multi_cluster_state import configs_root
+        except ImportError:
+            from multi_cluster_state import configs_root
+        config_dir = configs_root() / "cp4d_config"
     config_dir = Path(config_dir).expanduser()
     if not config_dir.is_dir():
         raise IBMLicensingConfigError(f"No such config directory: {config_dir}")

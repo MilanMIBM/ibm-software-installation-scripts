@@ -18,9 +18,10 @@ swhcc_activate() {
         || h_die "Not set: ${REPLY}. Check ${ENV_TARGET_FILE:-swhub_control_center_vars.sh}," \
                  "or write it with 0_swhub_control_center_generate_config.sh."
     export OLM_UTILS_IMAGE="${CONTROL_OLM_UTILS_IMAGE}"
-    export OLM_UTILS_CONTAINER="${CONTROL_OLM_UTILS_CONTAINER}"
-    export CPD_CLI_MANAGE_WORKSPACE="${CONTROL_CPD_CLI_WORKSPACE}"
-    export CPD_CLI_WORK_PATH="${CONTROL_CPD_CLI_WORKSPACE}/work"
+    export OLM_UTILS_CONTAINER="${CONTROL_OLM_UTILS_CONTAINER}${MCM_CONTAINER_SUFFIX:-}"
+    # Multi-cluster mode: inside the cluster's cpd-cli folder (plan 5.1).
+    export CPD_CLI_MANAGE_WORKSPACE="${${MCM_CPD_CLI_WORKSPACE:+${MCM_CPD_CLI_WORKSPACE}/swhub-control-center}:-${CONTROL_CPD_CLI_WORKSPACE}}"
+    export CPD_CLI_WORK_PATH="${CPD_CLI_MANAGE_WORKSPACE}/work"
     mkdir -p "${CPD_CLI_WORK_PATH}"
     cp4d_olm_utils_is_premium \
         || h_die "CONTROL_OLM_UTILS_IMAGE must be an olm-utils-premium-v4 image: setup-control-center is a stub in the standard one."

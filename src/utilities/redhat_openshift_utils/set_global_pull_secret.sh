@@ -48,7 +48,7 @@ draining or rebooting nodes.
 EOF
 }
 
-CONFIG_OUT_DIR="${CONFIG_DIR:-${REPO_ROOT}/configs/cp4d_config}"
+CONFIG_OUT_DIR="${CONFIG_DIR:-${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config}"
 SECRET_NAME="${IMAGE_PULL_SECRET:-pull-secret}"
 DISTRIBUTE=true
 USE_ICR=true

@@ -11,7 +11,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # No env_bootstrap here: the config this script writes is what the other steps
 # load, so it may not exist yet. Find the repo root the same way.
 REPO_ROOT="${SCRIPT_DIR}"; while [[ "${REPO_ROOT}" != "/" && ! -f "${REPO_ROOT}/env_bootstrap.sh" ]]; do REPO_ROOT="$(dirname "${REPO_ROOT}")"; done
-export _CP4D_REPO_ROOT="${REPO_ROOT}" CONFIGS_ROOT="${REPO_ROOT}/configs"
+# Multi-cluster: --target-cluster NAME writes into that cluster's folder; flat configs/ stays the default.
+if [[ -f "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh" ]]; then
+    source "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh"
+    mcm_generator_setup "$@" || exit 1
+    set -- "${reply[@]}"
+else
+    mcm_generator_register() { :; }
+fi
+export _CP4D_REPO_ROOT="${REPO_ROOT}" CONFIGS_ROOT="${CONFIGS_ROOT:-${REPO_ROOT}/configs}"
 # Hooks load install configs through env_bootstrap.sh; skip its podman/chmod prep
 # and keep its summary quiet - generating a config needs neither.
 export _CP4D_PREP_DONE=1 ENV_SETUP_QUIET=1
@@ -52,6 +60,7 @@ Options:
                               copies at once (default: 4; they share the uplink)
                               These four are written on every run from these options
                               (or their defaults), not kept from the existing file.
+  --target-cluster NAME       Write into configs/clusters/NAME (mode on, or a cluster with its folder)
   -h, --help                  Show this help
 
 Next: 0.1_detect_registry.sh to check the registry, then 1_map_content/.
@@ -96,6 +105,13 @@ esac
 [[ "${OCM_IMAGE_TIMEOUT}" =~ '^([0-9]+(h|m|s))+$' ]] || preg_die "--oc-mirror-image-timeout must be a duration like 90m, 6h or 1h30m (is '${OCM_IMAGE_TIMEOUT}')"
 [[ "${OCM_PARALLEL_IMAGES}" == <1-> ]] || preg_die "--oc-mirror-parallel-images must be a whole number >= 1 (is '${OCM_PARALLEL_IMAGES}')"
 
+# The hooks load the installs' configs through env_bootstrap.sh, which follows MCM_CLUSTER:
+# mcm_generator_setup pins it to the named cluster (mode off too, for a delineated one).
+# Without that pin they would read another cluster's configs.
+if ${PREFILL} && [[ -n "${MCM_GENERATOR_TARGET:-}" && "${MCM_CLUSTER:-}" != "${MCM_GENERATOR_TARGET}" ]]; then
+    preg_die "--prefill-from-installs reads the installs' configs through env_bootstrap.sh, which is not pinned to --target-cluster ${MCM_GENERATOR_TARGET}, so it cannot prefill for it. Leave out one of the two flags."
+fi
+
 KNOWN=("${(@f)$(preg_known_installs)}")
 if [[ -n "${INSTALLS}" ]]; then
     IDS=(shared)
@@ -122,6 +138,8 @@ run0() {   # <id> <verb> <fd3 output file>
     if [[ -n "${target}" ]]; then
         for f in "${CONFIGS_ROOT}"/*/"${target}"_vars.sh(N); do has_config=true; done
     fi
+    # --target-cluster without the pin: a hook loading its config would read another cluster's.
+    [[ -z "${MCM_GENERATOR_TARGET:-}" || "${MCM_CLUSTER:-}" == "${MCM_GENERATOR_TARGET}" ]] || has_config=false
     if ${has_config}; then
         ENV_TARGET="${target}" PREG_SKIP_REGISTRY_OVERRIDES=1 zsh "${SCRIPT_DIR}/installs/${id}.sh" "${verb}" 3>"${out}"
     else
@@ -184,6 +202,7 @@ preg_info "oc-mirror: MIRROR_OC_MIRROR_IMAGE_TIMEOUT=${OCM_IMAGE_TIMEOUT}, MIRRO
 
 zsh -n "${OUT_FILE}" || preg_die "The generated file has a syntax error: ${OUT_FILE}"
 preg_info "Wrote ${OUT_FILE#${REPO_ROOT}/} (mode 600)"
+mcm_generator_register "${OUT_FILE}"
 cat <<EOF
 
 Next:

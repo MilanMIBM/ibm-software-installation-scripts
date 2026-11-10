@@ -32,7 +32,18 @@ source "${SCRIPT_DIR}/../../../src/helpers/version_resolver.sh"
 # ==============================================================================
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_vars.sh"
+
+# Multi-cluster: --target-cluster NAME writes into that cluster's folder; flat configs/ stays the default.
+if [[ -f "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh" ]]; then
+    source "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh"
+    # Flat files this generator reads or rewrites: one pointing at a cluster with its own folder sends the write there.
+    MCM_GENERATOR_URL_FILES=(confluent_platform_config/confluent_vars.sh)
+    mcm_generator_setup "$@" || exit 1
+    set -- "${reply[@]}"
+else
+    mcm_generator_register() { :; }
+fi
+VARS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_vars.sh"
 
 usage() {
     cat <<'USAGE'
@@ -58,6 +69,7 @@ Overrides (any of these beat the size preset):
   --storage-class NAME      FLINK_CMF_STORAGE_CLASS
   --namespace NAME          project Flink is installed into
   --dry-run                 print the resulting block without writing
+  --target-cluster NAME     Use configs/clusters/NAME (mode on, or a cluster with its folder)
   -h, --help                this message
 
 Namespace note: by default Flink installs into its OWN project
@@ -393,3 +405,4 @@ printf '  %-30s %s\n' \
     "task slots"           "${SLOTS}"
 echo ""
 echo "[INFO] Next: install_confluent_platform_flink_addon/1.0_flink_prep.sh"
+mcm_generator_register "${VARS_FILE}"

@@ -36,6 +36,9 @@ Examples
     ./ibmcloud-secrets-manager-upload-update-cpd-vars.py \
         --extra-file configs/cp4d_config/cpd_instance_details.sh --dry-run
 
+With multi-cluster management on, the default files and the default prefix follow the
+selected cluster (MCM_CLUSTER, then the current cluster), so the bundle is cpd-config-<cluster>.
+
 Credentials come from --apikey or SECRETS_MANAGER_APIKEY / IBM_CLOUD_API_KEY /
 IBMCLOUD_API_KEY, and a repo-root .env is loaded automatically when present.
 """
@@ -54,8 +57,9 @@ sys.path.insert(
 )
 
 import ibmcloud_secrets_manager_helpers as smh
+from multi_cluster_state import configs_root
 
-DEFAULT_CONFIG_DIR = os.path.join("configs", "cp4d_config")
+DEFAULT_CONFIG_SUBDIR = "cp4d_config"
 DEFAULT_CPD_VARS = "cpd_vars.sh"
 DEFAULT_INSTALL_OPTIONS = "install-options.yml"
 
@@ -70,12 +74,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     files = parser.add_argument_group("files")
     files.add_argument(
         "--cpd-vars",
-        help=f"Path to the cpd_vars.sh to upload (default: {DEFAULT_CONFIG_DIR}/{DEFAULT_CPD_VARS}).",
+        help=f"Path to the cpd_vars.sh to upload (default: configs/{DEFAULT_CONFIG_SUBDIR}/{DEFAULT_CPD_VARS}).",
     )
     files.add_argument(
         "--install-options",
         help="Path to install-options.yml. Defaults to INSTALL_OPTIONS_FILE from cpd_vars.sh, "
-        f"otherwise {DEFAULT_CONFIG_DIR}/{DEFAULT_INSTALL_OPTIONS}.",
+        f"otherwise configs/{DEFAULT_CONFIG_SUBDIR}/{DEFAULT_INSTALL_OPTIONS}.",
     )
     files.add_argument(
         "--no-install-options",
@@ -142,7 +146,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def resolve_targets(args: argparse.Namespace, repo_root: str) -> list[str]:
     """Work out which files to upload, in bundle order."""
     cpd_vars = args.cpd_vars or os.path.join(
-        repo_root, DEFAULT_CONFIG_DIR, DEFAULT_CPD_VARS
+        configs_root(repo_root), DEFAULT_CONFIG_SUBDIR, DEFAULT_CPD_VARS
     )
     cpd_vars = os.path.abspath(os.path.expanduser(cpd_vars))
     if not os.path.isfile(cpd_vars):
@@ -197,7 +201,7 @@ def default_install_options(cpd_vars_path: str, repo_root: str) -> str | None:
 
     candidates.append(os.path.join(config_dir, DEFAULT_INSTALL_OPTIONS))
     candidates.append(
-        os.path.join(repo_root, DEFAULT_CONFIG_DIR, DEFAULT_INSTALL_OPTIONS)
+        os.path.join(configs_root(repo_root), DEFAULT_CONFIG_SUBDIR, DEFAULT_INSTALL_OPTIONS)
     )
 
     for candidate in candidates:

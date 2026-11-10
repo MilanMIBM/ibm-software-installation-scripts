@@ -142,3 +142,18 @@ This pushes everything into the registry, checks it, and configures the cluster.
 - **Going back to entitled**: delete `configs/<product>_config/registry_overrides.sh`. To also remove the cluster resources, use `private_registry_mirroring/x_clean_or_debug_registry/x_remove_mirror_config.sh`.
 
 More detail on every step: [Private registry mirroring](../README.md#private-registry-mirroring) in the main README.
+
+---
+
+## Several clusters
+
+Multi-cluster management is off by default. With it on, each cluster has its own configs, workspace, olm-utils container and `oc` session, and each cluster picks its own route (A, B or C) through its own configs. A run across several clusters can mix routes.
+
+It is one-way per cluster: once a cluster has a folder under `configs/clusters/<name>/`, it stays there even if the switch is turned off. The switch only sets the default for new clusters and for runs that name no cluster.
+
+- **Paths**: read `configs/<product>_config/` above as `configs/clusters/<name>/<product>_config/`.
+- **Which cluster**: scripts that load `env_bootstrap.sh` take `--target-cluster NAME`, `--target-clusters a,b` or `--all-clusters`. Without a flag it uses the state file `configs/multi_cluster_management.sh` (current cluster, target list or `APPLY_TO_ALL`). Several targets run one at a time, and a failure on one does not stop the rest. With the switch off the flags still reach clusters that have a folder; without a flag the run uses the flat layout, and a flat config pointing at a cluster that has a folder is refused.
+- **Mirror state**: clusters using the same registry root share `registry_mirror_workspace/registries/<destination>/`, because that state describes the registry. Set `MIRROR_WORKSPACE_SCOPE="cluster"` in `registry_mirror_vars.sh` to give a cluster its own. Tools and the local registry stay machine-wide. On an entitled cluster, mirror scripts report it as skipped.
+- **Containers**: a cluster's olm-utils container runs only while that cluster is targeted, and stops after 2 hours with no commands and nothing running. The next script brings it back.
+
+Turning it on, migrating an existing setup and what stays shared: [Managing several clusters](../README.md#managing-several-clusters) in the main README.

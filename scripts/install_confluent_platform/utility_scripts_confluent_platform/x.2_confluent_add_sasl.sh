@@ -128,7 +128,7 @@ if ! $DISABLE; then
 fi
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_vars.sh"
+VARS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_vars.sh"
 
 # persist_var <name> <value> - rewrite (or append) one export in confluent_vars.sh.
 persist_var() {
@@ -270,13 +270,13 @@ echo "--------------------------------------------------------------------------
 if $DISABLE; then
     echo "[WARN] Kafka now accepts unauthenticated connections."
 else
-    OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_sasl_clients.properties"
+    OUT="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_sasl_clients.properties"
     mkdir -p "$(dirname "${OUT}")"
     _admin_pw="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" -o jsonpath="{.data.${CONFLUENT_SASL_ADMIN_USER}}" | base64 --decode)"
 
     _truststore=""
     if [[ "${CONFLUENT_SASL_PROTOCOL}" == "SASL_SSL" ]]; then
-        _ca_out="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_internal_ca.crt"
+        _ca_out="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_kafka_internal_ca.crt"
         oc get secret "${CONFLUENT_INTERNAL_TLS_SECRET}" -n "${NS}" \
             -o jsonpath='{.data.ca\.crt}' | base64 --decode > "${_ca_out}"
         _truststore="${_ca_out}"

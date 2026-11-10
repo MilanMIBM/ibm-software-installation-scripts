@@ -191,8 +191,8 @@ fi
 # A function, so $0 is its name here: the script name comes from ZSH_ARGZERO.
 write_client_config() {
     REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-    OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_external_client.properties"
-    CA_OUT="${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
+    OUT="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_external_client.properties"
+    CA_OUT="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_kafka_ca.crt"
     mkdir -p "$(dirname "${OUT}")"
 
     _bootstrap=""
@@ -261,7 +261,7 @@ if $CLIENT_CONFIG_ONLY; then
     fi
     # The properties file points at this CA, so refresh it from the secret too
     # (it may be missing on this workstation, or stale after a --rotate).
-    _ca_dir="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)/configs/confluent_platform_config"
+    _ca_dir="${CONFIGS_ROOT:-$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)/configs}/confluent_platform_config"
     mkdir -p "${_ca_dir}"
     _ca_pem="$(oc get secret "${CONFLUENT_EXTERNAL_TLS_SECRET}" -n "${NS}" \
         -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 --decode 2>/dev/null || true)"
@@ -418,9 +418,9 @@ CA
 
     # Keep the CA next to the client properties so clients can trust it.
     REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-    mkdir -p "${REPO_ROOT}/configs/confluent_platform_config"
-    cp "${_tmp}/ca.crt" "${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
-    chmod 644 "${REPO_ROOT}/configs/confluent_platform_config/confluent_kafka_ca.crt"
+    mkdir -p "${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config"
+    cp "${_tmp}/ca.crt" "${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_kafka_ca.crt"
+    chmod 644 "${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_kafka_ca.crt"
 
     rm -rf "${_tmp}"; trap - EXIT
     echo "[INFO] Certificates stored in secret '${CONFLUENT_EXTERNAL_TLS_SECRET}'."

@@ -28,7 +28,18 @@ source "${SCRIPT_DIR}/../../src/helpers/version_resolver.sh"
 # ==============================================================================
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-VARS_FILE="${REPO_ROOT}/configs/confluent_platform_config/confluent_vars.sh"
+
+# Multi-cluster: --target-cluster NAME writes into that cluster's folder; flat configs/ stays the default.
+if [[ -f "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh" ]]; then
+    source "${REPO_ROOT}/src/helpers/multi_cluster_generator_args.sh"
+    # Flat files this generator reads or rewrites: one pointing at a cluster with its own folder sends the write there.
+    MCM_GENERATOR_URL_FILES=(confluent_platform_config/confluent_vars.sh cp4d_config/cpd_vars.sh)
+    mcm_generator_setup "$@" || exit 1
+    set -- "${reply[@]}"
+else
+    mcm_generator_register() { :; }
+fi
+VARS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_vars.sh"
 
 usage() {
     cat <<'USAGE'
@@ -56,6 +67,7 @@ Overrides (any of these beat the size preset):
                             one; false (default) = keep whatever is configured
   --regenerate-cluster-id   shorthand for --overwrite-cluster-id true
   --dry-run                 print the resulting block without writing
+  --target-cluster NAME     Use configs/clusters/NAME (mode on, or a cluster with its folder)
   -h, --help                this message
 
 Cluster id: by default the id already in confluent_vars.sh is preserved, and one
@@ -204,7 +216,7 @@ fi
 #
 # Anything already present is left untouched - a value edited here survives.
 # ------------------------------------------------------------------------------
-CPD_VARS_FILE="${REPO_ROOT}/configs/cp4d_config/cpd_vars.sh"
+CPD_VARS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/cpd_vars.sh"
 
 # Pull a literal value out of cpd_vars.sh without sourcing it (it has side
 # effects: it sources .env and shells out for IMAGE_PULL_CREDENTIALS).
@@ -747,3 +759,4 @@ printf '  %-34s %s\n' \
     "cluster id"           "${CLUSTER_ID} (${CLUSTER_ID_ORIGIN})"
 echo ""
 echo "[INFO] Next: scripts/install_confluent_platform/1.0_confluent_prep.sh"
+mcm_generator_register "${VARS_FILE}"

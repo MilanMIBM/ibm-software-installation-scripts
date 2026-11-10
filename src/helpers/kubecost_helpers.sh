@@ -160,7 +160,7 @@ kc_wait_for_release() {   # <name> <namespace> <start revision> <start time, ISO
 #   <instance>-management-postgres.json  Postgres integration connection + queries
 #   <instance>-features.yaml         optional features (generate/apply_kubecost_features)
 # =============================================================================
-KC_CONFIG_DIR="${_CP4D_REPO_ROOT}/configs/kubecost_config"
+KC_CONFIG_DIR="${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/kubecost_config"
 
 _kc_private_dir() {   # <dir>
     (umask 077; mkdir -p "$1")

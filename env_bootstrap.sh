@@ -30,6 +30,9 @@
 # by absolute path. Set before the loaded-guard so it is always defined.
 export _CP4D_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
+# Multi-cluster management: which cluster this run is on (see the resolve step below).
+source "${_CP4D_REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
+
 # Auto-prep: run scripts/0.0_make_executable.sh (chmod all .sh + start the
 # podman machine) when it is actually needed, i.e. some .sh is not executable
 # or the podman machine is not running. Done once per process tree: the
@@ -37,18 +40,13 @@ export _CP4D_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 if [[ -z "${_CP4D_PREP_DONE:-}" ]]; then
     export _CP4D_PREP_DONE=1
     _prep_needed=""
-    if [[ -n "$(find "${_CP4D_REPO_ROOT}" -name '*.sh' -not -path '*/.venv/*' ! -perm -u+x -print -quit 2>/dev/null)" ]]; then
+    # The multi-cluster state file is data, written owner read/write only.
+    if [[ -n "$(find "${_CP4D_REPO_ROOT}" -name '*.sh' -not -path '*/.venv/*' -not -path "$(mcm_state_file)" ! -perm -u+x -print -quit 2>/dev/null)" ]]; then
         _prep_needed=1
-    elif [[ "$(uname -s)" == "Darwin" ]]; then
-        _pm_state="$(podman machine inspect --format '{{.State}}' 2>/dev/null || true)"
-        if [[ "${_pm_state}" != "running" ]]; then
-            _prep_needed=1
-        elif ! podman info >/dev/null 2>&1; then
-            # "running" but the API socket is dead (stale VM after sleep):
-            # 0.0_make_executable.sh bounces the machine.
-            _prep_needed=1
-        fi
-        unset _pm_state
+    elif mcm_podman_machine_needs_prep; then
+        # Stopped, or "running" with a dead API socket (stale VM after sleep):
+        # 0.0_make_executable.sh starts or bounces the machine.
+        _prep_needed=1
     fi
     if [[ -n "${_prep_needed}" ]]; then
         echo "[INFO] Running scripts/0.0_make_executable.sh (scripts not executable or podman machine not running/unresponsive)"
@@ -78,6 +76,11 @@ fi
 # a child script in another product folder still infers its own target.
 # _CP4D_ENV_TARGET_WHY says which rule picked it, for the env summary.
 _CP4D_ENV_TARGET_WHY="ENV_TARGET"
+# Multi-cluster flags (--target-cluster, --target-clusters, --all-clusters and
+# --yes-all-clusters, which answers a destructive script's confirmation): taken out
+# here too, for the resolve step below.
+mcm_take_target_flags "$@" || { [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
+set -- "${_MCM_ARGV[@]}"
 _argv=()
 while (( $# )); do
     case "$1" in
@@ -92,6 +95,15 @@ done
 set -- "${_argv[@]}"
 unset _argv
 
+# Multi-cluster mode: resolve the target clusters (plan 5.4) before anything reads a
+# per-cluster path. One target pins this process to it; several re-run the calling
+# script once per cluster and never return here (mcm_fanout ends the process, after
+# applying the script's policy from mcm_script_policy: allow, single-only or confirm).
+# Mode off: nothing changes, unless the run names a delineated cluster (--target-cluster,
+# MCM_CLUSTER), which stays per cluster for good. A failure must not fall through to the
+# flat paths.
+mcm_env_setup "$@" || { [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
+
 if [[ -z "${ENV_TARGET:-}" ]]; then
     # The running script: $ZSH_ARGZERO for ./x.sh or zsh x.sh, else the caller's SCRIPT_DIR.
     _caller="${ZSH_ARGZERO:A}"
@@ -103,7 +115,7 @@ if [[ -z "${ENV_TARGET:-}" ]]; then
         scripts/install_cloud_pak_for_data/*) ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder scripts/install_cloud_pak_for_data/" ;;
         # Kubecost: its own config when there is one, else the CP4D config as before.
         src/utilities/kubecost_utils/*)
-            if [[ -f "${_CP4D_REPO_ROOT}/configs/kubecost_config/kubecost_vars.sh" ]]; then
+            if [[ -f "${MCM_CLUSTER_ROOT:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}}/kubecost_config/kubecost_vars.sh" ]]; then
                 ENV_TARGET=kubecost; _CP4D_ENV_TARGET_WHY="script folder src/utilities/kubecost_utils/ + configs/kubecost_config/kubecost_vars.sh"
             else
                 ENV_TARGET=cpd;      _CP4D_ENV_TARGET_WHY="script folder src/utilities/kubecost_utils/, no kubecost_vars.sh"
@@ -119,7 +131,7 @@ fi
 
 # Already loaded for this ENV_TARGET? Nothing to do. (_CP4D_ENV_LOADED holds the
 # loaded target, "all" when ENV_TARGET is unset; a different target reloads.)
-[[ "${_CP4D_ENV_LOADED:-}" == "${ENV_TARGET:-all}" ]] && return 0
+[[ "${_CP4D_ENV_LOADED:-}" == "${ENV_TARGET:-all}" && "${_MCM_LOADED_CLUSTER:-}" == "${MCM_CLUSTER:-}" ]] && return 0
 
 # The shared env setup lives under scripts/.
 _ENV_SETUP="${_CP4D_REPO_ROOT}/scripts/source_env_setup.sh"

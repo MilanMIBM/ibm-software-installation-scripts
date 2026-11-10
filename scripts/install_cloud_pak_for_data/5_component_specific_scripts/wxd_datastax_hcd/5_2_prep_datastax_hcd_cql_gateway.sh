@@ -88,8 +88,8 @@ NS="${PROJECT_CPD_INST_OPERANDS}"
 DC="${DC:-$(oc get cassandradatacenters.cassandra.datastax.com -n "${NS}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)}"
 mc_resolve_datacenter "${NS}" "${DC}"
 NAME="${NAME:-${MC_DB_DC}-cql}"
-SCB="${SCB:-${_CP4D_REPO_ROOT}/configs/cp4d_config/scb/${NS}-${NAME}-scb.zip}"
-VARS_FILE="${_CP4D_REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh"   # legacy location, only cleaned up
+SCB="${SCB:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/cp4d_config/scb/${NS}-${NAME}-scb.zip}"
+VARS_FILE="${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/cp4d_config/cpd_instance_details.sh"   # legacy location, only cleaned up
 _BLOCK_BEGIN="# >>> cql-gateway ${NS}/${NAME}"
 _BLOCK_END="# <<< cql-gateway ${NS}/${NAME}"
 

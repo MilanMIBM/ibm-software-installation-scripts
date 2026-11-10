@@ -10,13 +10,35 @@ trap '(( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECOND
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # --- Config target: the mirror config only (MIRROR_CONFIG_FILE selects another file) ---
 export ENV_TARGET="${MIRROR_CONFIG_FILE:-registry_mirror}"
-_cfg="${SCRIPT_DIR:h:h:h}/configs/registry_mirror_config/registry_mirror_vars.sh"
-if [[ -z "${MIRROR_CONFIG_FILE:-}" && ! -f "${_cfg}" ]]; then
-    echo "[ERROR] No mirror config yet: ${_cfg}" >&2
-    echo "[ERROR] Create it first: ${SCRIPT_DIR:h}/0_initial_setup/0.0_generate_mirror_config.sh --prefill-from-installs" >&2
-    exit 1
+# The env load exits first when the config is missing, so this guard stays ahead of it and
+# resolves the cluster itself. Several targets: env_bootstrap.sh fans out and each run checks.
+source "${SCRIPT_DIR:h:h:h}/src/helpers/multi_cluster_helpers.sh"
+mcm_take_target_flags "$@" || exit 1
+set -- "${_MCM_ARGV[@]}"
+_mcm_targets="$(mcm_resolve_targets)" || exit 1
+if [[ "${_mcm_targets}" != *" "* ]]; then
+    _cfg="$(mcm_flat_configs_root)/registry_mirror_config/registry_mirror_vars.sh"
+    if [[ -n "${_mcm_targets}" ]]; then
+        _cfg="$(mcm_cluster_root "${_mcm_targets}")/registry_mirror_config/registry_mirror_vars.sh"
+    fi
+    if [[ -z "${MIRROR_CONFIG_FILE:-}" && ! -f "${_cfg}" ]]; then
+        if [[ -n "${_mcm_targets}" ]]; then
+            # Same wording rule as the env load: exit code 1 means a nested step, which failed.
+            if [[ "${MCM_SKIP_EXIT_CODE}" == 1 ]]; then
+                echo "[ERROR] A step of this run needs a mirror config, which cluster '${_mcm_targets}' does not have (${_cfg})." >&2
+            else
+                echo "[WARN] Cluster '${_mcm_targets}' has no mirror config (${_cfg}) - skipped." >&2
+            fi
+            echo "[WARN] Entitled install? Nothing to mirror here. Otherwise create it with ${SCRIPT_DIR:h}/0_initial_setup/0.0_generate_mirror_config.sh --prefill-from-installs" >&2
+            exit "${MCM_SKIP_EXIT_CODE}"
+        fi
+        echo "[ERROR] No mirror config yet: ${_cfg}" >&2
+        echo "[ERROR] Create it first: ${SCRIPT_DIR:h}/0_initial_setup/0.0_generate_mirror_config.sh --prefill-from-installs" >&2
+        exit 1
+    fi
+    unset _cfg
 fi
-unset _cfg
+unset _mcm_targets
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/private_registry_helpers.sh"

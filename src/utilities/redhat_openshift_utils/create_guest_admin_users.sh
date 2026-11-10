@@ -97,7 +97,7 @@ KUBECOST_UI_ROLE="guest-kubecost-ui"
 MONITORING_TARGETS_ROLE="guest-monitoring-targets"
 MANAGED_LABEL="guest-admin/managed"
 GROUP_LABEL="guest-admin/group"
-CREDENTIALS_FILE="${_CP4D_REPO_ROOT}/configs/openshift_config/guest_admin_credentials.txt"
+CREDENTIALS_FILE="${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/openshift_config/guest_admin_credentials.txt"
 
 # API groups and resources left out of the guests' copy of 'edit'. Reads of most
 # of these still work through cluster-reader; Secrets don't.
@@ -230,7 +230,7 @@ echo "[INFO] Login provider: ${IDP_NAME}"
 
 # --- Editable namespaces --------------------------------------------------------
 typeset -aU _found=("${EDIT_NAMESPACES[@]}")
-for _f in "${_CP4D_REPO_ROOT}"/configs/*/*_vars.sh(N); do
+for _f in "${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}"/*/*_vars.sh(N); do
     [[ "${_f}" == */old_configs/* ]] && continue
     for _line in ${(f)"$(sed -nE "s/^(export[[:space:]]+)?([A-Z][A-Z0-9_]*)=[\"']?([a-z0-9][a-z0-9-]*)[\"']?[[:space:]]*(#.*)?$/\2 \3/p" "${_f}")"}; do
         for _p in "${EDIT_NAMESPACE_VARS[@]}"; do

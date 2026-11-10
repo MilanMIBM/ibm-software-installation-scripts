@@ -22,7 +22,7 @@ for var in OLM_UTILS_IMAGE CPD_CLI_WORK_PATH; do
     fi
 done
 
-CONTAINER_NAME="olm-utils-play-v4"
+CONTAINER_NAME="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
 
 # Empty the work dir but keep the directory itself: cpd-cli manage refuses to
 # start ("The work directory was not found.") when it is missing.

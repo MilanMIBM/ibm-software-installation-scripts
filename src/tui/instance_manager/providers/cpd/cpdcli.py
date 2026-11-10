@@ -26,7 +26,12 @@ class CpdCliError(Exception):
 
 
 def find_binary() -> str | None:
-    for cand in (os.environ.get("CPD_CLI"), shutil.which("cpd-cli"), str(Path.home() / "cpd-cli" / "cpd-cli")):
+    preferred = [os.environ.get("CPD_CLI"), shutil.which("cpd-cli")]
+    # Multi-cluster mode: the shim first on PATH gives cpd-cli this cluster's profiles. An absolute $CPD_CLI
+    # would skip it and sign in with the shared ~/.cpd-cli profile, which can belong to another cluster.
+    if os.environ.get("MCM_CLUSTER_ROOT"):
+        preferred.reverse()
+    for cand in (*preferred, str(Path.home() / "cpd-cli" / "cpd-cli")):
         if cand and Path(cand).is_file() and os.access(cand, os.X_OK):
             return cand
     return None

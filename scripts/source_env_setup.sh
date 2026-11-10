@@ -10,25 +10,33 @@ _env_log() { [[ -n "${ENV_SETUP_VERBOSE:-}" && -z "${ENV_SETUP_QUIET:-}" ]] && p
 # Guard against double-sourcing. _CP4D_ENV_LOADED records which target was
 # loaded ("all" when ENV_TARGET is unset), so sourcing again with a different
 # ENV_TARGET reloads instead of being skipped.
-if [[ "${_CP4D_ENV_LOADED:-}" == "${ENV_TARGET:-all}" ]]; then
+if [[ "${_CP4D_ENV_LOADED:-}" == "${ENV_TARGET:-all}" && "${_MCM_LOADED_CLUSTER:-}" == "${MCM_CLUSTER:-}" ]]; then
     _env_log "source_env_setup.sh already loaded in this shell (target: ${_CP4D_ENV_LOADED}) - skipping"
     unset -f _env_log _env_say
     return 0
 fi
-_env_prev="${_CP4D_ENV_LOADED:-}"
-_CP4D_ENV_LOADED="${ENV_TARGET:-all}"
 
 _ENV_SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _env_repo="${_ENV_SETUP_DIR:h}"
+# Multi-cluster mode: env_bootstrap.sh has already pinned the cluster for scripts.
+# A sourced load (s_env.sh) resolves it here and always ends on one cluster.
+source "${_env_repo}/src/helpers/multi_cluster_helpers.sh"
+if [[ -z "${_MCM_ENV_READY:-}" ]]; then
+    mcm_env_setup_no_fanout || { [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
+fi
+_MCM_LOADED_CLUSTER="${MCM_CLUSTER:-}"
+# Set only now: a load refused above has loaded nothing.
+_env_prev="${_CP4D_ENV_LOADED:-}"
+_CP4D_ENV_LOADED="${ENV_TARGET:-all}"
 # All configs live in per-product subfolders of configs/ (cp4d_config/,
 # confluent_platform_config/, ...). CONFIG_DIR stays the CP4D folder.
-export CONFIGS_ROOT="$(cd "${_ENV_SETUP_DIR}/.." && pwd)/configs"
+export CONFIGS_ROOT="${MCM_CLUSTER_ROOT:-$(cd "${_ENV_SETUP_DIR}/.." && pwd)/configs}"
 export CONFIG_DIR="${CONFIGS_ROOT}/cp4d_config"
 export CONFLUENT_CONFIG_DIR="${CONFIGS_ROOT}/confluent_platform_config"
 export CONCERT_CONFIG_DIR="${CONFIGS_ROOT}/concert_config"
 export DATASTAX_MC_CONFIG_DIR="${CONFIGS_ROOT}/datastax_mc_config"
 export REGISTRY_MIRROR_CONFIG_DIR="${CONFIGS_ROOT}/registry_mirror_config"
-export SERVICE_INSTANCE_FILE_DIR="${_ENV_SETUP_DIR}/../service_instances"
+export SERVICE_INSTANCE_FILE_DIR="${${MCM_CLUSTER_ROOT:+${MCM_CLUSTER_ROOT}/service_instances}:-${_ENV_SETUP_DIR}/../service_instances}"
 # Ensure payload output dir exists so provisioning scripts can write into it
 mkdir -p "${SERVICE_INSTANCE_FILE_DIR}"
 _env_log "CONFIGS_ROOT=${CONFIGS_ROOT}"
@@ -41,6 +49,7 @@ unset _ENV_SETUP_DIR
 
 _sourced=()
 _env_loaded=()   # repo-relative paths, for the summary
+_env_url_files=()   # "URL<TAB>file" for each file that changed OCP_URL, for the flat-load guard
 # Per-instance details: <config dir>/managed-service-instances/<type>/<instance>-instance_details.sh,
 # one file per service instance, written by the service-instance scripts (4.5_*, 5_*) and the
 # instance manager TUI (src/helpers/common_helpers.sh h_write_instance_details). Oldest first, so
@@ -72,7 +81,9 @@ _source_if_exists() {
     done
     _sourced+=("$real")
     _env_loaded+=("${real#${_env_repo}/}")
+    local _env_url_before="${OCP_URL-}"
     source "$real"
+    [[ "${OCP_URL-}" == "${_env_url_before}" ]] || _env_url_files+=("${OCP_URL-}"$'\t'"${real}")
 }
 
 # registry_overrides.sh next to an install's *_vars.sh is written by
@@ -103,6 +114,7 @@ _source_registry_overrides() {
 # subfolder or subfolder of cp4d_config/) or a path to a config file. Scripts normally get ENV_TARGET from
 # env_bootstrap.sh, which infers it from the script's folder (cpd, confluent,
 # concert, datastax_mc) unless ENV_TARGET or --env-target is given.
+mcm_snapshot_exports
 if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
     _target_file="${ENV_TARGET}"
     for _d in "${CONFIGS_ROOT}"/*(N/) "${CONFIG_DIR}"/*(N/); do
@@ -112,6 +124,20 @@ if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
     done
 
     if [[ ! -f "${_target_file}" ]]; then
+        # Multi-cluster: this cluster has no config for the script's product (an
+        # entitled cluster on the mirror track, Concert on a CP4D-only cluster, ...).
+        # MCM_SKIP_EXIT_CODE lets a fan-out report it as skipped, not failed. A step
+        # nested in a fan-out gets 1 instead: its run has already done part of the work.
+        if [[ -n "${MCM_CLUSTER:-}" && "${ENV_TARGET}" != */* ]]; then
+            if [[ "${MCM_SKIP_EXIT_CODE}" == 1 ]]; then
+                echo "[ERROR] A step of this run needs a '${ENV_TARGET}' config, which cluster '${MCM_CLUSTER}' does not have (looked in ${CONFIGS_ROOT})." >&2
+            else
+                echo "[WARN] Cluster '${MCM_CLUSTER}' has no '${ENV_TARGET}' config (looked in ${CONFIGS_ROOT}) - skipped." >&2
+            fi
+            [[ "${ENV_TARGET}" == registry_mirror ]] && echo "[WARN] Entitled install? Nothing to mirror here. Otherwise create the mirror config with scripts/private_registry_mirroring/0_initial_setup/0.0_generate_mirror_config.sh --target-cluster ${MCM_CLUSTER}." >&2
+            [[ -o interactive ]] && return 1
+            mcm_exit_no_trap "${MCM_SKIP_EXIT_CODE}"
+        fi
         echo "[ERROR] ENV_TARGET='${ENV_TARGET}' does not resolve to a config file." >&2
         echo "[ERROR] Tried: ${ENV_TARGET}, ${CONFIGS_ROOT}/*/${ENV_TARGET}_vars.sh, ${CONFIGS_ROOT}/*/${ENV_TARGET}" >&2
         [[ "${ENV_TARGET}" == datastax_mc ]] && echo "[ERROR] Create it with scripts/install_datastax_mc_standalone/0_initial_setup/0.0_generate_datastax_mc_config.sh --empty (or --from-cpd)" >&2
@@ -152,6 +178,13 @@ else
     done
 fi
 
+# Multi-cluster fan-out: this run's config is loaded, so from here on a missing config
+# in a later load or a nested step is a failure, not a skipped cluster.
+if [[ -n "${_MCM_FANOUT_SCRIPT:-}" ]]; then
+    export _MCM_FANOUT_SCRIPT=loaded
+    MCM_SKIP_EXIT_CODE=1
+fi
+
 # One-off overrides for a single child run: the private registry mirroring track
 # runs an install's own script (e.g. Concert's 1.1 mirror step) against the push
 # side of the registry this way, without touching the install's config.
@@ -168,6 +201,33 @@ for _o in ${_ENV_OVERRIDES[@]:+"${_ENV_OVERRIDES[@]}"}; do
     _env_overrides+=("${_o%%=*}")
 done
 unset _o
+# Below the overrides, so a KEY=VALUE given for this load is forgotten on a switch too.
+mcm_record_config_exports
+
+# A flat load (no cluster pinned) must not reach a cluster that is delineated: that
+# cluster is managed from configs/clusters/<name>/ for good, and one cluster never has
+# two configs. Checks every URL this load set, and the final OCP_URL (an override, or a
+# value the shell already had). Silent when no cluster is delineated.
+if [[ -z "${MCM_CLUSTER:-}" ]]; then
+    _env_conflict=0
+    for _env_u in "${(@u)${_env_url_files[@]%%$'\t'*}}" "${OCP_URL:-}"; do
+        mcm_flat_config_conflict "${_env_u}" "${(@)${(@M)_env_url_files:#${(b)_env_u}$'\t'*}#*$'\t'}" || { _env_conflict=1; break; }
+    done
+    if (( _env_conflict )); then
+        # An interactive shell outlives the refusal: drop what this load exported, so
+        # nothing in it points at that cluster, and let the next load run again.
+        if [[ -o interactive ]]; then
+            _mcm_forget_names ${=_MCM_FLAT_CONFIG_VARS:-} OCP_URL OC_LOGIN CPDM_OC_LOGIN ENV_TARGET_FILE
+            unset _MCM_FLAT_CONFIG_VARS _CP4D_ENV_LOADED _MCM_LOADED_CLUSTER
+            unset _env_conflict _env_u _env_url_files _oc_url _env_prev _env_repo _env_loaded _env_overrides
+            unset -f _env_log _env_say
+            return 1
+        fi
+        mcm_exit_no_trap 1
+    fi
+    unset _env_conflict _env_u
+fi
+unset _env_url_files
 
 # ------------------------------------------------------------------------------
 # Login only when needed
@@ -178,6 +238,7 @@ unset _o
 # as before. CPDM_OC_LOGIN covers the local oc too. The unconditional commands
 # stay available as *_FORCE.
 # The wrapped strings are self-contained so they also work in child shells.
+[[ -n "${MCM_CLUSTER:-}" ]] && export OLM_UTILS_CONTAINER="$(mcm_container_name "${MCM_CLUSTER}")"
 export OLM_UTILS_CONTAINER="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
 # OCP_URL is unset when there is no cpd_vars.sh; treat that as empty under 'set -u'.
 _oc_url="${OCP_URL:-}"; _oc_url="${_oc_url%/}"
@@ -191,6 +252,9 @@ if [[ -n "${CPDM_OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
     # from OLM_UTILS_IMAGE, e.g. after a PATCH_ID bump or a cpd-cli run without cpd_vars.sh
     # (cpd-cli then defaults to olm-utils-v4:<release>) - so only skip when the name matches.
     CPDM_OC_LOGIN="if { [ -z \"\${OLM_UTILS_IMAGE:-}\" ] || [ \"\$(podman inspect -f '{{.ImageName}}' ${OLM_UTILS_CONTAINER} 2>/dev/null)\" = \"\${OLM_UTILS_IMAGE}\" ]; } && podman exec ${OLM_UTILS_CONTAINER} oc whoami >/dev/null 2>&1 && [ \"\$(podman exec ${OLM_UTILS_CONTAINER} oc whoami --show-server 2>/dev/null)\" = \"${_oc_url}\" ]; then echo \"[INFO] cpd-cli (${OLM_UTILS_CONTAINER}) already logged in to ${_oc_url} - skipping login-to-ocp\"; else ${CPDM_OC_LOGIN_FORCE}; fi"
+    # Multi-cluster mode: each probe is an exec event for the idle watcher. Logged as our own,
+    # so a login check alone does not count as using the container (plan 5.7.1).
+    [[ -n "${MCM_CLUSTER:-}" ]] && CPDM_OC_LOGIN="${CPDM_OC_LOGIN//podman exec ${OLM_UTILS_CONTAINER} oc whoami/$(mcm_login_probe_command) ${OLM_UTILS_CONTAINER} oc whoami}"
     # The container login does not touch the local kubeconfig, yet nearly every script that
     # logs cpd-cli in also runs local oc (directly or through helpers). Log that in too, so a
     # script run on its own never works against an expired session or another cluster.
@@ -200,9 +264,15 @@ if [[ -n "${CPDM_OC_LOGIN:-}" && -n "${_oc_url}" ]]; then
     export CPDM_OC_LOGIN
 fi
 
-export CPD_CLI_MANAGE_WORKSPACE="$HOME/cpd-cli"
-export PATH="$HOME/cpd-cli:$PATH"
-export CPD_CLI_WORK_PATH="$HOME/cpd-cli/work"
+# CPD_CLI_HOME is where the binary is installed; CPD_CLI_MANAGE_WORKSPACE is the workspace root.
+export CPD_CLI_HOME="$HOME/cpd-cli"
+export CPD_CLI_MANAGE_WORKSPACE="${MCM_CPD_CLI_WORKSPACE:-${CPD_CLI_HOME}}"
+export PATH="${CPD_CLI_HOME}:$PATH"
+# Multi-cluster mode: the cpd-cli shim goes ahead of the real binary.
+[[ -n "${MCM_CLUSTER:-}" ]] && mcm_activate_shim
+export CPD_CLI_WORK_PATH="${CPD_CLI_MANAGE_WORKSPACE}/work"
+# Keeps the regular work dir when swhcc_activate repoints CPD_CLI_WORK_PATH.
+export CPD_CLI_BASE_WORK_PATH="${CPD_CLI_WORK_PATH}"
 export CPD_CLI_WORK_PATH_CONTAINER="/tmp/work"
 export CPD_CONFIG_PATH_CONTAINER="/cp4d_config"
 
@@ -211,11 +281,18 @@ _CONFIG_WORK_DIR="${CPD_CLI_WORK_PATH}/cp4d_config"
 mkdir -p "${_CONFIG_WORK_DIR}"
 # Top-level files only: subdirs (e.g. certs/) are host-side outputs and plain cp would fail on them.
 _cfg_copy_ok=1
-for _cfg_f in "${CONFIG_DIR}/"*; do
+# A cluster folder may have no CP4D config at all (Concert-only, mirror-only), so an
+# empty glob is fine there. The flat layout keeps its error for a missing cp4d_config.
+if [[ -n "${MCM_CLUSTER:-}" ]]; then
+    _cfg_files=("${CONFIG_DIR}/"*(N))
+else
+    _cfg_files=("${CONFIG_DIR}/"*)
+fi
+for _cfg_f in "${_cfg_files[@]}"; do
     [ -f "${_cfg_f}" ] || continue
     cp "${_cfg_f}" "${_CONFIG_WORK_DIR}/" 2>/dev/null || _cfg_copy_ok=0
 done
-unset _cfg_f
+unset _cfg_f _cfg_files
 if [ "${_cfg_copy_ok}" = 1 ]; then
     _env_log "copied ${CONFIG_DIR#${_env_repo}/}/* -> ${_CONFIG_WORK_DIR}/"
 else
@@ -239,7 +316,7 @@ _env_log "CPD_CONFIG_PATH_CONTAINER=${CPD_CONFIG_PATH_CONTAINER}"
 #   [ENV] 2.0.1_preliminary_project_setup.sh: same env as parent (cpd)
 # _CP4D_ENV_SHOWN (exported by scripts only) lets child scripts spot the repeat.
 _env_script="${ZSH_ARGZERO:t}"; [[ "${_env_script}" == *.sh ]] || _env_script=""
-_env_key="${_CP4D_ENV_LOADED}|${(j:,:)_env_loaded}|${(j:,:)_env_overrides}|${_oc_url}"
+_env_key="${_CP4D_ENV_LOADED}|${(j:,:)_env_loaded}|${(j:,:)_env_overrides}|${_oc_url}${MCM_CLUSTER:+|${MCM_CLUSTER}}"
 if [[ -n "${_env_script}" && "${_CP4D_ENV_SHOWN:-}" == "${_env_key}" ]]; then
     _env_say "${_env_script}: same env as parent (${_CP4D_ENV_LOADED})"
 else
@@ -256,9 +333,13 @@ else
     fi
     (( ${#_env_overrides} )) && _env_row override "${(j:, :)_env_overrides}"
     _env_row cluster "${_oc_url:-OCP_URL not set - login commands left as-is}"
+    [[ -n "${MCM_CLUSTER:-}" ]] && _env_row mcm "${MCM_CLUSTER}${_MCM_TARGET_WHY:+ (${_MCM_TARGET_WHY})}${_MCM_PIN_NOTE:+ - ${_MCM_PIN_NOTE}}"
     unset -f _env_row
     [[ -n "${_env_script}" ]] && export _CP4D_ENV_SHOWN="${_env_key}"
 fi
+
+# Multi-cluster mode: containers follow the target (plan 5.7). Never fails the load.
+[[ -z "${MCM_CLUSTER:-}" ]] || mcm_sync_containers
 
 unset _f _oc_url _env_prev _env_repo _env_loaded _env_overrides _env_script _env_key _CP4D_ENV_TARGET_WHY
 unset -f _env_log _env_say

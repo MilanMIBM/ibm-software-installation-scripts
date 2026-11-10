@@ -75,8 +75,8 @@ if [[ -z "${VERSION:-}" ]]; then
     exit 1
 fi
 
-INSTALL_DIR="${CPD_CLI_MANAGE_WORKSPACE:-${HOME}/cpd-cli}"
-CONTAINER_NAME="olm-utils-play-v4"
+INSTALL_DIR="${CPD_CLI_HOME:-${HOME}/cpd-cli}"
+CONTAINER_NAME="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
 
 ASSET_PLATFORM="$(cpd_cli_platform_asset)" || exit 1
 

@@ -45,6 +45,12 @@ Each upload uses the requested mode, defaulting to ``native``. The mode is
 recorded on the secret, so a bundle that was built with ``iterations`` still
 reports that in its plan - a later ``native`` upload simply adds a version to the
 newest iteration rather than another sibling.
+
+Multi-cluster management
+------------------------
+On a run for a cluster (the mode on, or a delineated cluster pinned with the mode
+off), a bundle with no ``--prefix`` is named per cluster (``cpd-config-<cluster>``),
+so two clusters' uploads never land on the same secrets. See ``resolve_prefix``.
 """
 
 from __future__ import annotations
@@ -55,11 +61,22 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from multi_cluster_state import (
+    configs_root,
+    current_cluster,
+    delineated_clusters,
+    is_on,
+    pinned_cluster,
+)
+
 # Reserved keys inside the kv payload. Everything else in the payload is a real
 # variable belonging to the file.
 LAYOUT_KEY = "_cpd_layout"
 CONTENT_KEY = "_file_content"
 RESERVED_KEYS = (LAYOUT_KEY, CONTENT_KEY)
+
+# Bundle prefix when neither --prefix nor CPD_SECRETS_PREFIX is given.
+DEFAULT_PREFIX = "cpd-config"
 
 # Keys used in the secret's custom_metadata (visible, non-encrypted metadata).
 META_FILE = "cpd_config_file"
@@ -577,7 +594,7 @@ def load_env_file(env_file: str | None = None, repo_root: str | None = None) -> 
         candidates.append(env_file)
     elif repo_root:
         candidates.append(os.path.join(repo_root, ".env"))
-        candidates.append(os.path.join(repo_root, "configs", "cp4d_config", ".env"))
+        candidates.append(os.path.join(configs_root(repo_root), "cp4d_config", ".env"))
 
     for candidate in candidates:
         if candidate and os.path.isfile(candidate):
@@ -950,6 +967,40 @@ def list_kv_secrets(client, group_id: str, name_prefix: str | None = None) -> li
     return sorted(secrets, key=lambda s: str(s.get("name", "")))
 
 
+def in_bundle(meta: dict, prefix: str) -> bool:
+    """Whether a listed secret belongs to the bundle named by exactly this prefix.
+
+    The start of the name is not enough: ``cpd-config`` also starts
+    ``cpd-config-prod-cpd-vars-sh``, and ``cpd-config-prod`` also starts
+    ``cpd-config-prod-2-cpd-vars-sh``. A restore would then write another cluster's
+    values over this one's files. The file name recorded at upload rebuilds the exact
+    secret name. A secret with no recorded file was made by hand and matches by name.
+    """
+    name = str(meta.get("name", ""))
+    if not name.startswith(prefix):
+        return False
+    recorded = (meta.get("custom_metadata") or {}).get(META_FILE)
+    if not recorded:
+        return True
+    expected = secret_name_for(prefix, recorded)
+    return expected in (name, split_iteration(name)[0])
+
+
+def list_bundle_secrets(client, group_id: str, prefix: str) -> list[dict]:
+    """List the kv secrets of one bundle.
+
+    Only the files uploaded under exactly this prefix, once per-cluster bundles can exist:
+    the mode on, a cluster pinned, or any delineated cluster in this checkout. Else
+    everything named ``<prefix>*``, as this has always worked: a partial ``--prefix``
+    gathers every bundle it starts. A flat restore must not gather a delineated
+    cluster's ``cpd-config-<cluster>-*`` files into the flat folder.
+    """
+    listed = list_kv_secrets(client, group_id, prefix)
+    if not is_on() and not pinned_cluster() and not delineated_clusters():
+        return listed
+    return [meta for meta in listed if in_bundle(meta, prefix)]
+
+
 def group_iterations(secrets: list[dict]) -> dict[str, dict[int, dict]]:
     """Group listed kv secret metadata into ``{base_name: {iteration: metadata}}``."""
     grouped: dict[str, dict[int, dict]] = {}
@@ -995,13 +1046,40 @@ def add_connection_args(parser) -> None:
     group.add_argument(
         "--prefix",
         help="Secret name prefix that groups the files of one bundle "
-        "(env: CPD_SECRETS_PREFIX, default 'cpd-config').",
+        f"(env: CPD_SECRETS_PREFIX, default '{DEFAULT_PREFIX}'). On a run for a cluster (multi-cluster "
+        "management on, or MCM_CLUSTER pinning a delineated cluster), the cluster name is appended "
+        "unless this flag is given; MCM_CLUSTER picks the cluster.",
     )
     group.add_argument("--env-file", help="Load this .env file before reading the variables above.")
 
 
 def resolve_prefix(prefix: str | None) -> str:
-    return slugify(prefix or os.environ.get("CPD_SECRETS_PREFIX") or "cpd-config")
+    """The bundle prefix: the flag as given, otherwise the standing default.
+
+    For a run on a cluster, the standing default (CPD_SECRETS_PREFIX or ``cpd-config``)
+    gets the cluster name, so two clusters cannot overwrite each other: with the mode on
+    the selected cluster, with it off a delineated cluster MCM_CLUSTER pins (the same one
+    configs_root reads the files from). CPD_SECRETS_PREFIX counts because a repo-root
+    ``.env`` applies to every cluster. A flag is a choice made for one run and is used as given.
+    """
+    if prefix:
+        return slugify(prefix)
+    base = slugify(os.environ.get("CPD_SECRETS_PREFIX") or DEFAULT_PREFIX)
+    if is_on():
+        cluster = current_cluster()
+        if not cluster:
+            raise ValueError(
+                "Multi-cluster management is on but no cluster is selected, so the secret prefix "
+                "cannot name one. Select it with multi_cluster.sh use NAME or MCM_CLUSTER=NAME, "
+                "or pass --prefix."
+            )
+    else:
+        cluster = pinned_cluster()
+        if not cluster:
+            return base
+    if base == cluster or base.endswith(f"-{cluster}"):
+        return base
+    return slugify(f"{base}-{cluster}")
 
 
 def run_cli(main_func, argv: list[str]) -> int:

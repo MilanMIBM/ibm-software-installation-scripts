@@ -349,6 +349,13 @@ class SetupTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ICEBERG_COS_SECRET_ACCESS_KEY"):
             integration.Settings(self.root, env)
 
+    def test_mode_on_with_no_cluster_refuses_the_flat_output(self):
+        state = self.root / "configs/multi_cluster_management.sh"
+        state.parent.mkdir(exist_ok=True)
+        state.write_text('export MULTI_CLUSTER_MANAGEMENT="true"\nexport MCM_CLUSTERS="a b"\nexport MCM_CURRENT_CLUSTER=""\n')
+        with self.assertRaisesRegex(ValueError, "no cluster is selected"):
+            integration.Settings(self.root, self.env)
+
     def test_tracked_output_is_rejected(self):
         env = {**self.env, "ICEBERG_OUTPUT_FILE": str(self.root / "tracked.json")}
         with self.assertRaisesRegex(ValueError, "ignored by Git"):

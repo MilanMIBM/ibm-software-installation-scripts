@@ -32,7 +32,11 @@
 [[ -n "${_PREG_HELPERS_LOADED:-}" ]] && return 0
 _PREG_HELPERS_LOADED=1
 
-export MIRROR_WORKSPACE="${MIRROR_WORKSPACE:-${_CP4D_REPO_ROOT}/registry_mirror_workspace}"
+# MIRROR_BASE holds what is machine-wide (tools, local registry).
+# Off: registry_mirror_workspace/ as always. On: the block after the source lines
+# below re-resolves MIRROR_WORKSPACE once the helpers it needs are loaded.
+MIRROR_BASE="${MIRROR_BASE:-${MIRROR_WORKSPACE:-${_CP4D_REPO_ROOT}/registry_mirror_workspace}}"
+export MIRROR_WORKSPACE="${MIRROR_WORKSPACE:-${MIRROR_BASE}}"
 PREG_TRACK_DIR="${_CP4D_REPO_ROOT}/scripts/private_registry_mirroring"
 PREG_ENGINE="${_CP4D_REPO_ROOT}/src/helpers/registry_mirror_engine.py"
 PREG_CLASSIFIER="${_CP4D_REPO_ROOT}/src/helpers/registry_classifier.py"
@@ -40,6 +44,46 @@ PREG_MANAGED_BY="private-registry-mirroring"
 
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
+
+# Multi-cluster mode (plan 5.12): the mirror state describes one registry, so clusters
+# sharing a destination share it and the rest stay apart. Runs here, after the mirror
+# config is loaded. MIRROR_BASE is exported first: a child would otherwise take the
+# resolved MIRROR_WORKSPACE for the base. Tools and the local registry stay there.
+_preg_mcm_resolve_workspace() {
+    local root="${MIRROR_REGISTRY_ROOT:-}" scope="${MIRROR_WORKSPACE_SCOPE:-registry}"
+    if [[ -z "${root}" ]]; then
+        # What 0.3_local_registry.sh up will write, so the folder keeps its name once
+        # up fills the value in.
+        local host="${LOCAL_REGISTRY_HOST:-}" port="${LOCAL_REGISTRY_PORT:-5000}"
+        [[ -n "${host}" ]] || host="$(hostname -f 2>/dev/null || hostname)"
+        if [[ "${LOCAL_REGISTRY_ENGINE:-distribution}" == mirror-registry && -z "${LOCAL_REGISTRY_PORT:-}" ]]; then
+            port=8443
+        fi
+        root="${host:l}:${port}${LOCAL_REGISTRY_NAMESPACE:+/${LOCAL_REGISTRY_NAMESPACE}}"
+    fi
+    export MIRROR_BASE="${MIRROR_BASE:-${MIRROR_WORKSPACE:-${_CP4D_REPO_ROOT}/registry_mirror_workspace}}"
+    case "${scope}" in
+        registry) export MIRROR_WORKSPACE="${MIRROR_BASE}/registries/$(mcm_mirror_destination_key "${root}")" ;;
+        cluster)  export MIRROR_WORKSPACE="${MCM_CLUSTER_ROOT}/registry_mirror_workspace" ;;
+        *) h_die "MIRROR_WORKSPACE_SCOPE must be registry or cluster (got '${scope}')." ;;
+    esac
+    mkdir -p "${MIRROR_WORKSPACE}"
+    # A non-default port gets its own container, unless the config names one.
+    if _preg_local_port_is_custom && [[ -z "${LOCAL_REGISTRY_CONTAINER:-}" ]]; then
+        export LOCAL_REGISTRY_CONTAINER="mirror-local-registry-${LOCAL_REGISTRY_PORT}"
+    fi
+}
+
+_preg_local_port_is_custom() {
+    local default_port=5000
+    [[ "${LOCAL_REGISTRY_ENGINE:-distribution}" == mirror-registry ]] && default_port=8443
+    [[ -n "${LOCAL_REGISTRY_PORT:-}" && "${LOCAL_REGISTRY_PORT}" != "${default_port}" ]]
+}
+
+if [[ -n "${MCM_CLUSTER_ROOT:-}" ]]; then
+    _preg_mcm_resolve_workspace
+fi
 
 # =============================================================================
 # Logging / small utilities
@@ -187,7 +231,15 @@ preg_run_hook() {
 # =============================================================================
 # Registry: image source, roots, auth
 # =============================================================================
-preg_local_state_file() { print -r -- "${MIRROR_WORKSPACE}/local-registry/state.env"; }
+# Multi-cluster mode: a non-default port gets its own folder, unless LOCAL_REGISTRY_DIR is set.
+preg_local_registry_dir() {
+    if [[ -n "${MCM_CLUSTER_ROOT:-}" && -z "${LOCAL_REGISTRY_DIR:-}" ]] && _preg_local_port_is_custom; then
+        print -r -- "${MIRROR_BASE}/local-registry-${LOCAL_REGISTRY_PORT}"
+    else
+        print -r -- "${MIRROR_BASE}/local-registry"
+    fi
+}
+preg_local_state_file() { print -r -- "$(preg_local_registry_dir)/state.env"; }
 
 # Pull root = MIRROR_REGISTRY_ROOT, or the running local registry when empty.
 preg_pull_root() {
@@ -382,7 +434,7 @@ preg_parse_phase_args() {
 # =============================================================================
 # Tools
 # =============================================================================
-preg_tools_dir() { print -r -- "${MIRROR_WORKSPACE}/tools"; }
+preg_tools_dir() { print -r -- "${MIRROR_BASE}/tools"; }
 
 # Arch suffix of the olm-utils tag: none by default (the tag is a manifest list,
 # like cpd_vars.sh's <version>.<patch>), ".<arch>" only when one is specified -

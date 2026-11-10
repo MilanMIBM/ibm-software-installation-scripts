@@ -38,7 +38,7 @@ source "${_b}/env_bootstrap.sh"
 unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 
-_setup_config="${ICEBERG_WATSONX_CONFIG_FILE:-${_CP4D_REPO_ROOT}/configs/confluent_platform_config/iceberg_watsonx_setup.sh}"
+_setup_config="${ICEBERG_WATSONX_CONFIG_FILE:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/confluent_platform_config/iceberg_watsonx_setup.sh}"
 _setup_args=()
 while (( $# )); do
     case "$1" in
@@ -57,7 +57,7 @@ fi
 source "${_setup_config}"
 
 # Read only CPD credentials in a subshell so Confluent's cluster settings stay in scope.
-_details="${ICEBERG_CPD_DETAILS_FILE:-${_CP4D_REPO_ROOT}/configs/cp4d_config/cpd_instance_details.sh}"
+_details="${ICEBERG_CPD_DETAILS_FILE:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/cp4d_config/cpd_instance_details.sh}"
 for _key in CPD_URL CPD_USERNAME CPD_APIKEY CPD_PASSWORD; do
     if [[ -z "${(P)_key:-}" && -f "${_details}" ]]; then
         _value="$(source "${_details}" >/dev/null 2>&1; print -r -- "${(P)_key:-}")"

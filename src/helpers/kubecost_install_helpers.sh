@@ -18,9 +18,9 @@
 KC_PACKAGE="kubecost-operator"
 KC_SOURCE_REGISTRY="registry.connect.redhat.com"
 KC_INDEX_REPO="registry.redhat.io/redhat/certified-operator-index"
-KC_VARS_FILE="${_CP4D_REPO_ROOT}/configs/kubecost_config/kubecost_vars.sh"
-KC_MIRROR_META_DIR="${_CP4D_REPO_ROOT}/configs/kubecost_config/mirror"
-KC_WORKSPACE="${_CP4D_REPO_ROOT}/kubecost_workspace"
+KC_VARS_FILE="${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/kubecost_config/kubecost_vars.sh"
+KC_MIRROR_META_DIR="${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/kubecost_config/mirror"
+KC_WORKSPACE="${KC_WORKSPACE:-${_CP4D_REPO_ROOT}/kubecost_workspace}"
 
 # relatedImages name -> "<component> <class>". Classes: operator (the operator
 # and its bundle), required, optional (IBM's air-gap list; MCP is optional too:

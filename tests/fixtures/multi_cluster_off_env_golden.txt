@@ -1,0 +1,175 @@
+### bootstrap:cpd
+CONCERT_CONFIG_DIR=<REPO>/configs/concert_config
+CONFIGS_ROOT=<REPO>/configs
+CONFIG_DIR=<REPO>/configs/cp4d_config
+CONFLUENT_CONFIG_DIR=<REPO>/configs/confluent_platform_config
+CPDM_OC_LOGIN=if command -v oc >/dev/null 2>&1; then if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-cpd.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-cpd.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CPD; fi; fi; if { [ -z "${OLM_UTILS_IMAGE:-}" ] || [ "$(podman inspect -f '{{.ImageName}}' olm-utils-play-v4 2>/dev/null)" = "${OLM_UTILS_IMAGE}" ]; } && podman exec olm-utils-play-v4 oc whoami >/dev/null 2>&1 && [ "$(podman exec olm-utils-play-v4 oc whoami --show-server 2>/dev/null)" = "https://api.golden-cpd.example.com:6443" ]; then echo "[INFO] cpd-cli (olm-utils-play-v4) already logged in to https://api.golden-cpd.example.com:6443 - skipping login-to-ocp"; else echo FAKE-CPDM-LOGIN-CPD; fi
+CPDM_OC_LOGIN_FORCE=echo FAKE-CPDM-LOGIN-CPD
+CPD_CLI_MANAGE_WORKSPACE=<HOME>/cpd-cli
+CPD_CLI_WORK_PATH=<HOME>/cpd-cli/work
+CPD_CLI_WORK_PATH_CONTAINER=/tmp/work
+CPD_CONFIG_PATH_CONTAINER=/tmp/work/cp4d_config
+DATASTAX_MC_CONFIG_DIR=<REPO>/configs/datastax_mc_config
+ENV_TARGET=cpd
+ENV_TARGET_FILE=<REPO>/configs/cp4d_config/cpd_vars.sh
+HOME=<HOME>
+LOGNAME=golden-user
+OCP_URL=https://api.golden-cpd.example.com:6443
+OC_LOGIN=if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-cpd.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-cpd.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CPD; fi
+OC_LOGIN_FORCE=echo FAKE-OC-LOGIN-CPD
+OLDPWD=<REPO>
+OLM_UTILS_CONTAINER=olm-utils-play-v4
+OLM_UTILS_IMAGE=icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8
+PATH=<HOME>/cpd-cli:<BIN>:/usr/bin:/bin
+PWD=<REPO>
+REGISTRY_MIRROR_CONFIG_DIR=<REPO>/configs/registry_mirror_config
+SERVICE_INSTANCE_FILE_DIR=<REPO>/scripts/../service_instances
+SHLVL=1
+VERSION=5.4.0
+_CP4D_ENV_SHOWN=cpd|configs/cp4d_config/cpd_vars.sh||https://api.golden-cpd.example.com:6443
+_CP4D_PREP_DONE=1
+_CP4D_REPO_ROOT=<REPO>
+
+### bootstrap:concert
+CONCERT_CONFIG_DIR=<REPO>/configs/concert_config
+CONCERT_VERSION=2.2.0
+CONFIGS_ROOT=<REPO>/configs
+CONFIG_DIR=<REPO>/configs/cp4d_config
+CONFLUENT_CONFIG_DIR=<REPO>/configs/confluent_platform_config
+CPD_CLI_MANAGE_WORKSPACE=<HOME>/cpd-cli
+CPD_CLI_WORK_PATH=<HOME>/cpd-cli/work
+CPD_CLI_WORK_PATH_CONTAINER=/tmp/work
+CPD_CONFIG_PATH_CONTAINER=/tmp/work/cp4d_config
+DATASTAX_MC_CONFIG_DIR=<REPO>/configs/datastax_mc_config
+ENV_TARGET=concert
+ENV_TARGET_FILE=<REPO>/configs/concert_config/concert_vars.sh
+HOME=<HOME>
+LOGNAME=golden-user
+OCP_URL=https://api.golden-concert.example.com:6443
+OC_LOGIN=if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-concert.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-concert.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CONCERT; fi
+OC_LOGIN_FORCE=echo FAKE-OC-LOGIN-CONCERT
+OLDPWD=<REPO>
+OLM_UTILS_CONTAINER=olm-utils-play-v4
+PATH=<HOME>/cpd-cli:<BIN>:/usr/bin:/bin
+PWD=<REPO>
+REGISTRY_MIRROR_CONFIG_DIR=<REPO>/configs/registry_mirror_config
+SERVICE_INSTANCE_FILE_DIR=<REPO>/scripts/../service_instances
+SHLVL=1
+_CP4D_ENV_SHOWN=concert|configs/concert_config/concert_vars.sh||https://api.golden-concert.example.com:6443
+_CP4D_PREP_DONE=1
+_CP4D_REPO_ROOT=<REPO>
+
+### bootstrap:all
+CONCERT_CONFIG_DIR=<REPO>/configs/concert_config
+CONCERT_VERSION=2.2.0
+CONFIGS_ROOT=<REPO>/configs
+CONFIG_DIR=<REPO>/configs/cp4d_config
+CONFLUENT_CONFIG_DIR=<REPO>/configs/confluent_platform_config
+CPDM_OC_LOGIN=if command -v oc >/dev/null 2>&1; then if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-concert.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-concert.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CONCERT; fi; fi; if { [ -z "${OLM_UTILS_IMAGE:-}" ] || [ "$(podman inspect -f '{{.ImageName}}' olm-utils-play-v4 2>/dev/null)" = "${OLM_UTILS_IMAGE}" ]; } && podman exec olm-utils-play-v4 oc whoami >/dev/null 2>&1 && [ "$(podman exec olm-utils-play-v4 oc whoami --show-server 2>/dev/null)" = "https://api.golden-concert.example.com:6443" ]; then echo "[INFO] cpd-cli (olm-utils-play-v4) already logged in to https://api.golden-concert.example.com:6443 - skipping login-to-ocp"; else echo FAKE-CPDM-LOGIN-CPD; fi
+CPDM_OC_LOGIN_FORCE=echo FAKE-CPDM-LOGIN-CPD
+CPD_CLI_MANAGE_WORKSPACE=<HOME>/cpd-cli
+CPD_CLI_WORK_PATH=<HOME>/cpd-cli/work
+CPD_CLI_WORK_PATH_CONTAINER=/tmp/work
+CPD_CONFIG_PATH_CONTAINER=/tmp/work/cp4d_config
+DATASTAX_MC_CONFIG_DIR=<REPO>/configs/datastax_mc_config
+HOME=<HOME>
+LOGNAME=golden-user
+OCP_URL=https://api.golden-concert.example.com:6443
+OC_LOGIN=if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-concert.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-concert.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CONCERT; fi
+OC_LOGIN_FORCE=echo FAKE-OC-LOGIN-CONCERT
+OLDPWD=<REPO>
+OLM_UTILS_CONTAINER=olm-utils-play-v4
+OLM_UTILS_IMAGE=icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8
+PATH=<HOME>/cpd-cli:<BIN>:/usr/bin:/bin
+PWD=<REPO>
+REGISTRY_MIRROR_CONFIG_DIR=<REPO>/configs/registry_mirror_config
+SERVICE_INSTANCE_FILE_DIR=<REPO>/scripts/../service_instances
+SHLVL=1
+VERSION=5.4.0
+_CP4D_ENV_SHOWN=all|configs/cp4d_config/cpd_vars.sh,configs/concert_config/concert_vars.sh||https://api.golden-concert.example.com:6443
+_CP4D_PREP_DONE=1
+_CP4D_REPO_ROOT=<REPO>
+
+### s_env:cpd
+CONCERT_CONFIG_DIR=<REPO>/configs/concert_config
+CONFIGS_ROOT=<REPO>/configs
+CONFIG_DIR=<REPO>/configs/cp4d_config
+CONFLUENT_CONFIG_DIR=<REPO>/configs/confluent_platform_config
+CPDM_OC_LOGIN=if command -v oc >/dev/null 2>&1; then if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-cpd.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-cpd.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CPD; fi; fi; if { [ -z "${OLM_UTILS_IMAGE:-}" ] || [ "$(podman inspect -f '{{.ImageName}}' olm-utils-play-v4 2>/dev/null)" = "${OLM_UTILS_IMAGE}" ]; } && podman exec olm-utils-play-v4 oc whoami >/dev/null 2>&1 && [ "$(podman exec olm-utils-play-v4 oc whoami --show-server 2>/dev/null)" = "https://api.golden-cpd.example.com:6443" ]; then echo "[INFO] cpd-cli (olm-utils-play-v4) already logged in to https://api.golden-cpd.example.com:6443 - skipping login-to-ocp"; else echo FAKE-CPDM-LOGIN-CPD; fi
+CPDM_OC_LOGIN_FORCE=echo FAKE-CPDM-LOGIN-CPD
+CPD_CLI_MANAGE_WORKSPACE=<HOME>/cpd-cli
+CPD_CLI_WORK_PATH=<HOME>/cpd-cli/work
+CPD_CLI_WORK_PATH_CONTAINER=/tmp/work
+CPD_CONFIG_PATH_CONTAINER=/tmp/work/cp4d_config
+DATASTAX_MC_CONFIG_DIR=<REPO>/configs/datastax_mc_config
+ENV_TARGET_FILE=<REPO>/configs/cp4d_config/cpd_vars.sh
+HOME=<HOME>
+LOGNAME=golden-user
+OCP_URL=https://api.golden-cpd.example.com:6443
+OC_LOGIN=if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-cpd.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-cpd.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CPD; fi
+OC_LOGIN_FORCE=echo FAKE-OC-LOGIN-CPD
+OLDPWD=<REPO>
+OLM_UTILS_CONTAINER=olm-utils-play-v4
+OLM_UTILS_IMAGE=icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8
+PATH=<HOME>/cpd-cli:<BIN>:/usr/bin:/bin
+PWD=<REPO>
+REGISTRY_MIRROR_CONFIG_DIR=<REPO>/configs/registry_mirror_config
+SERVICE_INSTANCE_FILE_DIR=<REPO>/scripts/../service_instances
+SHLVL=1
+VERSION=5.4.0
+_CP4D_PREP_DONE=1
+
+### s_env:concert
+CONCERT_CONFIG_DIR=<REPO>/configs/concert_config
+CONCERT_VERSION=2.2.0
+CONFIGS_ROOT=<REPO>/configs
+CONFIG_DIR=<REPO>/configs/cp4d_config
+CONFLUENT_CONFIG_DIR=<REPO>/configs/confluent_platform_config
+CPD_CLI_MANAGE_WORKSPACE=<HOME>/cpd-cli
+CPD_CLI_WORK_PATH=<HOME>/cpd-cli/work
+CPD_CLI_WORK_PATH_CONTAINER=/tmp/work
+CPD_CONFIG_PATH_CONTAINER=/tmp/work/cp4d_config
+DATASTAX_MC_CONFIG_DIR=<REPO>/configs/datastax_mc_config
+ENV_TARGET_FILE=<REPO>/configs/concert_config/concert_vars.sh
+HOME=<HOME>
+LOGNAME=golden-user
+OCP_URL=https://api.golden-concert.example.com:6443
+OC_LOGIN=if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-concert.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-concert.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CONCERT; fi
+OC_LOGIN_FORCE=echo FAKE-OC-LOGIN-CONCERT
+OLDPWD=<REPO>
+OLM_UTILS_CONTAINER=olm-utils-play-v4
+PATH=<HOME>/cpd-cli:<BIN>:/usr/bin:/bin
+PWD=<REPO>
+REGISTRY_MIRROR_CONFIG_DIR=<REPO>/configs/registry_mirror_config
+SERVICE_INSTANCE_FILE_DIR=<REPO>/scripts/../service_instances
+SHLVL=1
+_CP4D_PREP_DONE=1
+
+### s_env:all
+CONCERT_CONFIG_DIR=<REPO>/configs/concert_config
+CONCERT_VERSION=2.2.0
+CONFIGS_ROOT=<REPO>/configs
+CONFIG_DIR=<REPO>/configs/cp4d_config
+CONFLUENT_CONFIG_DIR=<REPO>/configs/confluent_platform_config
+CPDM_OC_LOGIN=if command -v oc >/dev/null 2>&1; then if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-concert.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-concert.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CONCERT; fi; fi; if { [ -z "${OLM_UTILS_IMAGE:-}" ] || [ "$(podman inspect -f '{{.ImageName}}' olm-utils-play-v4 2>/dev/null)" = "${OLM_UTILS_IMAGE}" ]; } && podman exec olm-utils-play-v4 oc whoami >/dev/null 2>&1 && [ "$(podman exec olm-utils-play-v4 oc whoami --show-server 2>/dev/null)" = "https://api.golden-concert.example.com:6443" ]; then echo "[INFO] cpd-cli (olm-utils-play-v4) already logged in to https://api.golden-concert.example.com:6443 - skipping login-to-ocp"; else echo FAKE-CPDM-LOGIN-CPD; fi
+CPDM_OC_LOGIN_FORCE=echo FAKE-CPDM-LOGIN-CPD
+CPD_CLI_MANAGE_WORKSPACE=<HOME>/cpd-cli
+CPD_CLI_WORK_PATH=<HOME>/cpd-cli/work
+CPD_CLI_WORK_PATH_CONTAINER=/tmp/work
+CPD_CONFIG_PATH_CONTAINER=/tmp/work/cp4d_config
+DATASTAX_MC_CONFIG_DIR=<REPO>/configs/datastax_mc_config
+HOME=<HOME>
+LOGNAME=golden-user
+OCP_URL=https://api.golden-concert.example.com:6443
+OC_LOGIN=if oc whoami >/dev/null 2>&1 && [ "$(oc whoami --show-server 2>/dev/null)" = "https://api.golden-concert.example.com:6443" ]; then echo "[INFO] oc already logged in to https://api.golden-concert.example.com:6443 as $(oc whoami) - skipping login"; else echo FAKE-OC-LOGIN-CONCERT; fi
+OC_LOGIN_FORCE=echo FAKE-OC-LOGIN-CONCERT
+OLDPWD=<REPO>
+OLM_UTILS_CONTAINER=olm-utils-play-v4
+OLM_UTILS_IMAGE=icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8
+PATH=<HOME>/cpd-cli:<BIN>:/usr/bin:/bin
+PWD=<REPO>
+REGISTRY_MIRROR_CONFIG_DIR=<REPO>/configs/registry_mirror_config
+SERVICE_INSTANCE_FILE_DIR=<REPO>/scripts/../service_instances
+SHLVL=1
+VERSION=5.4.0
+_CP4D_PREP_DONE=1

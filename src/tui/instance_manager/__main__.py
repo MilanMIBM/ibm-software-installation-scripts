@@ -98,6 +98,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    from .settings import config_dir
+    try:
+        config_dir()
+    except ValueError as e:  # multi-cluster mode on and no cluster selected
+        print(f"[ERROR] {e}", file=sys.stderr)
+        return 2
     from . import timings
     if args.timings:
         timings.enable()

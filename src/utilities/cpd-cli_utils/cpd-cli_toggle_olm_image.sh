@@ -46,7 +46,7 @@ UTILS_DIR="${SCRIPT_DIR}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 
-CONTAINER_NAME="olm-utils-play-v4"
+CONTAINER_NAME="${OLM_UTILS_CONTAINER:-olm-utils-play-v4}"
 STANDARD_REPO="icr.io/cpopen/cpd/olm-utils-v4"
 PREMIUM_REPO="icr.io/cpopen/cpd/olm-utils-premium-v4"
 
@@ -178,6 +178,13 @@ if [[ "${DO_RESTART}" == false ]]; then
 fi
 
 if podman ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    # Multi-cluster: this run holds the cluster's lease itself, so it asks the container
+    # what is running in it. Removing a busy one would kill a cpd-cli manage job.
+    if [[ -n "${MCM_CLUSTER:-}" ]] && _mcm_scan_container "${CONTAINER_NAME}"; then
+        echo "[ERROR] ${CONTAINER_NAME} is busy (${REPLY}), so it was left in place."
+        echo "[INFO] OLM_UTILS_VARIANT is already persisted; re-run once it is idle."
+        exit 1
+    fi
     echo "[INFO] Removing existing container: ${CONTAINER_NAME}"
     podman rm -f "${CONTAINER_NAME}"
 fi

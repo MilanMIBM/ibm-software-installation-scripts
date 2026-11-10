@@ -63,7 +63,7 @@ case "${DO_ICEBERG_WATSONX_SETUP}" in
 esac
 
 if [[ "${DO_ICEBERG_WATSONX_SETUP}" == true ]]; then
-    _iceberg_config="${ICEBERG_WATSONX_CONFIG_FILE:-${_CP4D_REPO_ROOT}/configs/confluent_platform_config/iceberg_watsonx_setup.sh}"
+    _iceberg_config="${ICEBERG_WATSONX_CONFIG_FILE:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/confluent_platform_config/iceberg_watsonx_setup.sh}"
     if [[ ! -f "${_iceberg_config}" ]]; then
         echo "[ERROR] Iceberg setup enabled but its config is missing: ${_iceberg_config}" >&2
         echo "[ERROR] Copy connector_configs/iceberg-watsonx.example.sh into the ignored configs directory first." >&2

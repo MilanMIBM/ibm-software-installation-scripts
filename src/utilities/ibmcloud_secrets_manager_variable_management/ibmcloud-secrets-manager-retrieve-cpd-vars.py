@@ -31,6 +31,11 @@ into Secrets Manager's version history (``current``, ``previous``, or a version 
 from --list); --iteration picks between the sibling secrets that the ``iterations``
 versioning mode creates.
 
+With multi-cluster management on, the default output folder and the default prefix follow
+the selected cluster (MCM_CLUSTER, then the current cluster), so the bundle is cpd-config-<cluster>.
+Only the secrets of that exact bundle are read, never those of a similarly named one. With the
+mode on and no cluster selected, a restore to the default folder is refused: pass --output-dir.
+
 Credentials come from --apikey or SECRETS_MANAGER_APIKEY / IBM_CLOUD_API_KEY /
 IBMCLOUD_API_KEY, and a repo-root .env is loaded automatically when present.
 """
@@ -45,8 +50,9 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "helpers"))
 
 import ibmcloud_secrets_manager_helpers as smh
+from multi_cluster_state import configs_root, writable_configs_root
 
-DEFAULT_CONFIG_DIR = os.path.join("configs", "cp4d_config")
+DEFAULT_CONFIG_SUBDIR = "cp4d_config"
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -61,7 +67,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     output = parser.add_argument_group("output")
     output.add_argument(
         "--output-dir",
-        help=f"Directory to write the files into (default: {DEFAULT_CONFIG_DIR}/ in the repo).",
+        help=f"Directory to write the files into (default: configs/{DEFAULT_CONFIG_SUBDIR}/ in the repo).",
     )
     output.add_argument(
         "--only",
@@ -183,8 +189,10 @@ def main(argv: list[str]) -> int:
         print(f"Loaded environment from {loaded}")
 
     prefix = smh.resolve_prefix(args.prefix)
+    # Nothing lands in the default folder for --list or --stdout, so only a restore needs a cluster.
+    default_root = configs_root if args.list_only or args.stdout else writable_configs_root
     output_dir = os.path.abspath(
-        os.path.expanduser(args.output_dir or os.path.join(repo_root, DEFAULT_CONFIG_DIR))
+        os.path.expanduser(args.output_dir or os.path.join(default_root(repo_root), DEFAULT_CONFIG_SUBDIR))
     )
 
     client = smh.build_client(
@@ -195,7 +203,11 @@ def main(argv: list[str]) -> int:
     )
     group_id, group_name = smh.resolve_secret_group(client, args.secret_group)
 
-    listed = smh.list_kv_secrets(client, group_id, None if args.all_in_group else prefix)
+    listed = (
+        smh.list_kv_secrets(client, group_id)
+        if args.all_in_group
+        else smh.list_bundle_secrets(client, group_id, prefix)
+    )
     if not listed:
         scope = "any kv secret" if args.all_in_group else f"kv secrets named '{prefix}-*'"
         raise SystemExit(f"ERROR: secret group '{group_name}' holds no {scope}.")

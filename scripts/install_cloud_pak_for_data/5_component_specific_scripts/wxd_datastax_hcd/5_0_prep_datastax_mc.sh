@@ -152,7 +152,7 @@ oc get cassandradatacenters.cassandra.datastax.com -n "${PROJECT_CPD_INST_OPERAN
 # (sourced by every later script through env_bootstrap.sh; no longer cpd_instance_details.sh).
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
-CERTS_ROOT="${REPO_ROOT}/configs/cp4d_config/certs"
+CERTS_ROOT="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/cp4d_config/certs"
 
 DATASTAX_URL="https://$(oc get route datastax-mc-ui -n ${PROJECT_CPD_INST_OPERATORS} -o jsonpath='{.spec.host}')"
 
