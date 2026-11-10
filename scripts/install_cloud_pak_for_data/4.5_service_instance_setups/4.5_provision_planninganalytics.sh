@@ -15,7 +15,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 
 # ---
 
-for var in OC_LOGIN PREP_PA; do
+for var in OC_LOGIN CPDM_OC_LOGIN PREP_PA; do
     if [[ -z "${(P)var:-}" ]]; then
         echo "Error: ${var} is not set. Set it in ./cpd_vars.sh before running this script."
         exit 1
@@ -36,6 +36,7 @@ COUCHDB_PV_SIZE=5 # recommended 20
 MONGODB_PV_SIZE=5 # recommended 20
 REDIS_PV_SIZE=5 # recommended 20
 PA_INSTANCE_SIZE="small" # small_mincpureq, small, medium, large
+
 
 # "persistence.class":"${STG_CLASS_BLOCK}" /or/ "${STG_CLASS_FILE}" and "tm1Service.storageClass":"${STG_CLASS_FILE}". 
 PREP_PLANNINGANALYTICS='cat << EOF > ${PLANNING_PAYLOAD_FILE}
@@ -68,6 +69,8 @@ PREP_PLANNINGANALYTICS='cat << EOF > ${PLANNING_PAYLOAD_FILE}
 EOF'
 
 eval "${PREP_PLANNINGANALYTICS}"
+
+eval "${CPDM_OC_LOGIN}"
 
 cpd-cli service-instance create \
     --profile=${CPD_PROFILE_NAME} \

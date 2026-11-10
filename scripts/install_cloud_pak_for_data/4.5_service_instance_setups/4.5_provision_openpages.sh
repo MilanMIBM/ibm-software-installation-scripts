@@ -15,7 +15,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 
 # ---
 
-for var in OC_LOGIN CPD_USERNAME PROJECT_CPD_INST_OPERANDS STG_CLASS_FILE; do
+for var in OC_LOGIN CPDM_OC_LOGIN CPD_USERNAME PROJECT_CPD_INST_OPERANDS STG_CLASS_FILE; do
     if [[ -z "${(P)var:-}" ]]; then
         echo "Error: ${var} is not set. Set it in ./cpd_vars.sh before running this script."
         exit 1
@@ -226,6 +226,11 @@ payload = {
 with open("${OPENPAGES_PAYLOAD_FILE}", "w") as f:
     json.dump(payload, f, indent=2)
 PYEOF
+
+# --- Log into the cluster and create the resource.
+
+eval "${OC_LOGIN}"
+eval "${CPDM_OC_LOGIN}"
 
 cpd-cli service-instance create \
     --profile=${CPD_PROFILE_NAME} \

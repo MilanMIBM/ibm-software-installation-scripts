@@ -47,6 +47,8 @@ cpd-cli manage case-download \
     --cluster_resources=true \
     --from_oci=${CP_OPEN_DOWNLOAD} \
     "${PATCH_FLAG[@]}"
+    
+eval "${OC_LOGIN}"
 
 oc apply -f "${CPD_CLI_WORK_PATH}/cluster_scoped_resources.yaml" \
     --server-side \
