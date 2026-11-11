@@ -70,11 +70,11 @@ spec:
       annotations:
         # cluster-admin would otherwise get anyuid (UID 1001, no fsGroup), which
         # cannot write the volume; restricted-v2 sets a writable fsGroup.
-        openshift.io/required-scc: restricted-v2
+        openshift.io/required-scc: restricted-v2@POD_ANNOTATIONS_EXTRA@
     spec:
-      serviceAccountName: install-runner
+      serviceAccountName: install-runner@POD_SPEC_EXTRA@
       terminationGracePeriodSeconds: 120
-      nodeSelector: @NODE_SELECTOR@
+      nodeSelector: @NODE_SELECTOR@@INIT_CONTAINERS@
       containers:
       - name: runner
         image: @IMAGE@
@@ -103,7 +103,7 @@ spec:
         - name: IR_TTY_SIZE
           value: "@TTY_SIZE@"
         - name: TMPDIR
-          value: /work/tmp
+          value: /work/tmp@RUNNER_ENV_EXTRA@
         securityContext:
           allowPrivilegeEscalation: false
           runAsNonRoot: true
@@ -119,8 +119,8 @@ spec:
             memory: "@MEMORY_LIMIT@"
         volumeMounts:
         - name: work
-          mountPath: /work
+          mountPath: /work@RUNNER_MOUNTS_EXTRA@@SIDECARS@
       volumes:
       - name: work
         persistentVolumeClaim:
-          claimName: install-runner-work
+          claimName: install-runner-work@VOLUMES_EXTRA@

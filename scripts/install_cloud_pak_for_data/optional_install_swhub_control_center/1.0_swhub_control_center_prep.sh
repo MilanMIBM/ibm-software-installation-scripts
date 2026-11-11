@@ -54,6 +54,22 @@ other="$(oc get ibmswhccs.swh.ibm.com -A --no-headers -o custom-columns=NS:.meta
 # --- Projects, with the pull secret as their default
 PULL_SECRET_NAME="${IMAGE_PULL_SECRET:-pull-secret}"
 PULL_SECRET_NAMESPACE="${PULL_SECRET_NAMESPACE:-openshift-config}"
+# The projects get a copy of this secret, and Control Center's images come from
+# cp.icr.io. On a cluster of its own, CP4D step 1.1 may never have added that login,
+# and the pods would only fail to pull after the install has started.
+if [[ "${CPD_IMAGE_SOURCE:-entitled}" == entitled ]]; then
+    if ! oc get secret "${PULL_SECRET_NAME}" -n "${PULL_SECRET_NAMESPACE}" -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null \
+        | base64 -d 2>/dev/null \
+        | jq -e '.auths // {} | keys | any(. == "cp.icr.io" or startswith("cp.icr.io/"))' >/dev/null 2>&1; then
+        h_error "${PULL_SECRET_NAMESPACE}/${PULL_SECRET_NAME} on ${CONTROL_OCP_URL:-the Control Center cluster} has no cp.icr.io login."
+        # CP4D step 1.1 works on the Software Hub cluster (cpd_vars.sh's login), so
+        # it only helps when that is this cluster.
+        if [[ "${CONTROL_CLUSTER_MODE:-same}" == different ]]; then
+            h_die "Add the entitlement key there (cp.icr.io, user cp) while logged in to ${CONTROL_OCP_URL:-that cluster}: run 1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh with a cpd_vars.sh for that cluster, or oc set data secret/${PULL_SECRET_NAME} -n ${PULL_SECRET_NAMESPACE} --from-file=.dockerconfigjson=<file with the cp.icr.io login>."
+        fi
+        h_die "Add the entitlement key first: 1_global_pull_secret_and_certmanager/1.1_set_up_global_pull_credential.sh"
+    fi
+fi
 for ns in "${CONTROL_PROJECT_OPERATORS}" "${CONTROL_PROJECT_OPERANDS}"; do
     oc get project "${ns}" >/dev/null 2>&1 || oc new-project "${ns}" --skip-config-write >/dev/null
     oc get secret "${PULL_SECRET_NAME}" -n "${PULL_SECRET_NAMESPACE}" -o json \

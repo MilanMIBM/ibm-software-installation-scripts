@@ -22,9 +22,29 @@ cmd="${1:-}"
 [[ -n "${cmd}" ]] || { echo "[ERROR] cpd-cli manage: no command given." >&2; exit 2; }
 shift
 
+# A login to a server this pod is not on means a missed cluster switch (a Control
+# Center step on another cluster): the session here would be the wrong one.
+server_guard() {
+    local server="" want here
+    while (( $# )); do
+        case "$1" in
+            --server=*) server="${1#--server=}" ;;
+            --server)   server="${2:-}"; shift ;;
+        esac
+        shift
+    done
+    [[ -n "${server}" ]] || return 0
+    want="${server%/}"
+    here="$(oc whoami --show-server 2>/dev/null)"
+    [[ "${want}" == "${here%/}" || "${want}" == "${IR_OCP_URL%/}" ]] && return 0
+    echo "[ERROR] cpd-cli manage login-to-ocp --server=${server}: this pod is logged in to ${here:-nothing} (${IR_OCP_URL:-no install cluster URL}). A cluster switch was missed." >&2
+    exit 3
+}
+
 case "${cmd}" in
     # The session comes from the pod's kubeconfig; there is no container to restart.
     login-to-ocp|restart-container)
+        [[ "${cmd}" == login-to-ocp ]] && server_guard "$@"
         echo "[INFO] cpd-cli manage ${cmd}: nothing to do in the in-cluster runner."
         exit 0 ;;
     # Implemented on the host by cpd-cli, and they belong to mirroring or cleanup.
@@ -32,6 +52,12 @@ case "${cmd}" in
         echo "[ERROR] cpd-cli manage ${cmd} runs on a workstation only, not in the in-cluster runner." >&2
         exit 3 ;;
 esac
+
+# Control Center steps (swhcc_activate sets the route): the command runs in the
+# premium sidecar, as it runs in the side container on a workstation.
+if [[ "${IR_EXEC_ROUTE:-}" == swhcc ]]; then
+    exec swhcc-exec "${cmd}" "$@"
+fi
 
 export EXTERNAL_WORK_ROOT="${EXTERNAL_WORK_ROOT:-/tmp/work}"
 export CMD_PREFIX="${CMD_PREFIX:-cpd-cli manage}"

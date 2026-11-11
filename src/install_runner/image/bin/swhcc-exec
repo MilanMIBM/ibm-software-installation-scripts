@@ -1,0 +1,195 @@
+#!/bin/bash
+# =============================================================================
+# swhcc-exec - run one command in the Control Center sidecar, from the runner
+# -----------------------------------------------------------------------------
+#   swhcc-exec [--cwd DIR] [--env K=V]... <command> [args...]
+#   swhcc-exec --cancel-orphans     before a chain starts: stop what an earlier
+#                                   attempt left running, drop what nobody waits for
+#   swhcc-exec --cancel-all         after a chain ends or is stopped
+#
+# The cpd-cli and podman shims call this when IR_EXEC_ROUTE=swhcc (set by
+# swhcc_activate), the way `cpd-cli manage` and `podman exec` reach the side
+# container on a workstation. The request goes into the queue on the shared volume
+# (swhcc-agent.sh runs it); this streams its output and exits with its code.
+#
+# The sidecar only ever talks to the Control Center cluster: KUBECONFIG is always
+# IR_SWHCC_KUBECONFIG, whatever the caller has. Nothing else of this env goes
+# across but the agent's allowlist and the explicit --env keys.
+#
+# Exit codes: the command's own; 137 when the sidecar is not running or lost the
+# command; 143 when this was stopped (the command is cancelled first).
+# Env: IR_SWHCC_ROOT (/work/swhcc). SWHCC_UNCLAIMED_LIMIT, SWHCC_STALE_UNCLAIMED,
+# SWHCC_STALE_CLAIMED, SWHCC_CANCEL_WAIT, SWHCC_POLL and SWHCC_CWD (the default
+# folder, /opt/ansible as for `cpd-cli manage`) exist for tests.
+# =============================================================================
+shopt -s nullglob
+umask 077
+
+root="${IR_SWHCC_ROOT:-/work/swhcc}"
+q="${root}/q"
+hb="${root}/agent.heartbeat"
+poll="${SWHCC_POLL:-1}"
+unclaimed_limit="${SWHCC_UNCLAIMED_LIMIT:-60}"
+stale_unclaimed="${SWHCC_STALE_UNCLAIMED:-30}"
+stale_claimed="${SWHCC_STALE_CLAIMED:-60}"
+cancel_wait="${SWHCC_CANCEL_WAIT:-40}"
+# A live agent beats every second; this long without one means it is gone, so a
+# cancel stops waiting for it.
+dead_after=10
+
+say()  { echo "[swhcc-exec] $*"; }
+err()  { echo "[ERROR] $*" >&2; }
+
+now() { date +%s; }
+
+heartbeat_age() {   # -> seconds since the agent's last beat; huge when it never beat
+    local beat
+    beat="$(cat "${hb}" 2>/dev/null)"
+    [[ "${beat}" =~ ^[0-9]+$ ]] || { echo 999999; return; }
+    echo $(( $(now) - beat ))
+}
+
+# Cancels every request in the list that has no rc yet. One nobody has taken is
+# withdrawn by claiming it here (atomic, so the agent can't take it meanwhile).
+# Waits up to SWHCC_CANCEL_WAIT for the rest, unless the agent is gone.
+cancel_requests() {   # <request folder>...
+    local d waited=0 left
+    local -a pending=()
+    for d in "$@"; do
+        [[ -e "${d}/rc" ]] && continue
+        if mkdir "${d}/claimed" 2>/dev/null; then
+            rm -rf "${d}"
+            continue
+        fi
+        touch "${d}/cancel"
+        pending+=("${d}")
+    done
+    (( ${#pending[@]} )) || return 0
+    say "Cancelling ${#pending[@]} Control Center command(s) in the sidecar..."
+    while :; do
+        left=0
+        for d in "${pending[@]}"; do [[ -e "${d}/rc" ]] || left=$(( left + 1 )); done
+        (( left == 0 )) && break
+        if (( waited >= cancel_wait )) || (( $(heartbeat_age) > dead_after )); then
+            say "${left} still running after ${waited}s; leaving them to the sidecar."
+            return 1
+        fi
+        sleep 1
+        waited=$(( waited + 1 ))
+    done
+    say "Cancelled after ${waited}s."
+}
+
+admin() {   # <--cancel-orphans|--cancel-all>
+    local d
+    local -a open=() finished=()
+    [[ -d "${q}" ]] || return 0
+    for d in "${q}"/*/; do
+        d="${d%/}"
+        if [[ -e "${d}/rc" ]]; then finished+=("${d}"); else open+=("${d}"); fi
+    done
+    (( ${#open[@]} )) && cancel_requests "${open[@]}"
+    # Finished with no client to read them: their output is in the agent's log.
+    for d in "${finished[@]}" "${open[@]}"; do
+        [[ -e "${d}/rc" ]] && rm -rf "${d}"
+    done
+    # Half-written requests of a client that died while writing one.
+    rm -rf "${q}/.tmp/"* 2>/dev/null
+    return 0
+}
+
+case "${1:-}" in
+    --cancel-orphans|--cancel-all) admin "$1"; exit 0 ;;
+esac
+
+cwd="${SWHCC_CWD:-/opt/ansible}"
+declare -a extra=()
+while (( $# )); do
+    case "$1" in
+        --cwd)   cwd="$2"; shift 2 ;;
+        # KUBECONFIG is always the Control Center file: a caller's own (a routed
+        # `podman exec -e KUBECONFIG=...`) could point the sidecar at another cluster.
+        --env)   case "${2%%=*}" in
+                     KUBECONFIG|K8S_AUTH_KUBECONFIG) ;;
+                     *) extra+=("$2") ;;
+                 esac
+                 shift 2 ;;
+        --)      shift; break ;;
+        *)       break ;;
+    esac
+done
+(( $# )) || { err "swhcc-exec: no command given."; exit 2; }
+[[ -n "${IR_SWHCC_KUBECONFIG:-}" ]] \
+    || { err "IR_SWHCC_KUBECONFIG is not set: swhcc_activate sets it before anything reaches the sidecar."; exit 2; }
+[[ -d "${q}/.tmp" ]] || { err "Control Center sidecar not running (no queue at ${q}). Launch the run again with Control Center on."; exit 137; }
+
+ns="$(date +%s%N 2>/dev/null)"
+[[ "${ns}" =~ ^[0-9]+$ ]] || ns="$(date +%s)000000000"
+id="${IR_RUN_ID:-run}-${ns}-$$"
+tmp="${q}/.tmp/${id}"
+req="${q}/${id}"
+
+mkdir -p "${tmp}" || exit 1
+printf '%s\0' "$@" > "${tmp}/argv"
+{
+    printf '%s\0' "KUBECONFIG=${IR_SWHCC_KUBECONFIG}" "K8S_AUTH_KUBECONFIG=${IR_SWHCC_KUBECONFIG}" \
+        "EXTERNAL_WORK_ROOT=/tmp/work" "CMD_PREFIX=cpd-cli manage"
+    [[ -n "${OLM_UTILS_IMAGE:-}" ]] && printf '%s\0' "OLM_UTILS_IMAGE=${OLM_UTILS_IMAGE}"
+    for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+        [[ -n "${!name:-}" ]] && printf '%s\0' "${name}=${!name}"
+    done
+    for kv in "${extra[@]}"; do printf '%s\0' "${kv}"; done
+} > "${tmp}/env"
+for kv in "${extra[@]}"; do printf '%s\n' "${kv%%=*}"; done > "${tmp}/env.extra"
+printf '%s\n' "${cwd}" > "${tmp}/cwd"
+mv "${tmp}" "${req}" || { err "Could not queue the request."; exit 1; }
+
+offset=0
+drain() {   # prints what the command wrote since the last call
+    local size
+    [[ -f "${req}/out" ]] || return 0
+    size="$(wc -c < "${req}/out" | tr -d ' ')"
+    (( size > offset )) || return 0
+    tail -c "+$(( offset + 1 ))" "${req}/out" | head -c "$(( size - offset ))"
+    offset="${size}"
+}
+
+finish() {   # <rc>
+    drain
+    if [[ -n "${IR_RUN_DIR:-}" ]]; then
+        mkdir -p "${IR_RUN_DIR}/swhcc-exec" && cp "${req}/out" "${IR_RUN_DIR}/swhcc-exec/${id}.log" 2>/dev/null
+    fi
+    rm -rf "${req}"
+    exit "$1"
+}
+
+stopped=""
+trap 'stopped=1' TERM INT HUP
+
+start="$(now)"
+while :; do
+    drain
+    if [[ -e "${req}/rc" ]]; then
+        finish "$(cat "${req}/rc")"
+    fi
+    if [[ -n "${stopped}" ]]; then
+        cancel_requests "${req}"
+        [[ -d "${req}" ]] && drain
+        [[ -d "${req}" && -e "${req}/rc" ]] && rm -rf "${req}"
+        exit 143
+    fi
+    age="$(heartbeat_age)"
+    if [[ ! -e "${req}/claimed" ]]; then
+        if (( $(now) - start >= unclaimed_limit && age > stale_unclaimed )); then
+            # Never taken, so withdrawing it is safe.
+            if mkdir "${req}/claimed" 2>/dev/null; then rm -rf "${req}"; fi
+            err "Control Center sidecar not running: nothing took the command in ${unclaimed_limit}s."
+            exit 137
+        fi
+    elif (( age > stale_claimed )); then
+        err "The Control Center sidecar lost the command: no sign of life for ${age}s."
+        touch "${req}/cancel" 2>/dev/null
+        exit 137
+    fi
+    sleep "${poll}" & wait $! 2>/dev/null
+done

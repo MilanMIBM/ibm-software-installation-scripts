@@ -1,0 +1,58 @@
+#!/bin/bash
+# =============================================================================
+# podman shim for the in-cluster install runner
+# -----------------------------------------------------------------------------
+# The repo reaches the olm-utils container with a few podman verbs. The pod is
+# that container, so they map onto the local filesystem. Anything else fails
+# loudly: a silent success here would hide a step that cannot work in a pod.
+# =============================================================================
+fail() { echo "[ERROR] podman $* is not supported in the in-cluster runner." >&2; exit 125; }
+verb="${1:-}"
+[[ -n "${verb}" ]] && shift
+
+case "${verb}" in
+    exec)
+        declare -a envs=()
+        workdir=""
+        while [[ "${1:-}" == -* ]]; do
+            case "$1" in
+                -e|--env)         envs+=("$2"); shift 2 ;;
+                --env=*)          envs+=("${1#*=}"); shift ;;
+                -w|--workdir)     workdir="$2"; shift 2 ;;
+                --workdir=*)      workdir="${1#*=}"; shift ;;
+                -i|-t|-it|-ti|--interactive|--tty) shift ;;
+                *) fail exec "$1" ;;
+            esac
+        done
+        shift   # the container name
+        (( $# )) || fail exec "(no command)"
+        [[ -n "${workdir}" ]] && { cd "${workdir}" || exit 126; }
+        (( ${#envs[@]} )) && export "${envs[@]}"
+        exec "$@"
+        ;;
+    inspect)
+        case "$*" in
+            *ImageName*|*Config.Image*) echo "${OLM_UTILS_IMAGE:-}" ;;
+            *State.Status*|*.State*)    echo running ;;
+            *) fail inspect "$@" ;;
+        esac
+        ;;
+    image)
+        [[ "${1:-}" == exists ]] && exit 0
+        fail image "$@"
+        ;;
+    pull)   exit 0 ;;   # the pod runs from the image already
+    create)
+        # A throwaway container reads files out of the image; this filesystem is it.
+        echo "install-runner-self"
+        ;;
+    cp)
+        # podman cp <container>:<path> <dest>
+        [[ "${1:-}" == *:* && $# -eq 2 ]] || fail cp "$@"
+        cp -R "${1#*:}" "$2"
+        ;;
+    rm)     exit 0 ;;
+    ps)     echo "${OLM_UTILS_CONTAINER:-olm-utils-play-v4}" ;;
+    info|version|--version) echo "install-runner podman shim" ;;
+    *)      fail "${verb}" "$@" ;;
+esac

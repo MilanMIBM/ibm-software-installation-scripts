@@ -184,7 +184,7 @@ spec:
   template:
     metadata:
       labels: {app.kubernetes.io/name: ${NAME}}
-      annotations: {swhcc/server-sha: "$(shasum -a 256 "${SERVER}" | cut -c1-16)"}
+      annotations: {swhcc/server-sha: "$(h_sha256 "${SERVER}" | cut -c1-16)"}
     spec:
       serviceAccountName: ${NAME}
       containers:
@@ -245,7 +245,22 @@ if swhcc_find_instance "${URL}"; then
 else
     register() { swhcc_register_instance "${NAME}" "${URL}" "${INDICATOR_USER}" "${API_KEY}" "${ACCOUNT_ID}" OTHER_WL; }
     if swhcc_route_is_private "${HOST}"; then
-        swhcc_with_route_mapping "$(dig +short "${HOST}" | tail -1)" "${HOST}" -- register \
+        # The public IP as this machine sees it. A runner pod sees the private one
+        # (the very thing being worked around), so there only CONTROL_ROUTE_PUBLIC_IP works.
+        PUBLIC_IP="${CONTROL_ROUTE_PUBLIC_IP:-}"
+        if [[ -z "${PUBLIC_IP}" && -n "${IR_IN_RUNNER:-}" ]]; then
+            h_warn "${HOST} resolves to a private address inside the cluster, and a pod can't look up its public one."
+            h_warn "The indicator is deployed but not registered. After collect, run locally:"
+            h_warn "  scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/x_debug_toggle_other_workloads_indicator.sh on"
+            h_warn "or set CONTROL_ROUTE_PUBLIC_IP in ${ENV_TARGET_FILE:t} and resume with --retry-warned."
+            exit 1
+        fi
+        if [[ -z "${PUBLIC_IP}" ]]; then
+            if command -v dig >/dev/null 2>&1; then PUBLIC_IP="$(dig +short "${HOST}" | tail -1)"
+            else PUBLIC_IP="$(swhcc_resolve_ipv4 "${HOST}")"
+            fi
+        fi
+        swhcc_with_route_mapping "${PUBLIC_IP}" "${HOST}" -- register \
             || h_die "Registering failed. See: oc logs -n ${PROJECT} deployment/${NAME}"
     else
         register || h_die "Registering failed. See: oc logs -n ${PROJECT} deployment/${NAME}"

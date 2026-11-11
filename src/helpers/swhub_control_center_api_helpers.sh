@@ -49,8 +49,15 @@ swhcc_api_secret() {   # <method> <path> <json>
 # Facts about the cluster oc is logged in to: SWHCC_API_ENDPOINT, SWHCC_OAUTH_ENDPOINT,
 # SWHCC_CLUSTER_NAME (CONTROL_CLUSTER_DISPLAY_NAME, else the name in the API address).
 swhcc_cluster_facts() {
-    SWHCC_API_ENDPOINT="$(oc whoami --show-server)"
-    SWHCC_API_ENDPOINT="${SWHCC_API_ENDPOINT%/}"
+    # In a runner pod the session may point at https://kubernetes.default.svc (the
+    # supervisor's fallback), which would register the cluster under a name a later
+    # local run never finds, and so make a second record. OCP_URL is the name.
+    if [[ -n "${IR_IN_RUNNER:-}" && -n "${OCP_URL:-}" ]]; then
+        SWHCC_API_ENDPOINT="${OCP_URL%/}"
+    else
+        SWHCC_API_ENDPOINT="$(oc whoami --show-server)"
+        SWHCC_API_ENDPOINT="${SWHCC_API_ENDPOINT%/}"
+    fi
     SWHCC_OAUTH_ENDPOINT="https://$(oc get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}')"
     local host="${${SWHCC_API_ENDPOINT#https://}%%:*}"
     host="${host#api.}"
@@ -161,15 +168,45 @@ print(query.get("code", [""])[0], query.get("state", [""])[0])')"
 
 # Verify the cluster without a person when the config allows it. Otherwise print the
 # page to approve by hand and wait for it. Fails if that does not happen in time.
+# In a runner pod nobody may be watching the log, so the same two steps also go to
+# the run's notice file, which `x_install_runner.sh status` shows. It goes once the
+# cluster is verified.
 swhcc_wait_cluster_verified() {   # <timeout seconds>
-    swhcc_cluster_verified && return 0
-    swhcc_cluster_auto_verify "${SWHCC_CLUSTER_ID}" && swhcc_cluster_verified && return 0
+    local notice="${IR_RUN_DIR:+${IR_RUN_DIR}/notice}" rc=0
+    swhcc_cluster_verified && { swhcc_clear_notice; return 0; }
+    swhcc_cluster_auto_verify "${SWHCC_CLUSTER_ID}" && swhcc_cluster_verified && { swhcc_clear_notice; return 0; }
     swhcc_cluster_oauth_url "${SWHCC_CLUSTER_ID}"
     h_info "Could not verify the cluster automatically, so this needs a browser:"
     h_info "  1. Sign in to ${CONTROL_CENTER_URL}."
     h_info "  2. In that browser, open: ${REPLY}"
+    if [[ -n "${IR_IN_RUNNER:-}" && -n "${notice}" ]]; then
+        print -r -- "Control Center cluster not verified: sign in to ${CONTROL_CENTER_URL}, then open ${REPLY}" > "${notice}"
+    fi
     (( $1 > 0 )) || return 1
-    h_wait_for "$1" "the cluster to be verified" swhcc_cluster_verified
+    h_wait_for "$1" "the cluster to be verified" swhcc_cluster_verified || rc=$?
+    (( rc == 0 )) && swhcc_clear_notice
+    return "${rc}"
+}
+
+swhcc_clear_notice() {
+    [[ -n "${IR_IN_RUNNER:-}" && -n "${IR_RUN_DIR:-}" ]] && rm -f "${IR_RUN_DIR}/notice"
+    return 0
+}
+
+# The first IPv4 address of a host: getent, then Python, then dig. Neither dig nor
+# nslookup is in olm-utils, and macOS has no getent.
+swhcc_resolve_ipv4() {   # <host> -> stdout, empty when it does not resolve
+    local address=""
+    if command -v getent >/dev/null 2>&1; then
+        address="$(getent ahostsv4 "$1" 2>/dev/null | awk 'NR == 1 {print $1}')"
+    fi
+    if [[ -z "${address}" ]] && command -v python3 >/dev/null 2>&1; then
+        address="$(python3 -I -c 'import socket, sys; print(socket.gethostbyname(sys.argv[1]))' "$1" 2>/dev/null || true)"
+    fi
+    if [[ -z "${address}" ]] && command -v dig >/dev/null 2>&1; then
+        address="$(dig +short "$1" 2>/dev/null | grep -E '^[0-9]+(\.[0-9]+){3}$' | tail -1 || true)"
+    fi
+    print -r -- "${address}"
 }
 
 # Worker allocatable capacity: SWHCC_CPU (whole cores), SWHCC_MEMORY_GI (whole Gi).
@@ -424,19 +461,26 @@ swhcc_sync_account_admins() {   # <account id>
 
 # True when zen-core-api resolves the host to a private address, which Control Center
 # refuses for instance URLs.
+# zen-core-api runs on the Control Center cluster: in different mode these switch
+# there and back (swhcc_use_control / swhcc_use_swh), since the scripts that call
+# them otherwise work on the Software Hub cluster.
 swhcc_route_is_private() {   # <host>
     local pod address
+    swhcc_use_control
     pod="$(oc get pods -n "${CONTROL_PROJECT_OPERANDS}" -o name --field-selector=status.phase=Running | grep '/zen-core-api-' | head -1 || true)"
     [[ -n "${pod}" ]] || h_die "No running zen-core-api pod in ${CONTROL_PROJECT_OPERANDS}."
     address="$(oc exec -n "${CONTROL_PROJECT_OPERANDS}" -c zen-core-api-container "${pod}" -- getent ahostsv4 "$1" 2>/dev/null | awk 'NR == 1 {print $1}')"
+    swhcc_use_swh
     [[ "${address}" == (10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|127.*) ]]
 }
 
 swhcc_remove_route_mapping() {
     h_info "Removing the route mapping from zen-core-api"
+    swhcc_use_control
     oc patch deployment zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --type=merge \
         -p '{"spec":{"template":{"spec":{"hostAliases":null}}}}' >/dev/null
     oc rollout status deployment/zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --timeout=300s
+    swhcc_use_swh
 }
 
 # Run a command while zen-core-api resolves the hosts to a public IP, then always remove
@@ -451,10 +495,11 @@ swhcc_with_route_mapping() {   # <public ip> <host>... -- <command>...
     [[ "${ip}" != (10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|127.*|) ]] \
         || h_die "'${ip}' is not a public address, so mapping to it would not help."
     h_info "Mapping ${#hosts} route(s) to ${ip} on zen-core-api"
+    swhcc_use_control
     oc patch deployment zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --type=merge \
         -p "$(jq -cn --arg ip "${ip}" '{spec: {template: {spec: {hostAliases: [{ip: $ip, hostnames: $ARGS.positional}]}}}}' --args "${hosts[@]}")" >/dev/null
     trap 'swhcc_remove_route_mapping; exit 130' INT TERM
-    { oc rollout status deployment/zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --timeout=300s && ( "$@" ); } || rc=$?
+    { oc rollout status deployment/zen-core-api -n "${CONTROL_PROJECT_OPERANDS}" --timeout=300s && { swhcc_use_swh; ( "$@" ); }; } || rc=$?
     trap - INT TERM
     swhcc_remove_route_mapping
     return "${rc}"

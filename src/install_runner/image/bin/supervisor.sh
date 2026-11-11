@@ -12,9 +12,15 @@
 # retried automatically. A chain that exits non-zero is a real failure and waits
 # for a person (`x_install_runner.sh resume`).
 #
+# The exit code of an interrupted attempt means nothing: when the pod goes down,
+# script's footer in terminal.log can still say COMMAND_EXIT_CODE="0". Only the
+# step journal decides what runs again, and an attempt cut short is recorded as
+# interrupted, never with an rc.
+#
 # Env (from the StatefulSet): IR_SLOT, IR_NAMESPACE, IR_OCP_URL, IR_SOURCE_CLUSTER, IR_AUTO_RESUME,
-# IR_MAX_RESUMES, IR_KEEP_ADMIN, IR_ADMIN_BINDING, IR_TTY_SIZE. IR_WORK and
-# IR_BIN exist so tests can run this outside the image.
+# IR_MAX_RESUMES, IR_KEEP_ADMIN, IR_ADMIN_BINDING, IR_TTY_SIZE. IR_WORK, IR_BIN and
+# IR_SA_DIR exist so tests can run this outside the image; with
+# IR_SUPERVISOR_FUNCTIONS_ONLY set, sourcing this defines the functions only.
 # =============================================================================
 setopt no_nomatch
 
@@ -31,7 +37,7 @@ IR_STOP_GRACE="${IR_STOP_GRACE:-60}"
 export IR_WORK IR_TTY_SIZE IR_MAX_RESUMES="${IR_MAX_RESUMES:-3}"
 export TERM="${TERM:-xterm-256color}"
 
-typeset -g SIG_TERM="" LAST_STATUS="" LAST_PUBLISH=0
+typeset -g SIG_TERM="" LAST_STATUS="" LAST_PUBLISH=0 SUP_KUBECONFIG=""
 
 say() { print -r -- "[supervisor] $*"; }
 
@@ -58,8 +64,11 @@ warned_steps() {
 # the pod. The server stays OCP_URL so `oc whoami --show-server` reads as it does
 # on a workstation; the in-cluster service is the fallback when the API's public
 # name isn't reachable from pods.
+# The supervisor's own file (X17): a chain gets a copy (run-attempt.sh), so an
+# `oc login` in a chain step (Control Center on another cluster) never moves the
+# status record or the cluster-admin removal off this cluster.
 write_kubeconfig() {
-    local sa=/var/run/secrets/kubernetes.io/serviceaccount
+    local sa="${IR_SA_DIR:-/var/run/secrets/kubernetes.io/serviceaccount}"
     [[ -r "${sa}/token" ]] || { say "No service account token here; leaving KUBECONFIG alone."; return 0; }
     local server="${IR_OCP_URL%/}" tls="insecure-skip-tls-verify: true"
     if [[ -z "${server}" ]] || ! curl -sk --max-time 10 -o /dev/null "${server}/version"; then
@@ -67,9 +76,8 @@ write_kubeconfig() {
         tls="certificate-authority: ${sa}/ca.crt"
         say "API not reachable at ${IR_OCP_URL:-(unset)}; using ${server}."
     fi
-    export KUBECONFIG="${KUBECONFIG:-/opt/ansible/.kubeconfig}"
-    export K8S_AUTH_KUBECONFIG="${KUBECONFIG}"
-    cat > "${KUBECONFIG}" <<KUBE
+    SUP_KUBECONFIG="${IR_WORK}/runs/.supervisor.kubeconfig"
+    (umask 077; cat > "${SUP_KUBECONFIG}.new") <<KUBE
 apiVersion: v1
 kind: Config
 clusters:
@@ -89,14 +97,22 @@ contexts:
     namespace: ${IR_NAMESPACE:-default}
 current-context: install-runner
 KUBE
-    chmod 600 "${KUBECONFIG}"
+    chmod 600 "${SUP_KUBECONFIG}.new" && mv -f "${SUP_KUBECONFIG}.new" "${SUP_KUBECONFIG}"
+}
+
+# Every supervisor call to the cluster goes through its own kubeconfig. The flag
+# goes last, so the subcommand still comes first in what oc is given.
+soc() {
+    if [[ -n "${SUP_KUBECONFIG}" ]]; then oc "$@" --kubeconfig "${SUP_KUBECONFIG}"
+    else oc "$@"
+    fi
 }
 
 # Status for `x_install_runner.sh status`, readable even when this pod is gone.
 # Sent on change and on a heartbeat, so a stale time means a dead supervisor.
 publish_status() {
     local run="${1:-}" state="idle" step="-" attempts=0 chain="-" id="-" warned="-" collected=no
-    local layout="-" env_target="-" path_map="-"
+    local layout="-" env_target="-" path_map="-" notice="-"
     if [[ -n "${run}" ]]; then
         state="$(state_get "${run}")"
         step="$(current_step "${run}")"
@@ -109,30 +125,40 @@ publish_status() {
         layout="$(sed -n 's/^IR_LAYOUT=//p' "${run}/run.env" 2>/dev/null | tr -d "'\"")"
         env_target="$(sed -n 's/^IR_ENV_TARGET=//p' "${run}/run.env" 2>/dev/null | tr -d "'\"")"
         path_map="$(cat "${run}/path_map" 2>/dev/null)"
+        # What a person must do for the run to go on (the Control Center browser step).
+        [[ -s "${run}/notice" ]] && notice="$(head -c 2000 "${run}/notice" | tr '\n\t' '  ')"
     fi
-    local now="${EPOCHSECONDS:-$(date +%s)}" sig="${state}|${step}|${attempts}|${id}|${warned}|${collected}"
+    local now="${EPOCHSECONDS:-$(date +%s)}" sig="${state}|${step}|${attempts}|${id}|${warned}|${collected}|${notice}"
     [[ "${sig}" == "${LAST_STATUS}" ]] && (( now - LAST_PUBLISH < IR_HEARTBEAT )) && return 0
     LAST_STATUS="${sig}" LAST_PUBLISH="${now}"
     [[ -n "${IR_NAMESPACE:-}" ]] || return 0
-    oc create configmap ir-status -n "${IR_NAMESPACE}" \
+    soc create configmap ir-status -n "${IR_NAMESPACE}" \
         --from-literal=slot="${IR_SLOT:-}" --from-literal=state="${state}" --from-literal=step="${step}" \
         --from-literal=attempts="${attempts}" --from-literal=run="${id}" --from-literal=chain="${chain:--}" \
         --from-literal=warned="${warned:--}" --from-literal=collected="${collected}" \
         --from-literal=cluster="${IR_SOURCE_CLUSTER:--}" --from-literal=ocp_url="${IR_OCP_URL:--}" \
         --from-literal=layout="${layout:--}" --from-literal=env_target="${env_target:--}" \
-        --from-literal=path_map="${path_map:--}" \
+        --from-literal=path_map="${path_map:--}" --from-literal=notice="${notice:--}" \
         --from-literal=heartbeat="${now}" \
         --dry-run=client -o yaml 2>/dev/null \
-        | oc label --local -f - app.kubernetes.io/managed-by=install-runner --dry-run=client -o yaml 2>/dev/null \
-        | oc apply -f - >/dev/null 2>&1 || say "Could not publish status (will retry)."
+        | soc label --local -f - app.kubernetes.io/managed-by=install-runner --dry-run=client -o yaml 2>/dev/null \
+        | soc apply -f - >/dev/null 2>&1 || say "Could not publish status (will retry)."
 }
 
 # cluster-admin only lasts as long as a run needs it. `resume` grants it again.
 revoke_admin() {
     [[ "${IR_KEEP_ADMIN:-false}" == true || -z "${IR_ADMIN_BINDING:-}" ]] && return 0
-    oc delete clusterrolebinding "${IR_ADMIN_BINDING}" --ignore-not-found >/dev/null 2>&1 \
+    soc delete clusterrolebinding "${IR_ADMIN_BINDING}" --ignore-not-found >/dev/null 2>&1 \
         && say "Removed cluster-admin (${IR_ADMIN_BINDING})." \
         || say "Could not remove ${IR_ADMIN_BINDING}; teardown will."
+}
+
+# Control Center commands left in the sidecar's queue (swhcc-exec). A chain that
+# was stopped or killed can leave one running there; it must not run on into the
+# next attempt, nor overlap a second copy of itself.
+cancel_sidecar_requests() {
+    [[ -d "${IR_WORK}/swhcc/q" ]] || return 0
+    IR_SWHCC_ROOT="${IR_WORK}/swhcc" "${IR_BIN}/swhcc-exec" --cancel-all 2>&1 | sed 's/^/[supervisor] /' || true
 }
 
 # --- one attempt --------------------------------------------------------------
@@ -145,10 +171,26 @@ stop_chain() {
     kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null
 }
 
+# One line per attempt in attempts.log: number, how it ended, the chain's exit
+# code ("-" when it was cut short) and when.
+record_attempt() {   # <run> <attempt> <outcome> <rc or ->
+    print -r -- "$2"$'\t'"$3"$'\t'"$4"$'\t'"$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$1/attempts.log"
+}
+
+# A [runner] line at the end of an attempt. The plain.log filter is gone by then
+# (it had to copy script's footer first), so the stripped copy is written here
+# too: `attach --plain` must show why an exit code above means nothing.
+end_note() {   # <run> <text>
+    print -r -- $'\r\n[runner] '"$2"$'\r' >> "$1/terminal.log"
+    print -r -- $'\n[runner] '"$2" >> "$1/plain.log"
+}
+
 run_attempt() {
     local run="$1" attempt pid rc=0 stopping=false filter
     attempt=$(( $(attempts_get "${run}") + 1 ))
     print -r -- "${attempt}" > "${run}/attempts"
+    # A result from an earlier attempt must not stand for this one.
+    rm -f "${run}/rc"
     state_set "${run}" running
     publish_status "${run}"
     say "Run ${run:t}: attempt ${attempt}"
@@ -186,9 +228,14 @@ run_attempt() {
     pkill -f "tail -c 0 -F ${run}/terminal.log" 2>/dev/null
 
     if [[ -n "${SIG_TERM}" ]]; then
+        # Whatever script reported (its footer can say COMMAND_EXIT_CODE="0"), the
+        # chain was cut off: interrupted, with no rc, and the journal re-runs the step.
         state_set "${run}" interrupted
+        record_attempt "${run}" "${attempt}" interrupted -
+        end_note "${run}" "Attempt ${attempt} interrupted: the pod is going down. Any exit code above is not its result; the step journal decides what runs again."
         publish_status "${run}"
         say "Pod is going down; run ${run:t} marked interrupted."
+        cancel_sidecar_requests
         exit 143
     fi
 
@@ -198,15 +245,27 @@ run_attempt() {
     elif [[ -n "$(warned_steps "${run}")" ]]; then state=completed-with-warnings
     else state=completed
     fi
-    print -r -- "${rc}" > "${run}/rc"
-    state_set "${run}" "${state}"
-    print -r -- $'\r\n[runner] Run '"${run:t}"": ${state} (exit ${rc})"$'\r' >> "${run}/terminal.log"
-    say "Run ${run:t}: ${state} (exit ${rc})"
+    # A stopped chain was killed here, so its exit code is no result either.
+    if ${stopping}; then
+        state_set "${run}" "${state}"
+        record_attempt "${run}" "${attempt}" "${state}" -
+        end_note "${run}" "Run ${run:t}: ${state}"
+        say "Run ${run:t}: ${state}"
+    else
+        print -r -- "${rc}" > "${run}/rc"
+        state_set "${run}" "${state}"
+        record_attempt "${run}" "${attempt}" "${state}" "${rc}"
+        end_note "${run}" "Run ${run:t}: ${state} (exit ${rc})"
+        say "Run ${run:t}: ${state} (exit ${rc})"
+    fi
     publish_status "${run}"
+    cancel_sidecar_requests
     revoke_admin
 }
 
 # --- main loop ----------------------------------------------------------------
+[[ -n "${IR_SUPERVISOR_FUNCTIONS_ONLY:-}" ]] && return 0
+
 trap 'SIG_TERM=1' TERM INT
 
 mkdir -p "${IR_WORK}/runs" "${IR_WORK}/snapshots" "${IR_WORK}/cpd-work" \
@@ -218,6 +277,7 @@ say "Slot ${IR_SLOT:-?} ready."
 _r="$(current_run)"
 if [[ -n "${_r}" && "$(state_get "${_r}")" == running ]]; then
     state_set "${_r}" interrupted
+    record_attempt "${_r}" "$(attempts_get "${_r}")" interrupted -
     say "Run ${_r:t} was cut off by a pod restart."
 fi
 unset _r

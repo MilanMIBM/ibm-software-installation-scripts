@@ -32,6 +32,9 @@ RUN mkdir -p /opt/ansible/cpd-cli \
        fi
 
 COPY bin/ /opt/install-runner/bin/
+# The Control Center sidecar's agent: an init container copies it onto the volume,
+# since the sidecar runs IBM's premium image as it is.
+COPY sidecar/ /opt/install-runner/sidecar/
 COPY shims/podman /opt/install-runner/bin/podman
 COPY shims/cpd-cli /opt/ansible/cpd-cli/cpd-cli
 

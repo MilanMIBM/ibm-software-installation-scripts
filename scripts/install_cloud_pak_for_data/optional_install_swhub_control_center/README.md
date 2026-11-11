@@ -28,10 +28,10 @@ The full install takes `--from <step>`, `--skip <step>[,...]`, `--only <step>` a
 | `instance-details` | `1.3` | Writes the URL and admin login to `swhub_control_center_instance_details.sh` |
 | `oauth` | `1.4` | Creates the OAuth client and prints the values for registering the cluster |
 | `cluster-admins` | utility | Gives OpenShift cluster-admins the Control Center admin role; a failure only warns |
-| `other-workloads-indicator` | `x_debug_toggle_other_workloads_indicator.sh` | Stand-in instance that reports non-Software Hub reservations; follows `CONTROL_OTHER_WORKLOADS_INDICATOR`; a failure only warns |
 | `autodetect-instances` | utility | Registers the cluster and adds every instance on it; a failure only warns |
+| `other-workloads-indicator` | `x_debug_toggle_other_workloads_indicator.sh` | Stand-in instance that reports non-Software Hub reservations; follows `CONTROL_OTHER_WORKLOADS_INDICATOR`; needs the account autodetect makes, so it runs after it; a failure only warns |
 
-The last two steps run while `CONTROL_ADD_CLUSTER_ADMINS` and `AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES` are true, which is the default. They and the other Day 1 scripts are in [softwarehub_control_center](../../../src/utilities/softwarehub_utils/softwarehub_control_center/README.md).
+`cluster-admins` and `autodetect-instances` run while `CONTROL_ADD_CLUSTER_ADMINS` and `AUTODETECT_IN_CLUSTER_SOFTWAREHUB_INSTANCES` are true, which is the default; the indicator step runs with autodetect. They and the other Day 1 scripts are in [softwarehub_control_center](../../../src/utilities/softwarehub_utils/softwarehub_control_center/README.md).
 
 ## How it stays separate from the regular install
 

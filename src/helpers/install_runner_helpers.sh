@@ -28,6 +28,8 @@ IR_SYSTEM_NS="install-runner-system"
 IR_POD="install-runner-0"
 IR_BIN_IN_POD="/opt/install-runner/bin"
 IR_LABEL="app.kubernetes.io/managed-by=install-runner"
+# The launched chain's arguments, for the module hooks (ir_handoff sets them).
+typeset -ga _IR_CHAIN_ARGS=()
 
 ir_info() { h_info "$@"; }
 ir_warn() { h_warn "$@"; }
@@ -61,10 +63,28 @@ ir_install_for_chain() {   # <repo-relative chain> -> REPLY = install id
     return 1
 }
 
-ir_hook() {   # <id> <verb> - run a module hook when the module has one
+ir_hook() {   # <id> <verb> [args...] - run a module hook when the module has one
     local f="${IR_SRC}/installs/$1.sh"
     [[ -f "${f}" ]] || return 0
-    zsh "${f}" "$2"
+    zsh "${f}" "$2" "${@:3}"
+}
+
+# A hook that checks or sizes a launch sees the very folders that will be staged:
+# IR_STAGED_<VAR> for each root, once _ir_stage_plan has worked them out, the
+# chain in IR_HOOK_CHAIN (empty for x_install_runner.sh preflight), and the
+# chain's arguments in IR_HOOK_ARGS, one per line (--skip / --only can leave a
+# step out that a sidecar is only for).
+_ir_hook_staged() {   # <id> <verb> [chain]
+    (
+        local snap
+        if [[ -n "${_IR_PLANNED:-}" ]]; then
+            for snap in "${(@k)_IR_ROOT_DIR}"; do
+                export "IR_STAGED_${_IR_ROOT_VAR[${snap}]}=${_IR_ROOT_DIR[${snap}]}"
+            done
+        fi
+        export IR_HOOK_CHAIN="${3:-}" IR_HOOK_ARGS="${(pj:\n:)_IR_CHAIN_ARGS[@]}"
+        ir_hook "$1" "$2" "${3:-}"
+    )
 }
 
 # =============================================================================
@@ -210,8 +230,8 @@ ir_storage_class() {   # <id> -> stdout
 }
 
 # Prints every problem before stopping, so one run shows all that needs fixing.
-ir_preflight() {   # <id>
-    local id="$1" rc=0 sc source state
+ir_preflight() {   # <id> [chain]
+    local id="$1" chain="${2:-}" rc=0 sc source state
     ir_info "Preflight for $(ir_conf "${id}" INSTALL_LABEL)"
 
     if [[ "$(oc auth can-i '*' '*' 2>/dev/null)" != yes ]]; then
@@ -241,17 +261,8 @@ ir_preflight() {   # <id>
             rc=1
         fi
     fi
-    # The module checks the very folders that will be staged: IR_STAGED_<VAR> for
-    # each root, once _ir_stage_plan has worked them out (hand-off and preflight verb).
-    (
-        local snap
-        if [[ -n "${_IR_PLANNED:-}" ]]; then
-            for snap in "${(@k)_IR_ROOT_DIR}"; do
-                export "IR_STAGED_${_IR_ROOT_VAR[${snap}]}=${_IR_ROOT_DIR[${snap}]}"
-            done
-        fi
-        ir_hook "${id}" preflight
-    ) || rc=1
+    # The module checks the very folders that will be staged (hand-off and preflight verb).
+    _ir_hook_staged "${id}" preflight "${chain}" || rc=1
     (( rc == 0 )) || ir_die "Preflight failed: nothing was changed."
 
     local active
@@ -280,14 +291,30 @@ ir_slot_status_value() {   # <namespace> <key>
     oc get configmap ir-status -n "$1" -o jsonpath="{.data.$2}" 2>/dev/null || true
 }
 
-ir_slot_apply() {   # <id> <slot> <image>
-    local id="$1" slot="$2" image="$3" ns binding size selector="{}"
+ir_slot_apply() {   # <id> <slot> <image> [chain]
+    local id="$1" slot="$2" image="$3" chain="${4:-}" ns binding size selector="{}" line sidecar
     ir_namespace "${slot}"; ns="${REPLY}"
     ir_admin_binding "${slot}"; binding="${REPLY}"
     size="${INSTALL_RUNNER_PVC_SIZE:-$(ir_conf "${id}" RUNNER_PVC_SIZE)}"
     if [[ -n "${INSTALL_RUNNER_NODE_SELECTOR:-}" ]]; then
         selector="{\"${INSTALL_RUNNER_NODE_SELECTOR%%=*}\": \"${INSTALL_RUNNER_NODE_SELECTOR#*=}\"}"
     fi
+    # Empty unless the module's sidecars hook asks for one: the slot then renders
+    # exactly as it always has.
+    typeset -ga _IR_SLOT_EXTRA=(POD_ANNOTATIONS_EXTRA= POD_SPEC_EXTRA= INIT_CONTAINERS= SIDECARS= RUNNER_ENV_EXTRA= RUNNER_MOUNTS_EXTRA= VOLUMES_EXTRA=)
+    line="$(_ir_hook_staged "${id}" sidecars "${chain}")" || ir_die "The ${id} sidecars hook failed: nothing was changed."
+    line="${line%%$'\n'*}"
+    sidecar="${line%%$'\t'*}"
+    case "${sidecar}" in
+        "")    ;;
+        swhcc) _ir_swhcc_slot_extra "${ns}" "${slot}" "${image}" "${line}" ;;
+        *)     ir_die "The ${id} sidecars hook asks for '${sidecar}', which the runner does not know." ;;
+    esac
+
+    # A StatefulSet already there may have had another pod spec (a sidecar the
+    # last run had and this one does not, or the other way round).
+    local existed=""
+    oc get statefulset install-runner -n "${ns}" >/dev/null 2>&1 && existed=1
 
     ir_apply system.yaml.tmpl SYSTEM_NAMESPACE="${IR_SYSTEM_NS}"
     ir_apply slot.yaml.tmpl NAMESPACE="${ns}" SLOT="${slot}" IMAGE="${image}" NODE_SELECTOR="${selector}" \
@@ -296,7 +323,8 @@ ir_slot_apply() {   # <id> <slot> <image>
         KEEP_ADMIN="${INSTALL_RUNNER_KEEP_ADMIN:-false}" TTY_SIZE="${INSTALL_RUNNER_TTY_SIZE:-120x50}" \
         CPU_REQUEST="$(ir_conf "${id}" RUNNER_CPU_REQUEST)" \
         MEMORY_REQUEST="$(ir_conf "${id}" RUNNER_MEMORY_REQUEST)" \
-        MEMORY_LIMIT="$(ir_conf "${id}" RUNNER_MEMORY_LIMIT)"
+        MEMORY_LIMIT="$(ir_conf "${id}" RUNNER_MEMORY_LIMIT)" \
+        "${_IR_SLOT_EXTRA[@]}"
     # A PVC's size can't be applied over an existing one.
     if ! oc get pvc install-runner-work -n "${ns}" >/dev/null 2>&1; then
         ir_apply pvc.yaml.tmpl NAMESPACE="${ns}" STORAGE_CLASS="$(ir_storage_class "${id}")" PVC_SIZE="${size}"
@@ -305,6 +333,121 @@ ir_slot_apply() {   # <id> <slot> <image>
         ir_apply image-puller.yaml.tmpl NAMESPACE="${ns}" SYSTEM_NAMESPACE="${IR_SYSTEM_NS}"
     fi
     ir_grant_admin "${slot}"
+    # A changed pod spec replaces the pod. Until the new one is up, `oc exec` can
+    # still reach the old one while it terminates, and stage into a dying pod.
+    # Unchanged, this returns at once. A new slot has no old pod: ir_wait_pod
+    # waits for it, with progress.
+    if [[ -n "${existed}" || -n "${sidecar}" ]]; then
+        ir_info "Waiting for the runner pod${sidecar:+ with its ${sidecar} sidecar} to be on the current spec..."
+        # The slot is idle (ir_refuse_busy_slot ran first), so deleting a stuck pod loses nothing.
+        oc rollout status sts/install-runner -n "${ns}" --timeout="${INSTALL_RUNNER_ROLLOUT_TIMEOUT:-900}s" >/dev/null \
+            || ir_die "The runner pod did not come up${sidecar:+ with its sidecar}. See: oc describe pod ${IR_POD} -n ${ns}. If it is stuck, delete it (the slot is idle): oc delete pod ${IR_POD} -n ${ns}"
+    fi
+}
+
+# =============================================================================
+# Sidecars
+# =============================================================================
+# One "### NAME" section of a fragments template, with a newline in front: each
+# goes in at the end of a line of slot.yaml.tmpl.
+_ir_fragment() {   # <template file name> <section> -> stdout
+    local text
+    text="$(awk -v want="$2" '/^### / { on = ($2 == want); next } on' "${IR_SRC}/manifests/$1")"
+    [[ -n "${text}" ]] || ir_die "No section ${2} in manifests/$1."
+    print -rn -- $'\n'"${text}"
+}
+
+# The Control Center sidecar (D4): the premium olm-utils image next to the runner.
+# The hook line is "swhcc<TAB><premium image by tag><TAB><same|different>".
+_ir_swhcc_slot_extra() {   # <namespace> <slot> <runner image> <hook line> -> _IR_SLOT_EXTRA
+    local ns="$1" slot="$2" image="$3" rest="${4#*$'\t'}" source mode pinned name text pair
+    source="${rest%%$'\t'*}" mode="${rest#*$'\t'}"
+    [[ "${rest}" == *$'\t'* && -n "${source}" ]] || ir_die "The Control Center sidecar has no image: is swhub_control_center_vars.sh there?"
+    [[ "${mode}" == (same|different) ]] || ir_die "CONTROL_CLUSTER_MODE must be same or different (got '${mode}')."
+    ir_swhcc_image_prepare "${ns}" "${slot}" "${source}"
+    pinned="${REPLY}"
+    local -a fill=(IMAGE="${image}" SWHCC_IMAGE="${pinned}" SWHCC_IMAGE_SOURCE="${source}" SWHCC_MODE="${mode}"
+                   SWHCC_MEMORY_LIMIT="${INSTALL_RUNNER_SWHCC_MEMORY_LIMIT:-4Gi}"
+                   SWHCC_IMAGE_OVERRIDE="${INSTALL_RUNNER_SWHCC_IMAGE:-}" SIDECAR_SA_MOUNT=)
+    # The service account token reaches the sidecar only when its cluster is this one.
+    [[ "${mode}" == same ]] && fill[-1]="SIDECAR_SA_MOUNT=$(_ir_fragment swhcc-sidecar.fragments.tmpl SIDECAR_SA_MOUNT)"
+    _IR_SLOT_EXTRA=()
+    for name in POD_ANNOTATIONS_EXTRA POD_SPEC_EXTRA INIT_CONTAINERS SIDECARS RUNNER_ENV_EXTRA RUNNER_MOUNTS_EXTRA VOLUMES_EXTRA; do
+        text="$(_ir_fragment swhcc-sidecar.fragments.tmpl "${name}")"
+        for pair in "${fill[@]}"; do
+            text="${text//@${pair%%=*}@/${pair#*=}}"
+        done
+        _IR_SLOT_EXTRA+=("${name}=${text}")
+    done
+}
+
+# Pins the premium image by digest, so an eviction can't pick up a moved tag in the
+# middle of a run, and gives the slot's service account a cp.icr.io pull secret.
+# No imagePullSecrets on the pod: a pod-level list would drop the service account's
+# own secret for the internal registry, which the runner image comes from. Runs on
+# this machine after preflight; the key only ever goes through stdin and a private
+# temp file, never an argument. Removing the slot namespace removes the secret.
+# INSTALL_RUNNER_SWHCC_IMAGE (a mirrored premium image) skips the pull secret, and
+# INSTALL_RUNNER_SWHCC_PULL_SECRET names one already in the slot namespace for it.
+ir_swhcc_image_prepare() {   # <namespace> <slot> <premium image by tag> -> REPLY = image for the pod spec
+    local ns="$1" slot="$2" source="$3" host arch af ef info digest why rc=0
+    if [[ -n "${INSTALL_RUNNER_SWHCC_IMAGE:-}" ]]; then
+        ir_info "Control Center sidecar image (INSTALL_RUNNER_SWHCC_IMAGE): ${INSTALL_RUNNER_SWHCC_IMAGE}"
+        if [[ -n "${INSTALL_RUNNER_SWHCC_PULL_SECRET:-}" ]]; then
+            _ir_slot_namespace_sa "${ns}" "${slot}"
+            oc get secret "${INSTALL_RUNNER_SWHCC_PULL_SECRET}" -n "${ns}" >/dev/null 2>&1 \
+                || ir_die "INSTALL_RUNNER_SWHCC_PULL_SECRET=${INSTALL_RUNNER_SWHCC_PULL_SECRET} is not in ${ns}. Create it there first (oc create secret docker-registry ... -n ${ns})."
+            oc secrets link install-runner "${INSTALL_RUNNER_SWHCC_PULL_SECRET}" --for=pull -n "${ns}" >/dev/null \
+                || ir_die "Could not link ${INSTALL_RUNNER_SWHCC_PULL_SECRET} to the runner's service account."
+        fi
+        REPLY="${INSTALL_RUNNER_SWHCC_IMAGE}"
+        return 0
+    fi
+    [[ -n "${IBM_ENTITLEMENT_KEY:-}" ]] || ir_die "IBM_ENTITLEMENT_KEY is needed to pull ${source}."
+    host="${source%%/*}"
+    # The tag ends in the node arch (swhcc_pod_image put it there).
+    arch="${source##*.}"
+    [[ "${arch}" == (amd64|arm64|ppc64le|s390x) ]] || arch="${IMAGE_ARCH:-amd64}"
+    ir_info "Pinning the Control Center sidecar image ${source} (linux/${arch})..."
+    af="$(umask 077; mktemp "${TMPDIR:-/tmp}/ir-swhcc-auth.XXXXXX")" || ir_die "Could not make a temp file."
+    ef="$(umask 077; mktemp "${TMPDIR:-/tmp}/ir-swhcc-err.XXXXXX")" || { rm -f "${af}"; ir_die "Could not make a temp file."; }
+    {
+        IR_KEY="${IBM_ENTITLEMENT_KEY}" IR_HOST="${host}" \
+            jq -n '{auths: {(env.IR_HOST): {auth: ("cp:" + env.IR_KEY | @base64)}}}' > "${af}" || rc=1
+        # stderr apart: a warning line from oc would otherwise break the JSON.
+        (( rc )) || info="$(oc image info --registry-config "${af}" --filter-by-os "linux/${arch}" -o json "${source}" 2>"${ef}")" || rc=1
+        why="$(tail -n 1 "${ef}" 2>/dev/null)"
+    } always {
+        rm -f "${af}" "${ef}"
+    }
+    digest="$(print -r -- "${info:-}" | jq -r '.digest // empty' 2>/dev/null || true)"
+    if (( rc )) || [[ "${digest}" != sha256:* ]]; then
+        ir_die "Could not read ${source} with IBM_ENTITLEMENT_KEY: ${why:-${${info:-no answer}##*$'\n'}}"
+    fi
+    local repo="${source}"
+    [[ "${source:t}" == *:* ]] && repo="${source%:*}"
+    REPLY="${repo}@${digest}"
+    ir_info "Pinned it at ${digest}: the tag moves with IBM's patches, this slot keeps this build."
+
+    _ir_slot_namespace_sa "${ns}" "${slot}"
+    IR_KEY="${IBM_ENTITLEMENT_KEY}" IR_HOST="${host}" jq -n --arg ns "${ns}" '{
+        apiVersion: "v1", kind: "Secret", type: "kubernetes.io/dockerconfigjson",
+        metadata: {name: "ir-cp-icr-pull", namespace: $ns, labels: {"app.kubernetes.io/managed-by": "install-runner"}},
+        data: {".dockerconfigjson": ({auths: {(env.IR_HOST): {auth: ("cp:" + env.IR_KEY | @base64)}}} | tojson | @base64)}}' \
+        | oc apply -f - >/dev/null || ir_die "Could not create the sidecar's pull secret in ${ns}."
+    oc secrets link install-runner ir-cp-icr-pull --for=pull -n "${ns}" >/dev/null \
+        || ir_die "Could not link the sidecar's pull secret to the runner's service account."
+}
+
+# The slot's namespace and service account, ahead of slot.yaml.tmpl (which applies
+# the same), so a pull secret can be linked before the pod first starts.
+_ir_slot_namespace_sa() {   # <namespace> <slot>
+    oc create namespace "$1" --dry-run=client -o yaml \
+        | oc label --local -f - app.kubernetes.io/managed-by=install-runner "install-runner/slot=$2" --dry-run=client -o yaml \
+        | oc apply -f - >/dev/null || ir_die "Could not create namespace $1."
+    oc create serviceaccount install-runner -n "$1" --dry-run=client -o yaml \
+        | oc label --local -f - app.kubernetes.io/managed-by=install-runner --dry-run=client -o yaml \
+        | oc apply -f - >/dev/null || ir_die "Could not create the runner's service account in $1."
 }
 
 ir_wait_pod() {   # <namespace> [timeout-s, default 900]
@@ -432,8 +575,8 @@ _ir_refuse_other_cluster_config() {   # <config file>
     ir_die "${1#${_CP4D_REPO_ROOT:A}/} is for ${literal%/}, but this session is on ${here:-no cluster (OCP_URL is empty)}. Nothing was staged. Load the config of the cluster you mean, or fix OCP_URL in that file."
 }
 
-# Hook for chains whose config is not the install's own (I6 fills
-# RUNNER_CHAIN_ENV_TARGETS: space-separated "<chain>=<bare target>").
+# Chains whose config is not the install's own: RUNNER_CHAIN_ENV_TARGETS,
+# space-separated "<chain>=<bare target>" (cpd.conf: the Control Center chain).
 _ir_chain_env_target() {   # <id> <chain> -> REPLY = bare target, or empty
     local entry
     REPLY=""
@@ -645,12 +788,13 @@ ir_handoff() {   # <chain args...>
     # What to stage, and the refusals (wrong cluster's config, ENV_TARGET=all), come
     # first: nothing on the cluster changes for a run that can't go.
     _ir_stage_plan "${id}" "${chain}"
+    typeset -ga _IR_CHAIN_ARGS=("$@")
 
     eval "${OC_LOGIN}"
     ir_refuse_busy_slot "${ns}" "${slot}"
-    ir_preflight "${id}"
+    ir_preflight "${id}" "${chain}"
     ir_image_ensure "${id}"
-    ir_slot_apply "${id}" "${slot}" "${REPLY}"
+    ir_slot_apply "${id}" "${slot}" "${REPLY}" "${chain}"
     ir_wait_pod "${ns}"
 
     local run="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -763,9 +907,11 @@ ir_status() {
     local line slot ns seen state
     oc get configmap -A -l "${IR_LABEL}" -o json 2>/dev/null \
         | jq -r '.items[] | select(.metadata.name == "ir-status")
-                 | [.metadata.namespace, .data.slot, .data.state, .data.heartbeat, (.data.warned // "-")] | @tsv' \
-        | while IFS=$'\t' read -r ns slot state seen line; do
+                 | [.metadata.namespace, .data.slot, .data.state, .data.heartbeat, (.data.warned // "-"), (.data.notice // "-")] | @tsv' \
+        | while IFS=$'\t' read -r ns slot state seen line notice; do
             [[ "${line}" == - ]] || ir_warn "${slot}: finished with warnings in ${line}"
+            # Something only a person can do (the Control Center browser step).
+            [[ -z "${notice}" || "${notice}" == - ]] || ir_warn "${slot}: ${notice}"
             # A live run reports at least every minute; silence means the pod is in trouble.
             if [[ "${state}" == (running|staged|interrupted) ]] && (( now - seen > 180 )); then
                 ir_warn "${slot}: no report for $(( now - seen ))s. If its node is gone, the pod stays stuck until:"

@@ -47,6 +47,11 @@ while (( $# )); do
     esac
 done
 
+# It needs this machine's view of the public IP, and asks before it changes
+# anything; a runner pod has neither.
+[[ -z "${IR_IN_RUNNER:-}" ]] \
+    || h_die "This runs on a workstation only. After collect, run it locally: ${0:A:t}"
+
 swhcc_oc_login
 NS="${CONTROL_PROJECT_OPERANDS}"
 DEPLOYMENT=zen-core-api

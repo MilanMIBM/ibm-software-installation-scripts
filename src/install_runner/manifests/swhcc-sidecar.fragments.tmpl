@@ -1,0 +1,121 @@
+# Control Center sidecar for a runner slot (D4, design A with the judge's changes:
+# .claude/plans/multi-cluster-management/in-cluster-install-addon/d4-control-center-in-pod-design.md).
+# Each "### NAME" section below fills @NAME@ in slot.yaml.tmpl. Those placeholders
+# sit at line ends, so every section starts on a new line of its own when it goes
+# in; a slot without the sidecar fills them with nothing and renders as before.
+#
+# - The sidecar runs IBM's premium olm-utils image, pinned by digest at launch, and
+#   its PID 1 is swhcc-agent.sh, which runs requests from a queue on the volume.
+# - It mounts only the swhcc folder of the volume, never /work/snapshots with the
+#   staged credentials.
+# - No service account token is mounted by default. The runner gets one through the
+#   ir-sa volume; the sidecar only in same mode, where the Control Center cluster is
+#   the install cluster. In different mode a command that ignored KUBECONFIG would
+#   otherwise fall back to cluster-admin on the Software Hub cluster.
+# - The Control Center kubeconfig lives in a memory emptyDir both containers mount
+#   at the same path, so the login dies with the pod.
+### POD_ANNOTATIONS_EXTRA
+        # Two containers now: `oc exec` and `oc rsh` without -c pick the runner,
+        # without a "Defaulted container" line on every runner command.
+        kubectl.kubernetes.io/default-container: runner
+### POD_SPEC_EXTRA
+      automountServiceAccountToken: false
+### INIT_CONTAINERS
+      initContainers:
+      - name: swhcc-prepare
+        image: @IMAGE@
+        imagePullPolicy: IfNotPresent
+        # Made here, so the sidecar's subPath folders exist and belong to the pod's
+        # user; a folder kubelet makes for a subPath is root's.
+        command: ["/bin/sh", "-c", "mkdir -p /work/swhcc/work /work/swhcc/q/.tmp /work/swhcc/bin && cp /opt/install-runner/sidecar/swhcc-agent.sh /work/swhcc/bin/swhcc-agent.sh && chmod 0755 /work/swhcc/bin/swhcc-agent.sh"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            memory: "256Mi"
+        volumeMounts:
+        - name: work
+          mountPath: /work
+### RUNNER_ENV_EXTRA
+        - name: IR_SWHCC_IMAGE_SOURCE
+          value: "@SWHCC_IMAGE_SOURCE@"
+        - name: IR_SWHCC_IMAGE
+          value: "@SWHCC_IMAGE@"
+        - name: IR_SWHCC_KUBE_DIR
+          value: /var/run/install-runner/swhcc-kube
+        - name: IR_SWHCC_MODE
+          value: "@SWHCC_MODE@"
+        - name: INSTALL_RUNNER_SWHCC_IMAGE
+          value: "@SWHCC_IMAGE_OVERRIDE@"
+### RUNNER_MOUNTS_EXTRA
+        - name: swhcc-kube
+          mountPath: /var/run/install-runner/swhcc-kube
+        - name: ir-sa
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+### SIDECARS
+      - name: swhcc
+        image: @SWHCC_IMAGE@
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "/swhcc/bin/swhcc-agent.sh"]
+        env:
+        - name: HOME
+          value: /opt/ansible
+        - name: IR_SIDECAR
+          value: swhcc
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        # Burstable: it sits idle through most of a CP4D run.
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "512Mi"
+          limits:
+            memory: "@SWHCC_MEMORY_LIMIT@"
+        volumeMounts:
+        - name: work
+          mountPath: /swhcc
+          subPath: swhcc
+        - name: work
+          mountPath: /tmp/work
+          subPath: swhcc/work
+        - name: swhcc-kube
+          mountPath: /var/run/install-runner/swhcc-kube@SIDECAR_SA_MOUNT@
+### SIDECAR_SA_MOUNT
+        - name: ir-sa
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+### VOLUMES_EXTRA
+      - name: swhcc-kube
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Mi
+      # What automountServiceAccountToken would have given, as a volume of its own.
+      - name: ir-sa
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt
+          - downwardAPI:
+              items:
+              - path: namespace
+                fieldRef:
+                  fieldPath: metadata.namespace

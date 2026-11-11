@@ -1,0 +1,126 @@
+# One independently runnable install. A StatefulSet, not a Deployment: it starts no
+# replacement until the old pod is confirmed gone, so two copies of a chain can
+# never run at once. No liveness probe (a false positive would kill a healthy
+# install) and no PodDisruptionBudget (it would stall node drains; the step
+# journal handles eviction instead).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: install-runner-cpd-x
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+    install-runner/slot: cpd-x
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: install-runner
+  namespace: install-runner-cpd-x
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+---
+# Survives the end of a run, when cluster-admin has gone: status keeps working.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: install-runner-status
+  namespace: install-runner-cpd-x
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: install-runner-status
+  namespace: install-runner-cpd-x
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: install-runner-status
+subjects:
+- kind: ServiceAccount
+  name: install-runner
+  namespace: install-runner-cpd-x
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: install-runner
+  namespace: install-runner-cpd-x
+  labels:
+    app.kubernetes.io/managed-by: install-runner
+    install-runner/slot: cpd-x
+spec:
+  replicas: 1
+  serviceName: install-runner
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: install-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: install-runner
+        install-runner/slot: cpd-x
+      annotations:
+        # cluster-admin would otherwise get anyuid (UID 1001, no fsGroup), which
+        # cannot write the volume; restricted-v2 sets a writable fsGroup.
+        openshift.io/required-scc: restricted-v2
+    spec:
+      serviceAccountName: install-runner
+      terminationGracePeriodSeconds: 120
+      nodeSelector: {}
+      containers:
+      - name: runner
+        image: img:1
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: IR_SLOT
+          value: "cpd-x"
+        - name: IR_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: IR_OCP_URL
+          value: "https://api.x:6443"
+        # The multi-cluster name the slot was launched from, for status only. Never
+        # MCM_CLUSTER: that would pin the pod (plan §5).
+        - name: IR_SOURCE_CLUSTER
+          value: ""
+        - name: IR_AUTO_RESUME
+          value: "true"
+        - name: IR_MAX_RESUMES
+          value: "3"
+        - name: IR_KEEP_ADMIN
+          value: "false"
+        - name: IR_ADMIN_BINDING
+          value: "install-runner-cpd-x-admin"
+        - name: IR_TTY_SIZE
+          value: "120x50"
+        - name: TMPDIR
+          value: /work/tmp
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+          limits:
+            memory: "6Gi"
+        volumeMounts:
+        - name: work
+          mountPath: /work
+      volumes:
+      - name: work
+        persistentVolumeClaim:
+          claimName: install-runner-work

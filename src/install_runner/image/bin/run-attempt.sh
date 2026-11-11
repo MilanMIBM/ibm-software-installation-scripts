@@ -11,6 +11,9 @@ source "${run}/run.env"
 stty rows "${IR_TTY_SIZE##*x}" cols "${IR_TTY_SIZE%%x*}" 2>/dev/null
 
 export IR_IN_RUNNER=1 IR_RUN_DIR="${run}" IR_JOURNAL_FILE="${run}/journal.tsv"
+# Plain assignments in run.env; the chain needs them too (swhcc-exec names its
+# requests after the run).
+export IR_RUN_ID IR_INSTALL_ID
 export _CP4D_PREP_DONE=1 TERM="${TERM:-xterm-256color}"
 [[ -s "${run}/retry-warned" ]] && export IR_RETRY_WARNED=1
 
@@ -34,6 +37,27 @@ if [[ ! -f "${MCM_STATE_FILE}" ]]; then
       _mcm_render_state ) > "${MCM_STATE_FILE}" 2>/dev/null \
         || print -r -- 'export MULTI_CLUSTER_MANAGEMENT="false"' > "${MCM_STATE_FILE}"
     chmod 600 "${MCM_STATE_FILE}"
+fi
+
+# X17: the chain works on a copy of the supervisor's kubeconfig. Its tokenFile is
+# still the pod's projected token, so no secret is copied, and an `oc login` in a
+# step (Control Center on another cluster) changes only this copy. OC_LOGIN in the
+# pod (source_env_setup.sh) switches back to it. No supervisor file (no service
+# account token) leaves KUBECONFIG as it is.
+_sup="${IR_WORK:-/work}/runs/.supervisor.kubeconfig"
+if [[ -r "${_sup}" ]]; then
+    ( umask 077; cp -f "${_sup}" "${run}/chain.kubeconfig" )
+    export IR_CHAIN_KUBECONFIG="${run}/chain.kubeconfig"
+    export KUBECONFIG="${IR_CHAIN_KUBECONFIG}" K8S_AUTH_KUBECONFIG="${IR_CHAIN_KUBECONFIG}"
+fi
+unset _sup
+
+# The Control Center sidecar's folder on the volume (its queue and work dir).
+# A command an earlier attempt left there would run on beside this one: stop it
+# before the chain starts.
+export IR_SWHCC_ROOT="${IR_SWHCC_ROOT:-${IR_WORK:-/work}/swhcc}"
+if [[ -d "${IR_SWHCC_ROOT}/q" ]]; then
+    swhcc-exec --cancel-orphans || print -r -- "[runner] Could not clear the Control Center sidecar's queue; carrying on."
 fi
 
 # A staged config path is relative to the snapshot; a child that changes folder

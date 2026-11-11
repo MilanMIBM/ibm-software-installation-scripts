@@ -268,7 +268,15 @@ fi
 # rotating service account token, written by the supervisor) and there is no
 # container to log in to, so logging in means checking that session.
 if [[ -n "${IR_IN_RUNNER:-}" ]]; then
-    export OC_LOGIN="oc whoami >/dev/null" CPDM_OC_LOGIN="oc whoami >/dev/null"
+    # The chain's own kubeconfig (run-attempt.sh, X17). A Control Center step on
+    # another cluster points KUBECONFIG elsewhere, and the scripts' `eval
+    # "${OC_LOGIN}"` that switches back to the Software Hub cluster then really does.
+    if [[ -n "${IR_CHAIN_KUBECONFIG:-}" ]]; then
+        export OC_LOGIN='export KUBECONFIG="${IR_CHAIN_KUBECONFIG}" K8S_AUTH_KUBECONFIG="${IR_CHAIN_KUBECONFIG}"; oc whoami >/dev/null'
+    else
+        export OC_LOGIN="oc whoami >/dev/null"
+    fi
+    export CPDM_OC_LOGIN="${OC_LOGIN}"
     export OC_LOGIN_FORCE="${OC_LOGIN}" CPDM_OC_LOGIN_FORCE="${CPDM_OC_LOGIN}"
 fi
 

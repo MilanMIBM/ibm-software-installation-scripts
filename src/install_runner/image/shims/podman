@@ -10,6 +10,17 @@ fail() { echo "[ERROR] podman $* is not supported in the in-cluster runner." >&2
 verb="${1:-}"
 [[ -n "${verb}" ]] && shift
 
+# Control Center steps (swhcc_activate sets IR_EXEC_ROUTE=swhcc) name the side
+# container IR_EXEC_CONTAINER_NAME. In a pod that container is the premium sidecar,
+# so its verbs answer for it: exec goes to swhcc-exec, inspect reports its image,
+# and image checks are only true for that image. Other names stay as below.
+routed() { [[ "${IR_EXEC_ROUTE:-}" == swhcc && -n "${IR_EXEC_CONTAINER_NAME:-}" ]]; }
+routed_image() {   # <image>
+    [[ "$1" == "${IR_SWHCC_IMAGE_SOURCE:-}" ]] && exit 0
+    echo "[ERROR] podman: the Control Center sidecar runs ${IR_SWHCC_IMAGE_SOURCE:-no image}, not $1. Launch the run again to change it." >&2
+    exit 1
+}
+
 case "${verb}" in
     exec)
         declare -a envs=()
@@ -24,13 +35,29 @@ case "${verb}" in
                 *) fail exec "$1" ;;
             esac
         done
+        name="${1:-}"
         shift   # the container name
         (( $# )) || fail exec "(no command)"
+        if routed && [[ "${name}" == "${IR_EXEC_CONTAINER_NAME}" ]]; then
+            declare -a args=()
+            [[ -n "${workdir}" ]] && args+=(--cwd "${workdir}")
+            for kv in "${envs[@]}"; do
+                # -e NAME passes this process's value, as podman does.
+                [[ "${kv}" == *=* ]] || kv="${kv}=${!kv:-}"
+                args+=(--env "${kv}")
+            done
+            exec swhcc-exec "${args[@]}" -- "$@"
+        fi
         [[ -n "${workdir}" ]] && { cd "${workdir}" || exit 126; }
         (( ${#envs[@]} )) && export "${envs[@]}"
         exec "$@"
         ;;
     inspect)
+        if routed && [[ " $* " == *" ${IR_EXEC_CONTAINER_NAME} "* ]]; then
+            case "$*" in
+                *ImageName*|*Config.Image*) echo "${IR_SWHCC_IMAGE_SOURCE:-}"; exit 0 ;;
+            esac
+        fi
         case "$*" in
             *ImageName*|*Config.Image*) echo "${OLM_UTILS_IMAGE:-}" ;;
             *State.Status*|*.State*)    echo running ;;
@@ -38,10 +65,15 @@ case "${verb}" in
         esac
         ;;
     image)
-        [[ "${1:-}" == exists ]] && exit 0
+        if [[ "${1:-}" == exists ]]; then
+            routed && routed_image "${2:-}"
+            exit 0
+        fi
         fail image "$@"
         ;;
-    pull)   exit 0 ;;   # the pod runs from the image already
+    pull)
+        routed && routed_image "${@: -1}"
+        exit 0 ;;   # the pod runs from the image already
     create)
         # A throwaway container reads files out of the image; this filesystem is it.
         echo "install-runner-self"
