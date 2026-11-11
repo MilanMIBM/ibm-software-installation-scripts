@@ -22,6 +22,7 @@ _IR_HELPERS_LOADED=1
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 # The cluster folder that owns a URL, and a config file's literal OCP_URL.
 source "${_CP4D_REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_slots.sh"
 
 IR_SRC="${_CP4D_REPO_ROOT}/src/install_runner"
 IR_SYSTEM_NS="install-runner-system"
@@ -401,6 +402,8 @@ ir_slot_apply() {   # <id> <slot> <image> [chain]
     oc get statefulset install-runner -n "${ns}" >/dev/null 2>&1 && existed=1
 
     ir_apply system.yaml.tmpl SYSTEM_NAMESPACE="${IR_SYSTEM_NS}"
+    # SOURCE_CLUSTER: this checkout's name for the cluster, shown by status (gap X16).
+    # For display only: names are per checkout, the URL is the identity.
     ir_apply slot.yaml.tmpl NAMESPACE="${ns}" SLOT="${slot}" IMAGE="${image}" NODE_SELECTOR="${selector}" \
         OCP_URL="${OCP_URL:-}" SOURCE_CLUSTER="${MCM_CLUSTER:-}" ADMIN_BINDING="${binding}" \
         AUTO_RESUME="${INSTALL_RUNNER_AUTO_RESUME:-true}" MAX_RESUMES="${INSTALL_RUNNER_MAX_RESUMES:-3}" \
@@ -879,11 +882,18 @@ ir_handoff() {   # <chain args...>
     ir_refuse_busy_slot "${ns}" "${slot}"
     ir_preflight "${id}" "${chain}"
     ir_image_ensure "${id}"
-    ir_slot_apply "${id}" "${slot}" "${REPLY}" "${chain}"
+    local image="${REPLY}"
+    # Written before anything is created on the cluster, so a slot never exists without
+    # its record: multi_cluster.sh refuses remove, rename and off while one is there
+    # (gap X15). Cleared by teardown.
+    ir_slot_record_set "${MCM_CLUSTER:-}" "${slot}" url="${OCP_URL:-}" run= install="${id}" \
+        launched="$(date -u +%Y-%m-%dT%H:%M:%SZ)" state=starting
+    ir_slot_apply "${id}" "${slot}" "${image}" "${chain}"
     ir_wait_pod "${ns}"
 
     local run="$(date -u +%Y%m%dT%H%M%SZ)" watch rc=0
     ir_stage "${id}" "${ns}" "${chain}" "${run}" "$@"
+    ir_slot_record_set "${MCM_CLUSTER:-}" "${slot}" run="${run}" state=launched
     watch="scripts/install_runner/x_watch_install.sh --install ${id}$(_ir_tc)"
     _ir_fanout_note "${slot}" "${watch}"
     # --parallel (plan 15.1 D3): launch only, so the next cluster of a fan-out can start.
@@ -1112,16 +1122,28 @@ ir_error_state() {   # <slot> <state>
 # =============================================================================
 # Status and control
 # =============================================================================
+# CLUSTER is this checkout's name for the cluster the login points at, so it is what
+# --target-cluster takes; a flat load shows the name the slot was launched under, if
+# any. URL is the one the slot was launched for (gap X16). In a fan-out child the rows
+# also go to IR_STATUS_ROWS, for the table of every cluster that
+# x_install_runner.sh status prints at the end.
 ir_status() {
-    local now="$(date +%s)"
-    oc get configmap -A -l "${IR_LABEL}" -o json 2>/dev/null \
-        | jq -r --argjson now "${now}" '
-            ["SLOT", "STATE", "STEP", "ATTEMPT", "COLLECTED", "SEEN"],
+    local now="$(date +%s)" rows
+    rows="$(oc get configmap -A -l "${IR_LABEL}" -o json 2>/dev/null \
+        | jq -r --argjson now "${now}" --arg cluster "${MCM_CLUSTER:-}" --arg url "${OCP_URL:-}" '
+            def known: select(. != null and . != "" and . != "-");
             (.items[] | select(.metadata.name == "ir-status") | .data
-             | [.slot, .state, ((.step // "-") | split("/") | last), .attempts, .collected,
+             | [([$cluster, .cluster] | map(known) | first // "-"),
+                ([.ocp_url, $url] | map(known) | first // "-"),
+                .slot, .state, ((.step // "-") | split("/") | last), .attempts, .collected,
                 (($now - (.heartbeat | tonumber)) | tostring + "s ago")])
-            | @tsv' \
-        | column -t -s $'\t'
+            | @tsv')" || rows=""
+    { print -r -- $'CLUSTER\tURL\tSLOT\tSTATE\tSTEP\tATTEMPT\tCOLLECTED\tSEEN'
+      if [[ -n "${rows}" ]]; then print -r -- "${rows}"; fi
+    } | column -t -s $'\t'
+    if [[ -n "${rows}" && -n "${_MCM_FANOUT_CHILD:-}" && -n "${IR_STATUS_ROWS:-}" ]]; then
+        print -r -- "${rows}" >> "${IR_STATUS_ROWS}" 2>/dev/null || true
+    fi
     local line slot ns seen state
     oc get configmap -A -l "${IR_LABEL}" -o json 2>/dev/null \
         | jq -r '.items[] | select(.metadata.name == "ir-status")
@@ -1378,6 +1400,9 @@ ir_collect() {   # <id> <slot> [--force] [--to <folder> | --to-loaded]
     # The marker is already there, so its next publish says yes too.
     oc patch configmap ir-status -n "${ns}" --type merge -p '{"data":{"collected":"yes"}}' >/dev/null 2>&1 \
         || ir_warn "Could not mark slot ${slot} collected in ir-status; the runner reports it within a minute."
+    # Only a launch from this machine has a record; a collect elsewhere starts none.
+    ir_slot_record_dir "${MCM_CLUSTER:-}" \
+        && [[ -f "${REPLY}/${slot}" ]] && ir_slot_record_set "${MCM_CLUSTER:-}" "${slot}" state=collected
     # The follow-up reads the loaded config, which --to <folder> did not fill: it
     # would work from stale details (an API key the pod has since rotated).
     if [[ -n "${to}" ]]; then
@@ -1403,5 +1428,6 @@ ir_teardown() {   # <slot> [--discard]
     oc delete clusterrolebinding "${binding}" --ignore-not-found >/dev/null
     oc delete rolebinding "image-puller-${ns}" -n "${IR_SYSTEM_NS}" --ignore-not-found >/dev/null 2>&1 || true
     oc delete namespace "${ns}" --ignore-not-found --wait=true >/dev/null
+    ir_slot_record_remove "${MCM_CLUSTER:-}" "${slot}"
     ir_info "Slot ${slot} is gone."
 }

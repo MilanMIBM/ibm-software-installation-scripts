@@ -8,7 +8,8 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 # A chain runs in cluster when its config sets INSTALL_RUN_MODE=cluster. Each
 # install has a slot: its own namespace, pod, volume and copy of its config.
 #
-#   x_install_runner.sh status                  every slot on the cluster
+#   x_install_runner.sh status                  every slot on the cluster; with
+#                                               --all-clusters, then one table of all
 #   x_install_runner.sh attach [--plain] [--from-start] [--last N]
 #                                               the live terminal; Ctrl-C only detaches
 #   x_install_runner.sh stop                    stop the chain, keep everything
@@ -16,6 +17,7 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 #   x_install_runner.sh collect [--force] [--to <dir> | --to-loaded]
 #                                               bring results back to this machine
 #   x_install_runner.sh teardown [--discard]    delete the slot and its credentials
+#   x_install_runner.sh teardown --forget       only clear this machine's record of it
 #   x_install_runner.sh shell                   debug shell in the pod
 #   x_install_runner.sh preflight               check without changing anything
 #
@@ -56,7 +58,7 @@ while (( ${#pre} )) && [[ "${pre[1]}" == --* && "${pre[1]}" != --help ]]; do
 done
 verb="${pre[1]:-}"
 case "${verb}" in
-    -h|--help|help|"") sed -n '5,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help|help|"") sed -n '5,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 (( ${IR_VERBS[(Ie)${verb}]} )) || { echo "[ERROR] Unknown command: ${verb} (see --help)" >&2; exit 2; }
 INSTALL=""
@@ -86,6 +88,27 @@ if [[ -z "${_CP4D_PREP_DONE:-}" ]]; then
     source "${REPO_DIR}/src/helpers/multi_cluster_helpers.sh"
     find "${REPO_DIR}" -name '*.sh' -not -path '*/.venv/*' -not -path "$(mcm_state_file)" ! -perm -u+x \
         -exec chmod +x {} + 2>/dev/null || true
+fi
+
+# status on several clusters (gap X16): the fan-out ends its process inside the env
+# load, so this outer run starts it, waits, and then prints one table of the rows its
+# children left in IR_STATUS_ROWS (only fan-out children write any). A Ctrl-C ends the
+# fan-out's current cluster; the rows so far are still shown.
+if [[ "${verb}" == status && -z "${IR_STATUS_ROWS:-}" ]] \
+    && IR_STATUS_ROWS="$(mktemp "${TMPDIR:-/tmp}/ir-status.XXXXXX" 2>/dev/null)"; then
+    export IR_STATUS_ROWS
+    status_rc=0
+    trap 'status_rc=130' INT
+    zsh "${0:A}" "${ir_argv[@]}" || status_rc=$?
+    trap - INT
+    if [[ -s "${IR_STATUS_ROWS}" ]]; then
+        echo ""
+        echo "[INFO] Install runner slots on every cluster:"
+        { print -r -- $'CLUSTER\tURL\tSLOT\tSTATE\tSTEP\tATTEMPT\tCOLLECTED\tSEEN'; cat "${IR_STATUS_ROWS}"; } \
+            | column -t -s $'\t'
+    fi
+    rm -f "${IR_STATUS_ROWS}"
+    exit "${status_rc}"
 fi
 
 # The install decides which config, and so which cluster, this talks to.
@@ -168,6 +191,20 @@ done
 
 [[ -n "${SLOT}" ]] || { ir_slot "${INSTALL}"; SLOT="${REPLY}"; }
 ir_namespace "${SLOT}"; NS="${REPLY}"
+
+# A cluster that is gone (an expired reservation) fails the login below, and its launch
+# record would then block multi_cluster.sh remove, rename and off for good (gap X15).
+# --forget needs no cluster: it clears the record only.
+if [[ "${verb}" == teardown && ${rest[(Ie)--forget]} -gt 0 ]]; then
+    ir_slot_record_dir "${MCM_CLUSTER:-}"
+    if [[ ! -f "${REPLY}/${SLOT}" ]]; then
+        ir_info "No launch record of slot ${SLOT} here (${REPLY}); nothing to forget."
+        exit 0
+    fi
+    ir_slot_record_remove "${MCM_CLUSTER:-}" "${SLOT}"
+    ir_warn "Forgot slot ${SLOT} (${REPLY}/${SLOT}) without contacting its cluster. If the cluster still exists, its namespace ${NS} and the credentials in it remain there."
+    exit 0
+fi
 
 eval "${OC_LOGIN}"
 

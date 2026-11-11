@@ -60,7 +60,8 @@ Options:
   --help, -h                 Show this help.
 
 Steps: preflight (no live lease, no running 'cpd-cli manage', no other script of this
-checkout running, olm-utils idle), plan, back up configs to configs/old_configs/pre_multi_cluster_<timestamp>/ (mode 0700), move
+checkout running, no install slot launched from here still in a cluster, olm-utils
+idle), plan, back up configs to configs/old_configs/pre_multi_cluster_<timestamp>/ (mode 0700), move
 each item, update the moved folders' absolute paths inside the moved config files (cert
 paths in instance details, truststores, bundle zips; binary files and workspaces are not
 touched), seed .home/.kube/config from ~/.kube/config (not changed), remove the old flat
@@ -147,6 +148,7 @@ if [[ "${MCM_MIG_ROLLBACK}" == true ]]; then
 fi
 
 source "${MCM_MIG_REPO}/src/helpers/multi_cluster_helpers.sh"
+source "${MCM_MIG_REPO}/src/helpers/install_runner_slots.sh"
 
 # Every --map value becomes a path component, so all of them are checked up front.
 for _mcm_mig_map_value in "${(@v)MCM_MIG_MAP}"; do
@@ -638,6 +640,23 @@ _mcm_mig_preflight() {
             MCM_MIG_PREFLIGHT_ERRORS+=("A run is live on cluster ${lease:h:h:t} (lease $(_mcm_mig_short "${lease}")).")
         fi
     done
+
+    # An install handed to a pod (INSTALL_RUN_MODE=cluster) holds no lease and leaves no
+    # local process; its launch record shows it (gap X15, decision D5). Moving the configs
+    # under it would send its collect to a folder that is gone, and strand its teardown.
+    # `multi_cluster.sh on` without a migration moves nothing, and --target-cluster reaches
+    # a delineated cluster's slot in either mode, so it asks for the flat records only.
+    local cluster slot state url run install launched where scope=--all
+    if [[ "${MCM_MIG_PREFLIGHT_ONLY}" == true && "${_MCM_MIG_FLAT_SLOTS_ONLY:-}" == true ]]; then
+        scope=--flat
+    fi
+    while IFS=$'\t' read -r cluster slot state url run install launched; do
+        [[ -n "${slot}" ]] || continue
+        where="cluster ${cluster}"
+        [[ "${cluster}" == - ]] && where="flat config"
+        ir_slot_record_teardown_hint "${cluster}" "${slot}" "${install}"
+        MCM_MIG_PREFLIGHT_ERRORS+=("Install slot ${slot} (${where}, ${url}, ${state}) launched from here is still in its cluster, with a copy of the config. Collect it if you want its results, then tear it down: ${REPLY} (add --forget if its cluster no longer exists: that clears only the record here)")
+    done <<< "$(ir_slot_records "${scope}")"
 
     for line in "${(@f)$(_mcm_mig_running_manage)}"; do
         [[ -n "${line}" ]] || continue

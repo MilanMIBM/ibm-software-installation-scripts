@@ -50,6 +50,7 @@ def changes(home, change):
     "itz-a/.leases/4242",
     "itz-a/.stopping",
     "itz-a/.custom_containers",
+    "itz-a/.runner_slots/cpd-cpd",
 ])
 def test_live_tooling_writes_are_let_through(home, rel):
     assert changes(home, lambda: touch_later(home / rel, "new\n")) == []
@@ -158,6 +159,26 @@ def test_removed_cluster_folder_with_only_tooling_data_is_reported(home):
     found = changes(home, remove)
     assert str(home / "itz-d") in found
     assert str(home / "itz-d/work/job.log") in found
+
+
+def test_flat_launch_records_are_guarded(tmp_path, home):
+    """~/cpd-cli/.runner_slots is outside the clusters home, so no exemption reaches it: a flat
+    launch record that came, changed or went is a leak."""
+    flat_slots = tmp_path / ".runner_slots"
+    flat_slots.mkdir()
+    (flat_slots / "cpd-old").write_text("state=launched\n")
+    (flat_slots / "cpd-gone").write_text("state=collected\n")
+    before = snapshot([flat_slots, home])
+    touch_later(flat_slots / "cpd-new", "state=starting\n")
+    touch_later(flat_slots / "cpd-old", "state=collected\n")
+    (flat_slots / "cpd-gone").unlink()
+    found = guard_changes(before, snapshot([flat_slots, home]), clusters_home=home)
+    assert {str(flat_slots / n) for n in ("cpd-new", "cpd-old", "cpd-gone")} <= set(found)
+
+
+def test_real_flat_launch_records_are_in_the_guard():
+    from conftest import GUARDED, REAL_HOME
+    assert REAL_HOME / "cpd-cli/.runner_slots" in GUARDED
 
 
 def test_flat_folder_holds_only_scans(home):

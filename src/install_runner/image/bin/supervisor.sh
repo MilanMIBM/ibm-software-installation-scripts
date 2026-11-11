@@ -116,6 +116,8 @@ soc() {
 
 # Status for `x_install_runner.sh status`, readable even when this pod is gone.
 # Sent on change and on a heartbeat, so a stale time means a dead supervisor.
+# cluster and ocp_url say which cluster the slot was launched for (gap X16): the
+# launching checkout's name for it ("-" for a flat run), and its URL.
 publish_status() {
     local run="${1:-}" state="idle" step="-" attempts=0 chain="-" id="-" warned="-" collected=no
     local layout="-" env_target="-" path_map="-" notice="-"

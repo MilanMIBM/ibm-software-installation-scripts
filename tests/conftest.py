@@ -42,15 +42,22 @@ REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 # Real locations multi-cluster code writes to. Markers are permanent (delineation is one-way per
 # cluster), so a test leaking one here would change how the real repo loads its configs.
 REAL_CLUSTERS_HOME = REAL_HOME / "cpd-cli/clusters"
-GUARDED = (REPO / "configs/clusters", REPO / "configs/multi_cluster_management.sh", REAL_CLUSTERS_HOME)
+# Flat launch records of in-cluster runs (gap X15) sit next to clusters/, outside its live-tooling
+# exemptions: a leaked one would make the real `multi_cluster.sh on` and the migration refuse.
+REAL_FLAT_RUNNER_SLOTS = REAL_HOME / "cpd-cli/.runner_slots"
+GUARDED = (REPO / "configs/clusters", REPO / "configs/multi_cluster_management.sh", REAL_CLUSTERS_HOME,
+           REAL_FLAT_RUNNER_SLOTS)
 
 # What the user's own live tooling keeps changing under ~/cpd-cli/clusters while the suite runs: a job
 # in a live olm-utils container writes its work dir, and the idle watcher keeps its log, pid, leases,
-# scans and markers there. None of it decides how a config loads, so a change there is not a test
-# leaking out. Everything else in the tree (a .cluster marker, a config, a new folder) is still guarded.
+# scans and markers there. A real in-cluster launch, collect or teardown writes or removes its launch
+# record in <cluster>/.runner_slots/ (gap X15). None of it decides how a config loads, so a change there
+# is not a test leaking out. Everything else in the tree (a .cluster marker, a config, a new folder) is
+# still guarded. Tests write launch records only in sandbox HOMEs.
 LIVE_TOOLING_TOP = {".idle-watcher.log", ".idle-watcher.pid", ".vm-stopping"}       # ~/cpd-cli/clusters/<file>
 LIVE_TOOLING_PER_CLUSTER = {".last_activity", ".stopping", ".custom_containers"}    # <cluster>/<file>
-LIVE_TOOLING_TREES = {("work",), (".scans",), (".leases",), ("swhub-control-center", "work")}  # <cluster>/<tree>/**
+LIVE_TOOLING_TREES = {("work",), (".scans",), (".leases",), (".runner_slots",),
+                      ("swhub-control-center", "work")}  # <cluster>/<tree>/**
 
 
 def live_tooling_path(rel):

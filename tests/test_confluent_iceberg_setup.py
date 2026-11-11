@@ -133,6 +133,8 @@ class EntrypointTests(unittest.TestCase):
         helpers = self.root / "src/helpers"
         helpers.mkdir(parents=True)
         shutil.copy(REPO / "src/helpers/common_helpers.sh", helpers)
+        # ir_dispatch (common_helpers.sh) reads the run mode through this helper.
+        shutil.copy(REPO / "src/helpers/install_runner_mode.sh", helpers)
         shutil.copy(REPO / "scripts/install_confluent_platform/full_installprocess-confluent_platform.sh", self.platform)
         self.trace = self.root / "trace"
         (self.root / "env_bootstrap.sh").write_text(

@@ -54,7 +54,8 @@ off           Makes the flat layout the default again: runs that name no cluster
               configs in configs/*_config. Delineated clusters stay delineated and can still be
               named: --target-cluster NAME, --target-clusters a,b, --all-clusters or
               MCM_CLUSTER=NAME. Idle cluster containers are stopped. Refused while a run holds
-              a lease on any cluster. No cluster can be moved back to the flat layout.
+              a lease on any cluster, or (mode on) while an install slot launched from here
+              exists in any cluster. No cluster can be moved back to the flat layout.
 add           Registers a cluster. NAME defaults to the label after 'api.' in --url, or in
               OCP_URL from the environment. A new cluster folder is delineated for good, so
               add warns that this cannot be undone. A retired cluster is re-activated with
@@ -79,7 +80,10 @@ containers    status: each container's state, whether its cluster is targeted, i
               (with the mode off, only a cluster the run names: MCM_CLUSTER=NAME).
               stop and stop-all leave a busy container running.
 
-rename and remove are refused while the cluster has a live run or a busy container.
+rename and remove are refused while the cluster has a live run, a busy container, or an
+install slot launched from here (INSTALL_RUN_MODE=cluster): tear it down first with
+scripts/install_runner/x_install_runner.sh teardown --target-cluster NAME --slot SLOT.
+Add --forget when the cluster no longer exists: it clears only this machine's record.
 
   --help, -h  Show this help.
 EOF
@@ -98,6 +102,7 @@ _CP4D_REPO_ROOT="${MCM_CLI_REPO}"
 MCM_CLI_MIGRATE="${0:A:h}/migrate_to_multi_cluster.sh"
 
 source "${MCM_CLI_REPO}/src/helpers/multi_cluster_helpers.sh"
+source "${MCM_CLI_REPO}/src/helpers/install_runner_slots.sh"
 
 zmodload zsh/datetime
 zmodload -F zsh/stat b:zstat
@@ -255,11 +260,28 @@ _mcm_cli_refuse_live_run() {   # NAME
     fi
 }
 
-# Refuses when a run or a busy container means the cluster is in use. Podman must
-# answer: its containers have to be removed, and a VM that is down hides them.
+# An install handed to a pod (INSTALL_RUN_MODE=cluster) holds no lease and leaves no
+# local process, so only its launch record shows it (gap X15, decision D5). Removing,
+# renaming or purging the cluster would strand the slot: no command here could reach
+# it again, and its volume keeps a copy of the config with credentials.
+_mcm_cli_refuse_remote_slots() {   # NAME | --clusters
+    local records
+    if [[ "$1" == --clusters ]]; then
+        records="$(ir_slot_records --clusters)"
+    else
+        records="$(ir_slot_records --cluster "$1")"
+    fi
+    [[ -n "${records}" ]] || return 0
+    ir_slot_records_explain "${records}"
+    _mcm_cli_die "Nothing was changed."
+}
+
+# Refuses when a run, a busy container or a slot in the cluster means it is in use.
+# Podman must answer: its containers have to be removed, and a VM that is down hides them.
 _mcm_cli_require_quiet() {   # NAME
     local name="$1" container
     _mcm_cli_refuse_live_run "${name}"
+    _mcm_cli_refuse_remote_slots "${name}"
     if ! command -v podman >/dev/null 2>&1; then
         return 0
     fi
@@ -344,8 +366,8 @@ _mcm_cli_retired_clusters() {
 }
 
 cmd_status() {
-    local targeted="" delineated=""
-    local -a flat retired
+    local targeted="" delineated="" line
+    local -a flat retired remote
     if (( $# > 0 )); then
         _mcm_cli_bad_usage "status takes no arguments."
     fi
@@ -373,6 +395,12 @@ cmd_status() {
         print -r -- "Container idle timeout:    never (0)"
     fi
     print -r -- "Stop idle podman VM:       ${MCM_STOP_IDLE_PODMAN_VM}"
+    # From the launch records, so it needs no cluster (gap X16): <cluster>/<slot>.
+    for line in "${(@f)$(ir_slot_records)}"; do
+        [[ -n "${line}" ]] || continue
+        remote+=("${${${(ps:\t:)line}[1]}/#%-/flat}/${${(ps:\t:)line}[2]}")
+    done
+    print -r -- "Remote runs:               ${#remote}${remote:+ (${(j:, :)remote}; see x_install_runner.sh status --all-clusters)}"
     if [[ -n "${MCM_CLUSTER:-}" ]]; then
         print -r -- "This shell is pinned to:   ${MCM_CLUSTER} (MCM_CLUSTER)"
     fi
@@ -451,9 +479,11 @@ _mcm_cli_preflight_turn_on() {
     if [[ ! -f "${MCM_CLI_MIGRATE}" ]]; then
         _mcm_cli_die "The migration utility is missing: ${MCM_CLI_MIGRATE}"
     fi
-    zsh "${MCM_CLI_MIGRATE}" --preflight-only || rc=$?
+    # Nothing moves here, so a slot of a delineated cluster is no reason to refuse (only
+    # a flat slot's collect and teardown depend on the flat layout staying the default).
+    _MCM_MIG_FLAT_SLOTS_ONLY=true zsh "${MCM_CLI_MIGRATE}" --preflight-only || rc=$?
     if (( rc != 0 )); then
-        _mcm_cli_die "Multi-cluster mode stays off: a run in progress would switch clusters at its next step. Wait for it to finish, then retry."
+        _mcm_cli_die "Multi-cluster mode stays off (see the preflight errors above). Retry once they are cleared."
     fi
 }
 
@@ -568,6 +598,10 @@ cmd_off() {
     for name in ${=MCM_CLUSTERS}; do
         _mcm_cli_refuse_live_run "${name}"
     done
+    # Commands with no cluster flag would go flat, away from the slots' clusters.
+    if _mcm_cli_is_on; then
+        _mcm_cli_refuse_remote_slots --clusters
+    fi
 
     if _mcm_cli_is_on; then
         was_on=true
@@ -955,6 +989,12 @@ _mcm_cli_purge_preview() {   # NAME
     if [[ -f "${MCM_CLI_CLUSTERS_ROOT}/${name}/.home/.kube/config" ]]; then
         _mcm_warn "This includes the cluster's oc session (.home/.kube/config)."
     fi
+    # Gap X15: a purge deletes the config here, not the slot's copy in the cluster.
+    local slot_line
+    for slot_line in "${(@f)$(ir_slot_records --cluster "${name}")}"; do
+        [[ -n "${slot_line}" ]] || continue
+        _mcm_warn "Not deleted: install slot ${${(ps:\t:)slot_line}[2]} in the cluster (${${(ps:\t:)slot_line}[4]}) holds a copy of the config with credentials, which remains on the cluster. Tear it down first."
+    done
     reply=("${roots[@]}")
 }
 
@@ -996,6 +1036,11 @@ cmd_remove() {
         _mcm_cli_die "Cluster '${name}' is not registered. Registered: ${MCM_CLUSTERS:-none}. Use --purge to delete a leftover folder."
     fi
 
+    # With slots in the cluster, a purge shows what it would and would not delete
+    # before the refusal below.
+    if [[ "${purge}" == true && -n "$(ir_slot_records --cluster "${name}")" ]]; then
+        _mcm_cli_purge_preview "${name}"
+    fi
     _mcm_cli_require_quiet "${name}"
 
     if [[ "${purge}" == true ]]; then

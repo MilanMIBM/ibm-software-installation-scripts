@@ -112,6 +112,8 @@ def zsh(body, fake_dir=None, env=None, cwd=None):
     if fake_dir:
         run_env["PATH"] = f"{fake_dir}/bin:{run_env['PATH']}"
         run_env["FAKE_DIR"] = str(fake_dir)
+        # Teardown and collect keep launch records under ~/cpd-cli: never the real one.
+        run_env["HOME"] = str(Path(fake_dir) / "home")
     run_env.update(env or {})
     script = f'set -euo pipefail\nsource "{HELPERS}"\n{textwrap.dedent(body)}'
     return subprocess.run(["zsh", "-c", script], capture_output=True, text=True, env=run_env, cwd=cwd, timeout=120, check=False)
