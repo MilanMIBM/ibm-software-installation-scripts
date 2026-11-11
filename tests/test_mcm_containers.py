@@ -1055,6 +1055,16 @@ class TestT12Watcher:
         assert sb.container("mirror-local-registry")["running"] is True
         assert ["machine", "stop"] not in sb.calls("podman")
 
+    def test_vm_stays_up_while_a_podman_build_runs(self, sb):
+        """A buildah build container is listed only by `podman ps --external` (gap X8b)."""
+        set_up(sb)
+        old_container(sb)
+        old_activity(sb)
+        sb.add_external_container("install-runner-build-working-container")
+        watcher_once(sb)
+        assert sb.container(f"{PLAY}-itz-a")["running"] is False
+        assert ["machine", "stop"] not in sb.calls("podman")
+
     def test_vm_stop_can_be_turned_off(self, sb):
         set_up(sb, MCM_STOP_IDLE_PODMAN_VM="false")
         old_container(sb)

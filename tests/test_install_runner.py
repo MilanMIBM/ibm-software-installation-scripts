@@ -529,9 +529,7 @@ def collect_repo(sb):
     (local / "demo_vars.sh").write_text(f'export OCP_URL="{SANDBOX_URL}"\nexport OC_LOGIN="oc login {SANDBOX_URL} --token=fake"\n')
     (local / "unchanged_here.sh").write_text("old\n")
     (local / "edited_here.sh").write_text("my edit\n")
-    # A flat workstation load still needs configs/cp4d_config (source_env_setup.sh keeps its
-    # error for an empty one outside a cluster folder or a runner pod), as a real checkout has.
-    sb.write_config("cpd", ocp_url=SANDBOX_URL)
+    # No configs/cp4d_config: a flat load of another product needs none (gap X25).
     pod = sb.root / "pod"
     (pod / "configs/demo_config").mkdir(parents=True)
     for name in ("unchanged_here.sh", "edited_here.sh", "new.sh"):

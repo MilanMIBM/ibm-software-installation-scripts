@@ -99,10 +99,7 @@ export E2E_SC=demo
 export E2E_CONFIG_DIR="${CONFIGS_ROOT}/e2e_config"
 export INSTALL_RUN_MODE=cluster
 S
-# A flat checkout always has a CP4D config, and the workstation's env load keeps its
-# error for an empty configs/cp4d_config; the demo install never reads it.
-mkdir -p "${root}/configs/cp4d_config"
-print -r -- '# placeholder: the e2e demo install has its own config' > "${root}/configs/cp4d_config/cpd_vars.sh"
+# No configs/cp4d_config: a flat load of the demo's own config needs none (gap X25).
 print -r -- 'local edit stays' > "${root}/configs/e2e_config/edited.txt"
 print -r -- 'seed' > "${root}/configs/e2e_config/plain.txt"
 cat > "${root}/scripts/e2e/chain.sh" <<'S'

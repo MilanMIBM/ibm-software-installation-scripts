@@ -64,14 +64,17 @@
 #   mcm_env_setup_no_fanout         same for a sourced load, which ends on one cluster
 #   mcm_fanout "$@"                 multi-target run: re-runs the script per cluster, exits
 #   mcm_exit_no_trap CODE           ends a process without the script's EXIT trap
-#   mcm_script_policy SCRIPT        allow, single-only or confirm (plan 5.8)
+#   mcm_script_policy SCRIPT        allow, single-only or confirm (plan 5.8); an
+#                                   exported MCM_SCRIPT_POLICY wins
 #   mcm_pin NAME                    exports the per-cluster values of this run
 #   mcm_container_name [NAME]       olm-utils container name
 #   mcm_mirror_destination_key ROOT folder name under registries/
 #
 # Containers on and off (plan 5.7, 5.7.1):
 #   mcm_sync_containers [stop-only] start this run's container, stop what is no
-#                                   longer targeted, lease, watcher. Never fails
+#                                   longer targeted, lease, watcher. Never fails.
+#                                   The env load passes stop-only for MCM_SYNC_MODE=stop-only
+#                                   and for a chain whose run goes to a pod
 #   mcm_targeted_clusters           run's targets plus the state file's selection
 #   mcm_container_names [NAME]      one cluster's names (no NAME: the flat pair), with
 #                                   any custom Control Center name sync has recorded
@@ -79,6 +82,7 @@
 #   mcm_container_busy NAME         0 busy, 1 idle (NAME: a container or a cluster);
 #                                   _MCM_BUSY_WHY says what is keeping it busy
 #   mcm_take_lease [NAME]           marks this top-level run as live on the cluster
+#   mcm_release_lease [NAME]        drops that mark again, for a lease held only for a step
 #   mcm_ensure_idle_watcher         starts multi_cluster_idle_watcher.sh if none runs
 #   mcm_stop_idle_after_off         mode just went off: stops idle cluster containers,
 #                                   warns about busy ones. Needs no watcher. Never fails
@@ -1445,9 +1449,22 @@ _mcm_describe_pin() {
 # because a restore replaces what is there: an OADP restore a cluster's instance,
 # 2.6_restore_transfer_bundle.sh the cluster's work dir (then it restarts the container).
 # cpd-cli_toggle_olm_image.sh force-removes the cluster's container and matches no word.
+# A script whose verbs differ (scripts/install_runner/x_install_runner.sh) exports
+# MCM_SCRIPT_POLICY before its env load instead; it wins over the file name.
 mcm_script_policy() {
     emulate -L zsh
     local script="${1:-}" repo relative name
+    case "${MCM_SCRIPT_POLICY:-}" in
+        "") ;;
+        allow|single-only|confirm)
+            print -r -- "${MCM_SCRIPT_POLICY}"
+            return 0
+            ;;
+        *)
+            _mcm_err "MCM_SCRIPT_POLICY must be allow, single-only or confirm (got '${MCM_SCRIPT_POLICY}')."
+            return 1
+            ;;
+    esac
     repo="$(mcm_repo_root)" || return 1
     relative="${${script:A}#${repo:A}/}"
     name="${relative:t}"
@@ -1982,12 +1999,14 @@ mcm_targeted_clusters() {
 
 # ---- leases ----------------------------------------------------------------
 # An open s_env.sh shell or a TUI launcher can stay open for days and must not keep
-# a container on. The launchers are the "single only" group of plan 5.8.
+# a container on. The launchers are the "single only" group of plan 5.8. The in-cluster
+# runner's control scripts need only oc, and an attach can last hours (gap X8).
 _mcm_long_lived_load() {
     [[ -o interactive ]] && return 0
     (( ${funcstack[(I)*s_env.sh]} )) && return 0
     case "${ZSH_ARGZERO:t}" in
         x_service_instance_manager.sh|x_cr_state_dashboard.sh|x_runner_shell.sh) return 0 ;;
+        x_install_runner.sh|x_watch_install.sh) return 0 ;;
     esac
     return 1
 }
@@ -2026,6 +2045,24 @@ mcm_take_lease() {
         return 0
     fi
     export _MCM_LEASE_HELD="${_MCM_LEASE_HELD:-} ${cluster}"
+    return 0
+}
+
+# Drops this run's lease on the cluster (default MCM_CLUSTER), for a lease taken only
+# around one podman step (the runner's local image build, gap X8b). Never fails the run.
+mcm_release_lease() {
+    emulate -L zsh
+    local cluster="${1:-${MCM_CLUSTER:-}}"
+    local -a held
+    [[ -n "${cluster}" ]] || return 0
+    rm -f "$(_mcm_clusters_home)/${cluster}/.leases/$$" 2>/dev/null || true
+    held=(${=_MCM_LEASE_HELD:-})
+    held=("${(@)held:#${cluster}}")
+    if (( ${#held} )); then
+        export _MCM_LEASE_HELD=" ${(j: :)held}"
+    else
+        unset _MCM_LEASE_HELD
+    fi
     return 0
 }
 

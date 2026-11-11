@@ -301,6 +301,11 @@ _cfg_copy_ok=1
 # config at all (Concert-only, mirror-only), so an empty glob is fine there. The flat layout keeps its error for a missing cp4d_config.
 if [[ -n "${MCM_CLUSTER:-}" || -n "${IR_IN_RUNNER:-}" ]]; then
     _cfg_files=("${CONFIG_DIR}/"*(N))
+elif [[ ! -d "${CONFIG_DIR}" && -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all && "${ENV_TARGET_FILE:t}" != cpd_vars.sh ]]; then
+    # A flat load of another product (Concert, DataStax MC, ...) on a checkout that has
+    # no CP4D config at all: nothing of CP4D to copy (gap X25). A CP4D load, a load of
+    # every config, or an empty cp4d_config folder still stops here.
+    _cfg_files=()
 else
     _cfg_files=("${CONFIG_DIR}/"*)
 fi
@@ -355,7 +360,21 @@ else
 fi
 
 # Multi-cluster mode: containers follow the target (plan 5.7). Never fails the load.
-[[ -z "${MCM_CLUSTER:-}" ]] || mcm_sync_containers
+# "stop-only" stops what left the target set but starts nothing and takes no lease:
+# asked for by a caller (MCM_SYNC_MODE, set by the runner's control scripts), and
+# chosen here for a chain whose run moves to a pod (gap X8). The run mode is known
+# only now, after the config load.
+if [[ -n "${MCM_CLUSTER:-}" ]]; then
+    _env_sync_mode=""
+    case "${MCM_SYNC_MODE:-}" in
+        ""|stop-only) _env_sync_mode="${MCM_SYNC_MODE:-}" ;;
+        *) print -r -- "[WARN] MCM_SYNC_MODE='${MCM_SYNC_MODE}' is not known (only stop-only); syncing containers as usual." >&2 ;;
+    esac
+    source "${_env_repo}/src/helpers/install_runner_mode.sh"
+    ir_remote_run_load "${_env_repo}" && _env_sync_mode=stop-only
+    mcm_sync_containers ${_env_sync_mode:+"${_env_sync_mode}"}
+    unset _env_sync_mode
+fi
 
 unset _f _oc_url _env_prev _env_repo _env_loaded _env_overrides _env_script _env_key _CP4D_ENV_TARGET_WHY
 unset -f _env_log _env_say

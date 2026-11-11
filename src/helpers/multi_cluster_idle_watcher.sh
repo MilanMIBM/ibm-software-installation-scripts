@@ -158,8 +158,10 @@ _w_sleep() {
 }
 
 # Prints the names of the running containers. Fails when podman cannot be reached.
+# --external adds the containers podman itself does not run, such as a podman build's
+# (buildah) container: a build in progress must keep the VM up (gap X8b).
 _w_running_names() {
-    podman ps --format '{{.Names}}' 2>/dev/null
+    podman ps --external --format '{{.Names}}' 2>/dev/null
 }
 
 # 0 when this pass stopped the container.

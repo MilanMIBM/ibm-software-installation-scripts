@@ -477,10 +477,14 @@ h_steps_run() {
 # it. Inside a runner pod IR_IN_RUNNER is set, so the chain just runs.
 ir_dispatch() {
     [[ -z "${IR_IN_RUNNER:-}" ]] || return 0
-    case "${INSTALL_RUN_MODE:-local}" in
+    # A one-off --run-mode (INSTALL_RUN_MODE_OVERRIDE) beats the config's value (gap X12).
+    source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_mode.sh"
+    local REPLY
+    ir_run_mode
+    case "${REPLY}" in
         local)   return 0 ;;
         cluster) ;;
-        *)       h_die "INSTALL_RUN_MODE must be local or cluster (got '${INSTALL_RUN_MODE}')." ;;
+        *)       h_die "${${INSTALL_RUN_MODE_OVERRIDE:+INSTALL_RUN_MODE_OVERRIDE}:-INSTALL_RUN_MODE} must be local or cluster (got '${REPLY}')." ;;
     esac
     source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_helpers.sh"
     ir_handoff "$@"

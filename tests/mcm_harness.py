@@ -55,6 +55,7 @@ Fake podman, modelled state (sb.fake_state() returns a copy, sb.update_fake_stat
       `podman exec NAME cmd...` uses the first rule whose text occurs in the joined command. Rules are tried in the
       order added. No rule: rc 0, no output. Exec on a stopped or missing container is rc 125, as with real podman.
   sb.add_event(container, status="exec", when=None, time_text=None)   when: epoch seconds, default now
+  sb.add_external_container(name)      a container podman does not run (a buildah build): only ps --external lists it
   sb.set_machine("running"|"stopped")   anything but "running" makes container commands fail
   sb.set_podman_reachable(False)        same failure, while 'machine inspect' still answers
   Supported: machine inspect|stop|start|list|init, info, version, ps, inspect, start, stop, rm, exec, run, events,
@@ -274,6 +275,12 @@ def ps(state, args):
                 keep = False
         if keep:
             views.append(view)
+    # --external: containers in storage that podman does not run (a buildah build). Real podman
+    # lists them with State "storage" (pkg/ps/ps.go ListStorageContainer).
+    if "--external" in args:
+        for name in state.get("external", []):
+            views.append({"Names": name, "Name": name, "ID": "", "Id": "", "Image": "", "State": "storage",
+                          "Status": "", "StartedAt": ""})
     if fmt and fmt[0] == "json":
         out(json.dumps(views))
     elif fmt:
@@ -646,6 +653,9 @@ class Sandbox:
 
     def container(self, name):
         return self.fake_state()["containers"].get(name)
+
+    def add_external_container(self, name):
+        self.update_fake_state(lambda state: state.setdefault("external", []).append(name))
 
     def add_exec_rule(self, contains, stdout="", stderr="", rc=0, container="*"):
         rule = {"container": container, "contains": contains, "stdout": stdout, "stderr": stderr, "rc": rc}

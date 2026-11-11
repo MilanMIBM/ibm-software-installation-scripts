@@ -190,10 +190,6 @@ GUARD_RULES = {
         globs=SHELL_GLOBS,
         fallback_vars=("CONFIGS_ROOT",),
         allow_lines={
-            # Gap X6: install discovery still globs the flat configs/; phase I3 moves it to ${CONFIGS_ROOT}.
-            "scripts/install_runner/x_install_runner.sh": (
-                r'found=\("\$\{REPO_DIR\}"/configs/\*/\$\{target\}_vars\.sh\(N\)\)',
-                "flat install discovery, fixed in phase I3 (gap X6)"),
             "src/utilities/multi_cluster_management_utils/migrate_to_multi_cluster.sh": (
                 r'^MCM_MIG_CONFIGS="\$\{MCM_MIG_REPO\}/configs"$',
                 "the migration reads the flat configs/ itself: it is the source it moves into configs/clusters/"),

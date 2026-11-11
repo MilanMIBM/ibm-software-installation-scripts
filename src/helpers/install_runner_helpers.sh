@@ -117,6 +117,14 @@ ir_slot() {   # <id> -> REPLY = slot
 ir_namespace() { REPLY="install-runner-$1"; }
 ir_admin_binding() { REPLY="install-runner-$1-admin"; }
 
+# What a printed next step adds so it acts on this run's cluster (gap X14). Slot names
+# do not carry the cluster, so without it a pasted command acts on the current cluster,
+# or fans out. Empty for a flat run.
+_ir_tc() {
+    [[ -n "${MCM_CLUSTER:-}" ]] && print -rn -- " --target-cluster ${MCM_CLUSTER}"
+    return 0
+}
+
 # =============================================================================
 # Manifests
 # =============================================================================
@@ -199,6 +207,32 @@ _ir_prune_builds() {   # <build config>
     return 0
 }
 
+# Multi-cluster mode: a cluster-mode chain's env load takes no lease and starts nothing
+# (gap X8), so the local build holds a lease of its own while podman works. Without it
+# the idle watcher may stop the VM in the middle of a build or push (gap X8b). 0 when
+# this call took the lease, 1 when the run already held one (a local-mode load's).
+_ir_build_lease_take() {
+    local held=1
+    (( $+functions[mcm_take_lease] )) || source "${_CP4D_REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
+    [[ " ${_MCM_LEASE_HELD:-} " == *" ${MCM_CLUSTER} "* ]] || held=0
+    mcm_take_lease "${MCM_CLUSTER}"
+    # The watcher may be stopping the VM right now; then it is started again.
+    _mcm_wait_vm_stopping
+    if mcm_podman_machine_needs_prep; then
+        ir_info "Starting the podman VM for the image build (this can take a minute)..."
+        zsh "${_CP4D_REPO_ROOT}/scripts/0.0_make_executable.sh" || ir_die "Could not start the podman VM for the image build."
+        ir_info "Podman VM is up."
+    fi
+    return "${held}"
+}
+
+# After the push: counts as activity on the cluster, and drops a lease the build took.
+_ir_build_lease_done() {   # <true when _ir_build_lease_take took the lease>
+    [[ -n "${MCM_CPD_CLI_WORKSPACE:-}" ]] && { mkdir -p "${MCM_CPD_CLI_WORKSPACE}" && touch "${MCM_CPD_CLI_WORKSPACE}/.last_activity"; } 2>/dev/null
+    [[ "$1" == true ]] && mcm_release_lease "${MCM_CLUSTER}"
+    return 0
+}
+
 ir_image_ensure() {   # <id> -> REPLY = image reference
     local id="$1" var base tag source url
     source="$(ir_image_source)"
@@ -240,12 +274,17 @@ ir_image_ensure() {   # <id> -> REPLY = image reference
                 || ir_die "build-local-push needs: ${REPLY}"
             local ref="${PRIVATE_REGISTRY_LOCATION}/install-runner/install-runner:${tag}"
             url="$(_ir_cpd_cli_url "${id}")" || ir_die "Could not resolve the Linux cpd-cli download. Set INSTALL_RUNNER_CPD_CLI_URL."
+            local lease_taken=false
+            if [[ -n "${MCM_CLUSTER:-}" ]] && _ir_build_lease_take; then
+                lease_taken=true
+            fi
             ir_info "Building ${ref} here (linux/amd64)..."
             podman build --platform linux/amd64 -f "${IR_SRC}/image/Containerfile" -t "${ref}" \
                 --build-arg "BASE_IMAGE=${base}" --build-arg "CPD_CLI_URL=${url}" "${IR_SRC}/image"
             print -r -- "${PRIVATE_REGISTRY_PUSH_PASSWORD}" \
                 | podman login --username "${PRIVATE_REGISTRY_PUSH_USER}" --password-stdin "${PRIVATE_REGISTRY_LOCATION%%/*}" >/dev/null
             podman push "${ref}"
+            [[ -z "${MCM_CLUSTER:-}" ]] || _ir_build_lease_done "${lease_taken}"
             REPLY="${ref}"
             ;;
         *) ir_die "Unknown INSTALL_RUNNER_IMAGE_SOURCE=${source}" ;;
@@ -832,7 +871,7 @@ ir_handoff() {   # <chain args...>
     local run="$(date -u +%Y%m%dT%H%M%SZ)"
     ir_stage "${id}" "${ns}" "${chain}" "${run}" "$@"
     ir_info "Run ${run} is in slot ${slot}. You can close this terminal: the install keeps going."
-    ir_info "Watch it again with: scripts/install_runner/x_watch_install.sh --install ${id}"
+    ir_info "Watch it again with: scripts/install_runner/x_watch_install.sh --install ${id}$(_ir_tc)"
     ir_attach "${slot}" --from-start
     exit $?
 }
@@ -846,14 +885,14 @@ ir_refuse_busy_slot() {   # <namespace> <slot>
     case "${state}" in
         ""|idle) return 0 ;;
         staged|running|interrupted)
-            ir_die "Slot ${slot} already has a run (${state}). Watch it: ${tool} attach --slot ${slot}" ;;
+            ir_die "Slot ${slot} already has a run (${state}). Watch it: ${tool} attach --slot ${slot}$(_ir_tc)" ;;
     esac
     [[ "${INSTALL_RUNNER_NEW_RUN:-false}" == true ]] && return 0
     case "${state}" in
         failed|stopped)
-            ir_die "Slot ${slot} has a ${state} run. Continue it (${tool} resume --slot ${slot}), or set INSTALL_RUNNER_NEW_RUN=true to start over." ;;
+            ir_die "Slot ${slot} has a ${state} run. Continue it (${tool} resume --slot ${slot}$(_ir_tc)), or set INSTALL_RUNNER_NEW_RUN=true to start over." ;;
     esac
-    [[ "${collected}" == yes ]] || ir_die "Slot ${slot} has a finished run that isn't collected. Run ${tool} collect --slot ${slot}, or set INSTALL_RUNNER_NEW_RUN=true."
+    [[ "${collected}" == yes ]] || ir_die "Slot ${slot} has a finished run that isn't collected. Run ${tool} collect --slot ${slot}$(_ir_tc), or set INSTALL_RUNNER_NEW_RUN=true."
 }
 
 # =============================================================================
@@ -904,8 +943,15 @@ ir_attach() {   # <slot> [--plain] [--from-start] [--last N]
         offset="$(<"${offset_file}")"
         state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
         case "${state}" in
-            completed)               rm -f "${offset_file}"; trap - INT; ir_info "Run finished: ${state}. Next: x_install_runner.sh collect --slot ${slot}"; return 0 ;;
-            completed-with-warnings) rm -f "${offset_file}"; trap - INT; ir_warn "Run finished: ${state}. See x_install_runner.sh status, then collect."; return 0 ;;
+            completed)               rm -f "${offset_file}"; trap - INT; ir_info "Run finished: ${state}. Next: x_install_runner.sh collect --slot ${slot}$(_ir_tc)"; return 0 ;;
+            completed-with-warnings)
+                rm -f "${offset_file}"; trap - INT
+                if [[ -n "${MCM_CLUSTER:-}" ]]; then
+                    ir_warn "Run finished: ${state}. See x_install_runner.sh status$(_ir_tc), then collect --slot ${slot}$(_ir_tc)."
+                else
+                    ir_warn "Run finished: ${state}. See x_install_runner.sh status, then collect."
+                fi
+                return 0 ;;
             failed|stopped)          rm -f "${offset_file}"; trap - INT; ir_error_state "${slot}" "${state}"; return 1 ;;
         esac
         ${said_lost} || print -r -- "[attach] Connection lost (run state: ${state:-unknown}); reconnecting..." >&2
@@ -920,7 +966,7 @@ ir_attach() {   # <slot> [--plain] [--from-start] [--last N]
 }
 
 ir_error_state() {   # <slot> <state>
-    h_error "Run ${2} in slot ${1}. Fix the cause, then: x_install_runner.sh resume --slot ${1}"
+    h_error "Run ${2} in slot ${1}. Fix the cause, then: x_install_runner.sh resume --slot ${1}$(_ir_tc)"
 }
 
 # =============================================================================

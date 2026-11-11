@@ -89,11 +89,26 @@ while (( $# )); do
             export ENV_TARGET="$2"; _CP4D_ENV_TARGET_WHY="--env-target"; shift 2 ;;
         --env-target=*)
             export ENV_TARGET="${1#--env-target=}"; _CP4D_ENV_TARGET_WHY="--env-target"; shift ;;
+        # One run in another run mode than the config's (gap X12). Configs set
+        # INSTALL_RUN_MODE and load after this, so the flag goes to a name they never set.
+        # A missing or bad value stops the run here, before any fan-out: the flag is
+        # never passed on to the script.
+        --run-mode)
+            [[ "${2:-}" == (local|cluster) ]] || { echo "[ERROR] --run-mode needs local or cluster" >&2; unset _argv; [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
+            export INSTALL_RUN_MODE_OVERRIDE="$2"; shift 2 ;;
+        --run-mode=*)
+            export INSTALL_RUN_MODE_OVERRIDE="${1#--run-mode=}"; shift ;;
         *)  _argv+=("$1"); shift ;;
     esac
 done
 set -- "${_argv[@]}"
 unset _argv
+# Also checks a value from the environment, before a fan-out runs it on every cluster.
+if [[ -n "${INSTALL_RUN_MODE_OVERRIDE:-}" && "${INSTALL_RUN_MODE_OVERRIDE}" != (local|cluster) ]]; then
+    echo "[ERROR] The run mode must be local or cluster (--run-mode or INSTALL_RUN_MODE_OVERRIDE is '${INSTALL_RUN_MODE_OVERRIDE}')." >&2
+    [[ -o interactive ]] && return 1
+    mcm_exit_no_trap 1
+fi
 
 # Multi-cluster mode: resolve the target clusters (plan 5.4) before anything reads a
 # per-cluster path. One target pins this process to it; several re-run the calling
@@ -127,6 +142,12 @@ if [[ -z "${ENV_TARGET:-}" ]]; then
         scripts/private_registry_mirroring/*) ENV_TARGET=registry_mirror; _CP4D_ENV_TARGET_WHY="script folder scripts/private_registry_mirroring/" ;;
     esac
     unset _caller
+    # A script whose target depends on which configs this run's cluster has (the
+    # in-cluster runner's x_install_runner.sh) defines this hook. It runs here: after
+    # the cluster is pinned, before the config is loaded. $1 is the configs folder.
+    if [[ -z "${ENV_TARGET:-}" ]] && (( $+functions[env_bootstrap_target_hook] )); then
+        env_bootstrap_target_hook "${MCM_CLUSTER_ROOT:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}}"
+    fi
 fi
 
 # Already loaded for this ENV_TARGET? Nothing to do. (_CP4D_ENV_LOADED holds the
