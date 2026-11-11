@@ -82,6 +82,15 @@ def idle_scans(box):
     box.add_exec_rule("mcm-proc-scan", stdout="self 999\n1 0 sleep infinity\n")
 
 
+def quiet_process_table(box):
+    """Fake ps and lsof with nothing running: `on` and the migration scan the process table for
+    cpd-cli manage and repo scripts, and the real one holds whatever this machine runs right now."""
+    for tool in ("ps", "lsof"):
+        path = box.bin / tool
+        path.write_text("#!/bin/zsh\nexit 0\n")
+        path.chmod(0o755)
+
+
 def mcm_state(box):
     return (box.repo / "configs/multi_cluster_management.sh").read_text()
 
@@ -484,6 +493,7 @@ def test_turning_the_mode_on_is_not_refused_by_a_slot_of_a_delineated_cluster(sb
     """Nothing moves when `on` has nothing to migrate, and --target-cluster reaches that slot in either mode."""
     clusters(sb, names=("itz-a",))
     idle_scans(sb)
+    quiet_process_table(sb)
     (sb.repo / "configs/multi_cluster_management.sh").write_text(
         mcm_state(sb).replace('MULTI_CLUSTER_MANAGEMENT="true"', 'MULTI_CLUSTER_MANAGEMENT="false"'))
     write_record(sb, "itz-a")
