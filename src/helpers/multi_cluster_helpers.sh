@@ -1512,6 +1512,14 @@ _mcm_fanout_clean_env() {
         _mcm_forget_flat_config
     fi
     _mcm_forget_pin || return 1
+    # Runner settings name one cluster's storage class, registry or image, so values
+    # exported in this shell must not reach the others: each child reads its own from
+    # its cpd_vars.sh. INSTALL_RUN_MODE_OVERRIDE (--run-mode) stays, it is meant for all.
+    # So do the one-run switches below: they are not in cpd_vars.sh, they name no
+    # cluster, and NEW_RUN is the only way to start over on every cluster at once.
+    local -a _mcm_ir_names=(${(k)parameters[(I)INSTALL_RUNNER_*]})
+    _mcm_ir_names=(${_mcm_ir_names:#(INSTALL_RUNNER_NEW_RUN|INSTALL_RUNNER_SWHCC_REIMPORT|INSTALL_RUNNER_CPD_CLI_URL|INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY)})
+    _mcm_forget_names INSTALL_RUN_MODE ${_mcm_ir_names}
     return 0
 }
 

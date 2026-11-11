@@ -67,6 +67,32 @@ def records_to_dict(records):
     return {r["key"]: r["value"] for r in records}
 
 
+@app.function
+def existing_config_value(key, path):
+    # Value of an uncommented export in an already saved cpd_vars.sh (path: the selected
+    # cluster's file or None), so a re-save keeps the run mode and runner settings set for
+    # that cluster, by hand or by an earlier save. The last export wins, as in the shell.
+    import re
+
+    if not path:
+        return None
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return None
+    found = list(
+        re.finditer(
+            rf"^[ \t]*export[ \t]+{re.escape(key)}=(?:\"([^\"]*)\"|'([^']*)'|([^\s#'\"]*))[ \t]*(?:#.*)?$",
+            text,
+            re.M,
+        )
+    )
+    if not found:
+        return None
+    return next(g for g in found[-1].groups() if g is not None)
+
+
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
@@ -299,6 +325,7 @@ def _():
         "swhcc_indicator": "Deploy the **other workloads indicator**, so the other workloads account shows requests and usage? *Unsupported by IBM.*",
         "swhcc_cluster": "**Where does Control Center run?**",
         "swhcc_oauth_secret": "**OAuth client secret:**",
+        "install_run_mode": "**Where do the install chains run?**",
     }
     return (widget_labels,)
 
@@ -370,12 +397,14 @@ def _(
     cluster_credentials_stack,
     cp4d_install_project_naming_records,
     cp4d_private_registry_naming_records,
+    install_runner_stack,
 ):
     install_specs_accordion = mo.accordion(
         items={
             "**Cluster Credentials**": cluster_credentials_stack,
             "**Cluster Project Setup**": cp4d_install_project_naming_records,
             "*Private Registry Credentials* ***(optional)***": cp4d_private_registry_naming_records,
+            "*In-cluster runs* ***(optional)***": install_runner_stack,
         },
         multiple=True,
     )
@@ -425,6 +454,93 @@ def _(
     )
     component_specs_accordion
     return
+
+
+@app.cell
+def _(mcm_vars_file, widget_labels):
+    # Starts from the selected cluster's saved file, so a save never turns a cluster
+    # that was set to run in the cluster back to local.
+    _options = {
+        "local - on this machine": "local",
+        "cluster - in a pod on the cluster": "cluster",
+    }
+    _saved = existing_config_value("INSTALL_RUN_MODE", mcm_vars_file())
+    install_run_mode_select = mo.ui.dropdown(
+        label=widget_labels.get("install_run_mode"),
+        options=_options,
+        value=next((k for k, v in _options.items() if v == _saved), "local - on this machine"),
+        allow_select_none=False,
+        full_width=True,
+    )
+    return (install_run_mode_select,)
+
+
+@app.cell
+def _(install_run_mode_select):
+    # The name the cpd_vars.sh template reads.
+    install_run_mode = install_run_mode_select.value
+    return (install_run_mode,)
+
+
+@app.cell
+def _(mcm_vars_file, sortable_kv):
+    # Blank means the built-in default, which the generated file shows as a commented line.
+    # Values come from the selected cluster's saved file: a storage class or image names
+    # one cluster, so it is kept per cluster.
+    _keys = (
+        "INSTALL_RUNNER_STORAGE_CLASS",
+        "INSTALL_RUNNER_IMAGE_SOURCE",
+        "INSTALL_RUNNER_IMAGE",
+        "INSTALL_RUNNER_PVC_SIZE",
+        "INSTALL_RUNNER_AUTO_RESUME",
+        "INSTALL_RUNNER_MAX_RESUMES",
+        "INSTALL_RUNNER_KEEP_ADMIN",
+        "INSTALL_RUNNER_NODE_SELECTOR",
+        "INSTALL_RUNNER_TTY_SIZE",
+        "INSTALL_RUNNER_SWHCC_IMAGE",
+        "INSTALL_RUNNER_SWHCC_MEMORY_LIMIT",
+    )
+    install_runner_records = sortable_kv(
+        label=(
+            "In-cluster runner settings (blank = default: block storage class, image built in the cluster, "
+            "20Gi volume, auto-resume true, 3 resumes, cluster-admin removed after the run, any node, "
+            "120x50 terminal, Control Center image imported from cp.icr.io, 4Gi Control Center memory):"
+        ),
+        value=[
+            {"key": _k, "value": existing_config_value(_k, mcm_vars_file()) or ""}
+            for _k in _keys
+        ],
+        addable=False,
+        removable=False,
+        editable=True,
+        movable=False,
+    )
+    return (install_runner_records,)
+
+
+@app.cell
+def _(install_runner_records):
+    install_runner_settings = records_to_dict(
+        install_runner_records.value.get("value")
+    )
+    return (install_runner_settings,)
+
+
+@app.cell
+def _(install_run_mode_select, install_runner_records, widget_width):
+    install_runner_stack = mo.vstack(
+        [
+            mo.md(
+                "With **cluster**, the install chains run in a pod on the cluster, so this machine "
+                "can go off during the install. See *Running an install in the cluster* in the README. "
+                "The settings below are used only then."
+            ),
+            install_run_mode_select.style({"width": widget_width}),
+            install_runner_records,
+        ],
+        gap=1,
+    )
+    return (install_runner_stack,)
 
 
 @app.cell
@@ -1242,6 +1358,24 @@ def _(mcm_target):
         label=mcm_nb.overwrite_label(mcm_target), value=False
     )
     return (mcm_overwrite_checkbox,)
+
+
+@app.cell
+def _():
+    # The saved cpd_vars.sh the run-mode widgets start from. State, not a plain value, so
+    # those widgets rebuild only when another saved file is selected, not on every keystroke.
+    mcm_vars_file, mcm_set_vars_file = mo.state(
+        mcm_nb.startup_vars_file("cp4d_config", "cpd_vars.sh")
+    )
+    return mcm_set_vars_file, mcm_vars_file
+
+
+@app.cell
+def _(cpd_vars_filename, mcm_set_vars_file, mcm_target, mcm_vars_file):
+    _selected = mcm_nb.existing_vars_file(mcm_target, cpd_vars_filename)
+    if _selected != mcm_vars_file():
+        mcm_set_vars_file(_selected)
+    return
 
 
 @app.cell

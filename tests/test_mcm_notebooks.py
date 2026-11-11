@@ -522,9 +522,9 @@ NOTEBOOK_DRIVER = textwrap.dedent("""\
         defs["re"] = re
     outputs, values = module.app.run(defs=defs)
     wanted = {}
-    for key in ("admin_password_input",):
+    for key in ("admin_password_input", "install_run_mode_select", "install_runner_settings"):
         if key in values:
-            wanted[key] = values[key].value
+            wanted[key] = getattr(values[key], "value", values[key])
     print("RESULT=" + json.dumps({"saved": any("Saved to" in str(getattr(o, "text", "")) for o in outputs),
                                   "not_saved": any("Not saved" in str(getattr(o, "text", "")) for o in outputs),
                                   "values": wanted}))
@@ -639,6 +639,145 @@ class TestNotebooksHeadless:
         values = self._values(editor, save_to_config_dir_button=False, file_getter=str(saved), **extra)
         result = run_notebook(nb_sb, notebook, values)
         assert result["values"]["admin_password_input"] == "from-alpha"
+
+
+CPD_TEMPLATE = REPO / "src/helpers/config_file_jinja2_templates/cpd_variable_template.sh.j2"
+RUNNER_KNOBS = {
+    "INSTALL_RUNNER_STORAGE_CLASS": "",
+    "INSTALL_RUNNER_IMAGE_SOURCE": "build-in-cluster",
+    "INSTALL_RUNNER_IMAGE": "",
+    "INSTALL_RUNNER_PVC_SIZE": "20Gi",
+    "INSTALL_RUNNER_AUTO_RESUME": "true",
+    "INSTALL_RUNNER_MAX_RESUMES": "3",
+    "INSTALL_RUNNER_KEEP_ADMIN": "false",
+    "INSTALL_RUNNER_NODE_SELECTOR": "",
+    "INSTALL_RUNNER_TTY_SIZE": "120x50",
+    "INSTALL_RUNNER_SWHCC_IMAGE": "",
+    "INSTALL_RUNNER_SWHCC_MEMORY_LIMIT": "4Gi",
+}
+
+
+def render_cpd_vars(**values):
+    """The cpd_vars.sh template with the fewest values it needs to render, plus `values`."""
+    from helpers.jinja2_template_rendering_helpers import render_template_from_environment
+
+    base = {"cp4d_install_project_naming": {}, "cp4d_private_registry_naming": {}, "components_to_install_str": ""}
+    return render_template_from_environment(template_path=str(CPD_TEMPLATE), extra_vars={**base, **values}, print_missing=False)
+
+
+def lines_of(text, prefix):
+    return [line for line in text.splitlines() if line.startswith(prefix)]
+
+
+class TestRunnerTemplate:
+    """I7: INSTALL_RUN_MODE and the INSTALL_RUNNER_* knobs in cpd_vars.sh."""
+
+    def test_default_is_local_with_every_knob_commented_at_its_default(self):
+        text = render_cpd_vars()
+        assert lines_of(text, "export INSTALL_RUN") == ['export INSTALL_RUN_MODE="local"']
+        assert lines_of(text, "# export INSTALL_RUNNER_") == [f'# export {k}="{v}"' for k, v in RUNNER_KNOBS.items()]
+        # The knob block keeps one blank line before the cluster section, as before it was added.
+        assert '# export INSTALL_RUNNER_SWHCC_MEMORY_LIMIT="4Gi"\n\nexport OCP_URL=' in text
+
+    @pytest.mark.parametrize("blank", ["", None])
+    def test_a_blank_mode_is_local(self, blank):
+        assert 'export INSTALL_RUN_MODE="local"' in render_cpd_vars(install_run_mode=blank)
+
+    def test_set_values_are_exported_and_the_rest_stay_commented(self):
+        text = render_cpd_vars(
+            install_run_mode="cluster",
+            install_runner_settings={"INSTALL_RUNNER_STORAGE_CLASS": " ocs-a ", "INSTALL_RUNNER_NODE_SELECTOR": "role=infra",
+                                     "INSTALL_RUNNER_PVC_SIZE": "", "INSTALL_RUNNER_IMAGE": None},
+        )
+        assert lines_of(text, "export INSTALL_RUN") == [
+            'export INSTALL_RUN_MODE="cluster"',
+            'export INSTALL_RUNNER_STORAGE_CLASS="ocs-a"',
+            'export INSTALL_RUNNER_NODE_SELECTOR="role=infra"',
+        ]
+        commented = lines_of(text, "# export INSTALL_RUNNER_")
+        assert len(commented) == len(RUNNER_KNOBS) - 2
+        assert '# export INSTALL_RUNNER_PVC_SIZE="20Gi"' in commented and '# export INSTALL_RUNNER_IMAGE=""' in commented
+
+    def test_the_rendered_file_is_valid_zsh_and_sets_the_values(self, tmp_path):
+        path = tmp_path / "cpd_vars.sh"
+        path.write_text(render_cpd_vars(install_run_mode="cluster", install_runner_settings={"INSTALL_RUNNER_MAX_RESUMES": "5"}))
+        assert subprocess.run(["zsh", "-n", str(path)], capture_output=True, check=False).returncode == 0
+        done = subprocess.run(
+            ["zsh", "-c", 'source "$1" >/dev/null 2>&1; print -r -- "$INSTALL_RUN_MODE ${INSTALL_RUNNER_MAX_RESUMES:-} ${INSTALL_RUNNER_PVC_SIZE:-unset}"', "x", str(path)],
+            capture_output=True, text=True, env={"PATH": os.environ["PATH"], "HOME": str(tmp_path)}, check=False,
+        )
+        assert done.stdout.strip() == "cluster 5 unset"
+
+
+SAVED_RUNNER_VARS = (
+    'export OCP_URL="{url}"\n'
+    '# local or cluster\n'
+    'export INSTALL_RUN_MODE="local"\n'
+    'export INSTALL_RUN_MODE="cluster"\n'
+    "export INSTALL_RUNNER_STORAGE_CLASS='ocs-alpha'\n"
+    '  export INSTALL_RUNNER_PVC_SIZE=40Gi   # bigger cache\n'
+    '# export INSTALL_RUNNER_IMAGE_SOURCE="prebuilt"\n'
+)
+
+
+class TestRunnerNotebook:
+    """I7: the run-mode widget and knobs start from the selected cluster's saved cpd_vars.sh, so a save keeps them."""
+
+    def _values(self, **extra):
+        return {
+            "mcm_enable_checkbox": True,
+            "mcm_name_input": "",
+            "cluster_url_input": URL_A,
+            "mcm_overwrite_checkbox": False,
+            **extra,
+        }
+
+    def test_widgets_start_from_the_saved_file(self, nb_sb):
+        shutil.rmtree(nb_sb.repo / "configs", ignore_errors=True)
+        saved = nb_sb.write_config("cpd", cluster="alpha", text=SAVED_RUNNER_VARS.format(url=URL_A))
+        result = run_notebook(nb_sb, "softwarehub_cp4d_vars_generation.py",
+                              self._values(save_to_config_dir_button=False, file_getter=str(saved)))
+        assert result["values"]["install_run_mode_select"] == "cluster"
+        settings = result["values"]["install_runner_settings"]
+        assert list(settings) == list(RUNNER_KNOBS)
+        assert settings["INSTALL_RUNNER_STORAGE_CLASS"] == "ocs-alpha"
+        assert settings["INSTALL_RUNNER_PVC_SIZE"] == "40Gi"
+        assert settings["INSTALL_RUNNER_IMAGE_SOURCE"] == ""  # commented out: the default
+
+    def test_no_saved_file_starts_local_and_blank(self, nb_sb):
+        shutil.rmtree(nb_sb.repo / "configs", ignore_errors=True)
+        result = run_notebook(nb_sb, "softwarehub_cp4d_vars_generation.py", self._values(save_to_config_dir_button=False))
+        assert result["values"]["install_run_mode_select"] == "local"
+        assert set(result["values"]["install_runner_settings"].values()) == {""}
+
+    def test_a_save_keeps_the_cluster_values_and_only_that_clusters_own(self, nb_sb):
+        """A save of alpha's file from a blank editor renders the template: alpha's values come back, beta's never.
+
+        Headless app.run does not re-run cells on a state change, so the file the state cell would pick is
+        handed in, as for Concert. Which file that is comes from mcm_nb.existing_vars_file (TestSmallHelpers).
+        """
+        shutil.rmtree(nb_sb.repo / "configs", ignore_errors=True)
+        saved = nb_sb.write_config("cpd", cluster="alpha", text=SAVED_RUNNER_VARS.format(url=URL_A))
+        nb_sb.write_config("cpd", cluster="beta", text=f'export OCP_URL="{URL_B}"\nexport INSTALL_RUNNER_STORAGE_CLASS="ocs-beta"\n')
+        result = run_notebook(nb_sb, "softwarehub_cp4d_vars_generation.py",
+                              self._values(save_to_config_dir_button=True, cpd_vars_template_editor="", file_getter=str(saved)))
+        assert result["saved"]
+        text = (nb_sb.repo / "configs/clusters/alpha/cp4d_config/cpd_vars.sh").read_text()
+        assert lines_of(text, "export INSTALL_RUN") == [
+            'export INSTALL_RUN_MODE="cluster"',
+            'export INSTALL_RUNNER_STORAGE_CLASS="ocs-alpha"',
+            'export INSTALL_RUNNER_PVC_SIZE="40Gi"',
+        ]
+        assert '# export INSTALL_RUNNER_IMAGE_SOURCE="build-in-cluster"' in text
+        assert "ocs-beta" not in text
+
+    def test_the_template_reads_the_widget_names(self):
+        text = (REPO / "softwarehub_cp4d_vars_generation.py").read_text()
+        assert "install_run_mode = install_run_mode_select.value" in text
+        assert "install_runner_settings = records_to_dict(" in text
+        assert 'mcm_nb.existing_vars_file(mcm_target, cpd_vars_filename)' in text
+        for key in RUNNER_KNOBS:
+            assert f'"{key}"' in text, key
 
 
 GENERATOR_EXTRAS = [

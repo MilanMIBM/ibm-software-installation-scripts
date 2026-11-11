@@ -417,6 +417,38 @@ def test_t8_a_pinned_shell_does_not_leak_into_the_other_clusters():
         assert f"kube={sb.repo}/configs/clusters/itz-b/.home/.kube/config" in lines["itz-b"]
 
 
+RUNNER_PROBE = r'''#!/bin/zsh
+set -euo pipefail
+SCRIPT_DIR="${0:A:h}"
+_b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="${_b:h}"; done; source "${_b}/env_bootstrap.sh"; unset _b
+print -r -- "RUNNER ${MCM_CLUSTER:-flat} mode=${INSTALL_RUN_MODE:-} override=${INSTALL_RUN_MODE_OVERRIDE:-} sc=${INSTALL_RUNNER_STORAGE_CLASS:-} image=${INSTALL_RUNNER_IMAGE:-} new=${INSTALL_RUNNER_NEW_RUN:-}"
+'''
+
+
+def test_i7_shell_runner_settings_do_not_cross_clusters_but_the_override_does():
+    """A storage class or image exported once names one cluster; --run-mode (the override) and the
+    one-run switches such as INSTALL_RUNNER_NEW_RUN are meant for all."""
+    with make_sandbox() as sb:
+        clusters(sb, configs=("itz-b",))
+        sb.write_config("cpd", ocp_url=URLS["itz-a"], cluster="itz-a", extra={"INSTALL_RUNNER_STORAGE_CLASS": "class-a"})
+        path = sb.repo / ALLOW
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(RUNNER_PROBE)
+        path.chmod(0o755)
+        shell = {
+            "INSTALL_RUN_MODE": "cluster",
+            "INSTALL_RUN_MODE_OVERRIDE": "local",
+            "INSTALL_RUNNER_STORAGE_CLASS": "shell-class",
+            "INSTALL_RUNNER_IMAGE": "registry.itz-a.example.com/runner:1",
+            "INSTALL_RUNNER_NEW_RUN": "true",
+        }
+        result = sb.run_script(ALLOW, env=shell, args=["--all-clusters"])
+        assert result.returncode == 0, result.stdout + result.stderr
+        lines = {line.split()[1]: line for line in result.stdout.splitlines() if line.startswith("RUNNER ")}
+        assert lines["itz-a"] == "RUNNER itz-a mode= override=local sc=class-a image= new=true"
+        assert lines["itz-b"] == "RUNNER itz-b mode= override=local sc= image= new=true"
+
+
 def test_t8_a_preset_target_kubeconfig_is_left_alone():
     with make_sandbox() as sb:
         clusters(sb)

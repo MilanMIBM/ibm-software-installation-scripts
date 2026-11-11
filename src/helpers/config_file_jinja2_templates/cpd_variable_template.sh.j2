@@ -23,8 +23,42 @@ unset _CPD_VARS_DIR
 # local   = chains run on this machine.
 # cluster = chains run in a pod on the cluster, so this machine can go off: see
 #           "Running an install in the cluster" in the README.
-export INSTALL_RUN_MODE="local"
+export INSTALL_RUN_MODE="{{ install_run_mode | default('local', true) }}"
 
+# In-cluster runner settings, read only with INSTALL_RUN_MODE=cluster. A commented
+# line shows the built-in default; uncomment it to change it.
+#   STORAGE_CLASS       storage class for the runner's volume (empty: STG_CLASS_BLOCK)
+#   IMAGE_SOURCE        build-in-cluster, build-local-push or prebuilt
+#   IMAGE               a prebuilt runner image (empty IMAGE_SOURCE then means prebuilt)
+#   PVC_SIZE            size of the runner's volume
+#   AUTO_RESUME         a new pod continues the run when the pod is lost
+#   MAX_RESUMES         how many times it does that
+#   KEEP_ADMIN          keep the runner's cluster-admin after the run
+#   NODE_SELECTOR       key=value, to keep the runner pod on matching nodes
+#   TTY_SIZE            terminal size of the run, columns x rows
+#   SWHCC_IMAGE         a mirrored Software Hub Premium image for Control Center in
+#                       the pod (empty: imported from cp.icr.io into the internal registry)
+#   SWHCC_MEMORY_LIMIT  memory limit of the Control Center sidecar
+{% for _name, _default in [
+    ("INSTALL_RUNNER_STORAGE_CLASS", ""),
+    ("INSTALL_RUNNER_IMAGE_SOURCE", "build-in-cluster"),
+    ("INSTALL_RUNNER_IMAGE", ""),
+    ("INSTALL_RUNNER_PVC_SIZE", "20Gi"),
+    ("INSTALL_RUNNER_AUTO_RESUME", "true"),
+    ("INSTALL_RUNNER_MAX_RESUMES", "3"),
+    ("INSTALL_RUNNER_KEEP_ADMIN", "false"),
+    ("INSTALL_RUNNER_NODE_SELECTOR", ""),
+    ("INSTALL_RUNNER_TTY_SIZE", "120x50"),
+    ("INSTALL_RUNNER_SWHCC_IMAGE", ""),
+    ("INSTALL_RUNNER_SWHCC_MEMORY_LIMIT", "4Gi"),
+] -%}
+{% set _value = ((install_runner_settings | default({}, true)).get(_name) or "") | string | trim -%}
+{% if _value -%}
+export {{ _name }}="{{ _value }}"
+{% else -%}
+# export {{ _name }}="{{ _default }}"
+{% endif -%}
+{% endfor %}
 export OCP_URL="{{ cluster_url_input.value }}"
 export OPENSHIFT_TYPE="{{ cluster_type_select.value }}"
 export IMAGE_ARCH="{{ cluster_arch_select.value }}"
