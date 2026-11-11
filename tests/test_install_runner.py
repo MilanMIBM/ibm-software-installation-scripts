@@ -65,6 +65,12 @@ case "$args" in
   "get configmap -A"*) cat "$d/all_status.json" 2>/dev/null || echo '{"items":[]}' ;;
   "apply -f -"*) apply ;;
   "start-build"*) ;;
+  "get builds"*) [ -e "$d/builds_fail" ] && exit 1; cat "$d/builds.json" 2>/dev/null || echo '{"items":[]}' ;;
+  "patch configmap ir-status"*)
+      [ -e "$d/patch_fail" ] && exit 1
+      v="$(sed -nE 's/.*"collected":"([^"]*)".*/\1/p' <<<"$args")"
+      [ -n "$v" ] && printf '%s' "$v" > "$d/status.collected" ;;
+  "delete build"*) [ -e "$d/delete_build_fail" ] && exit 1 ;;
   "delete"*) ;;
   *"follow.sh"*"resolve"*) echo 0 ;;
   *"follow.sh"*) echo "hello from the pod" ;;
@@ -325,6 +331,60 @@ def test_image_is_built_when_missing(sb):
     assert args == {"BASE_IMAGE": "icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8", "CPD_CLI_URL": "https://x/cli.tgz"}
 
 
+def builds_json(*builds):
+    """Builds of one BuildConfig as `oc get builds -o json` lists them: (name, number, phase)."""
+    return json.dumps({"items": [{
+        "metadata": {"name": n, "creationTimestamp": f"2026-11-11T10:00:{i:02d}Z",
+                     "annotations": {"openshift.io/build.number": str(num), "openshift.io/build.pod-name": f"{n}-build"}},
+        "status": {"phase": phase}} for i, (n, num, phase) in enumerate(builds)]})
+
+
+def test_build_prunes_older_builds_and_keeps_the_newest(fake):
+    """L-05: a build leaves older finished Builds (and their pods) of its BuildConfig behind; only
+    the newest stays, and one still going is never touched."""
+    (fake / "builds.json").write_text(builds_json(("bc-1", 1, "Complete"), ("bc-10", 10, "Complete"),
+                                                  ("bc-2", 2, "Failed"), ("bc-3", 3, "Running")))
+    result = zsh("_ir_prune_builds bc", fake)
+    assert result.returncode == 0, result.stderr
+    log = (fake / "oc.log").read_text().splitlines()
+    assert "oc get builds -n install-runner-system -l openshift.io/build-config.name=bc -o json" in log
+    deleted = [c for c in log if c.startswith("oc delete")]
+    assert deleted == ["oc delete build bc-1 -n install-runner-system --ignore-not-found",
+                       "oc delete pod bc-1-build -n install-runner-system --ignore-not-found",
+                       "oc delete build bc-2 -n install-runner-system --ignore-not-found",
+                       "oc delete pod bc-2-build -n install-runner-system --ignore-not-found"], "numbers sort as numbers: bc-10 is newest"
+    assert "Removed 2 older build(s) of bc." in result.stderr + result.stdout
+
+
+def test_build_runs_the_prune_and_a_failed_prune_only_warns(sb):
+    (sb.fake / "state").write_text("completed\n")
+    (sb.fake / "image_missing").touch()
+    (sb.fake / "builds_fail").touch()
+    result = handoff(sb)
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = (sb.fake / "oc.log").read_text()
+    assert log.index("start-build") < log.index("get builds"), "pruned after the build"
+    assert "Could not list the builds of install-runner-" in result.stderr
+    assert "hello from the pod" in result.stdout, "the launch went on"
+
+
+def test_a_failed_build_delete_only_warns(fake):
+    (fake / "builds.json").write_text(builds_json(("bc-1", 1, "Complete"), ("bc-2", 2, "Complete")))
+    (fake / "delete_build_fail").touch()
+    result = zsh("_ir_prune_builds bc", fake)
+    assert result.returncode == 0, result.stderr
+    assert "Could not delete the old build bc-1" in result.stderr
+    assert "delete pod" not in (fake / "oc.log").read_text()
+
+
+def test_nothing_to_prune(fake):
+    (fake / "builds.json").write_text(builds_json(("bc-1", 1, "Complete")))
+    result = zsh("_ir_prune_builds bc", fake)
+    assert result.returncode == 0, result.stderr
+    assert "oc delete" not in (fake / "oc.log").read_text()
+    assert "Removed" not in result.stderr + result.stdout
+
+
 def test_failed_run_returns_failure(sb):
     (sb.fake / "state").write_text("failed\n")
     result = handoff(sb)
@@ -398,6 +458,42 @@ def test_workstation_registry_refused(fake):
     result = preflight(fake, {"LOCAL_REGISTRY_HOST": "laptop.local"})
     assert result.returncode != 0
     assert "outlive this machine" in result.stderr
+
+
+def runner_knobs_in_template():
+    """(name, default) pairs of the INSTALL_RUNNER_* knob list in the cpd_vars.sh template."""
+    text = (REPO / "src/helpers/config_file_jinja2_templates/cpd_variable_template.sh.j2").read_text()
+    return dict(re.findall(r'\("(INSTALL_RUNNER_[A-Z_]+)", "([^"]*)"\)', text))
+
+
+def fanout_kept_runner_names():
+    """The INSTALL_RUNNER_* names the multi-cluster fan-out passes to every cluster (one-run switches)."""
+    text = (REPO / "src/helpers/multi_cluster_helpers.sh").read_text()
+    return set(re.search(r"_mcm_ir_names:#\(([^)]*)\)", text).group(1).split("|"))
+
+
+def test_every_runner_knob_is_in_cpd_vars_or_a_one_run_switch():
+    """A knob the runner reads is either a per-cluster setting, commented at its default in cpd_vars.sh
+    (and forgotten by the fan-out, so each cluster reads its own), or a one-run switch the fan-out
+    keeps. Never both, never neither, and the fan-out keeps no name nothing reads."""
+    read, defaults = set(), []
+    for path in [*(REPO / "src").rglob("*"), *(REPO / "scripts").rglob("*")]:
+        if path.is_file() and path.suffix in ("", ".sh", ".tmpl", ".conf"):
+            text = path.read_text(errors="ignore")
+            read |= set(re.findall(r"\$\{(INSTALL_RUNNER_[A-Z_]*[A-Z])", text))
+            defaults += re.findall(r"\$\{(INSTALL_RUNNER_[A-Z_]+):-([^}$]*)\}", text)
+    knobs, kept = runner_knobs_in_template(), fanout_kept_runner_names()
+    assert not knobs.keys() & kept
+    assert read - knobs.keys() - kept == set(), "a knob missing from cpd_vars.sh and the fan-out list"
+    assert kept <= read, "the fan-out keeps a name nothing reads"
+    for name in ("INSTALL_RUNNER_ROLLOUT_TIMEOUT", "INSTALL_RUNNER_SWHCC_PULL_SECRET", "INSTALL_RUNNER_SWHCC_MEMORY_LIMIT"):
+        assert name in knobs
+    # Where the code has a literal default, the template shows the same one.
+    checked = {name for name, default in defaults if default and name in knobs}
+    assert {"INSTALL_RUNNER_ROLLOUT_TIMEOUT", "INSTALL_RUNNER_SWHCC_MEMORY_LIMIT", "INSTALL_RUNNER_TTY_SIZE"} <= checked
+    for name, default in defaults:
+        if default and name in knobs:
+            assert knobs[name] == default, name
 
 
 # --- busy slots ----------------------------------------------------------------
@@ -477,6 +573,34 @@ def test_collect_waits_for_the_run(sb, collect_repo):
     assert collect(sb).returncode != 0
     assert (collect_repo / "unchanged_here.sh").read_text() == "old\n"
     assert collect(sb, "--force").returncode == 0
+
+
+def test_teardown_right_after_collect_needs_no_supervisor_report(sb, collect_repo):
+    """L-04: collect marks ir-status itself, so a teardown at once is not refused while the
+    supervisor's next report (up to a heartbeat later) is still to come."""
+    (sb.fake / "status.state").write_text("completed")
+    (sb.fake / "status.collected").write_text("no")
+    result = collect(sb)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = (sb.fake / "oc.log").read_text().splitlines()
+    touch = next(i for i, c in enumerate(calls) if "touch /work/current/collected" in c)
+    patch = next(i for i, c in enumerate(calls) if c.startswith("oc patch configmap ir-status"))
+    assert touch < patch, "the marker the supervisor reads comes first, so its next report says yes too"
+    assert calls[patch] == """oc patch configmap ir-status -n install-runner-slot --type merge -p {"data":{"collected":"yes"}}"""
+    assert (sb.fake / "status.collected").read_text() == "yes", "the supervisor's format: yes"
+    teardown = sb.run_script("scripts/install_runner/x_install_runner.sh",
+                             args=("teardown", "--install", "demo", "--slot", "slot"), env={"FAKE_DIR": sb.fake}, timeout=120)
+    assert teardown.returncode == 0, teardown.stdout + teardown.stderr
+    assert "isn't collected" not in teardown.stderr
+    assert "delete namespace install-runner-slot" in (sb.fake / "oc.log").read_text()
+
+
+def test_collect_goes_on_when_the_status_mark_fails(sb, collect_repo):
+    (sb.fake / "patch_fail").touch()
+    result = collect(sb)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Could not mark slot slot collected" in result.stderr
+    assert "touch /work/current/collected" in (sb.fake / "oc.log").read_text()
 
 
 # --- teardown ------------------------------------------------------------------

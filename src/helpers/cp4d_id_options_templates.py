@@ -1104,6 +1104,7 @@ default_swhub_control_center_setup = [
     {"key": "CONTROL_AUTODETECT_QUOTA_HEADROOM", "value": "0.9"},
     {"key": "CONTROL_OTHER_WORKLOADS_INDICATOR_PROJECT", "value": "swhcc-other-workloads"},
     {"key": "CONTROL_OTHER_WORKLOADS_INDICATOR_IMAGE", "value": "image-registry.openshift-image-registry.svc:5000/openshift/python:3.11-ubi9"},
+    {"key": "CONTROL_ROUTE_PUBLIC_IP", "value": ""},
     {"key": "CONTROL_AUTODETECT_ROTATE_API_KEYS", "value": "false"},
     {"key": "CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS", "value": "600"},
     {"key": "CONTROL_ADMIN_USERS", "value": ""},

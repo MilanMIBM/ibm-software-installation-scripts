@@ -263,6 +263,24 @@ def test_status_publishes_the_notice(tmp_path):
     assert "--kubeconfig" not in creates[0], "no supervisor file (no token): plain oc"
 
 
+def test_status_reports_collected_from_the_marker_collect_leaves(tmp_path):
+    """L-04: collect patches ir-status to collected=yes after it touches the run's marker. The
+    supervisor's next report reads that marker, so it says yes too and never sets it back."""
+    run = tmp_path / "runs/r1"
+    put(run, "run.env", "IR_CHAIN='x.sh'\n")
+    put(run, "state", "completed\n")
+    put(tmp_path, "bin/oc", FAKE_OC, mode=0o755)
+    script = (f"typeset -g SIG_TERM='' LAST_STATUS='' LAST_PUBLISH=0 SUP_KUBECONFIG=''\nIR_HEARTBEAT=0\nsay() {{ :; }}\n"
+              f"{status_functions()}\npublish_status {run}\ntouch {run}/collected\npublish_status {run}\npublish_status {run}\n")
+    env = {"PATH": f"{tmp_path}/bin:/usr/bin:/bin", "FAKE_DIR": str(tmp_path), "IR_NAMESPACE": "ns", "HOME": str(tmp_path)}
+    result = subprocess.run(["zsh", "-c", script], env=env, capture_output=True, text=True, timeout=60, check=False)
+    assert result.returncode == 0, result.stderr
+    creates = [l for l in (tmp_path / "oc.log").read_text().splitlines() if l.startswith("create configmap")]
+    assert len(creates) == 3
+    assert "--from-literal=collected=no " in creates[0]
+    assert all("--from-literal=collected=yes " in c for c in creates[1:]), "the heartbeat report keeps yes"
+
+
 # --- 5. kubeconfig separation through run-attempt.sh ---------------------------------------------------------
 # oc for the chain: `login` writes the server into $KUBECONFIG, as oc does; whoami reads it back.
 CHAIN_OC = r"""#!/bin/bash

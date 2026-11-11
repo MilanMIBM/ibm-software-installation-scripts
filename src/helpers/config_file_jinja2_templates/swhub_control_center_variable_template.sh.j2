@@ -149,10 +149,17 @@ export CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS="{{ verify_wait_seconds | sh }}"
 # reserves, and registers it there. It limits nothing. Turn it on or off later with
 # optional_install_swhub_control_center/x_debug_toggle_other_workloads_indicator.sh.
 # The image must hold python3: the default is the python image stream on the cluster.
+# ROUTE_PUBLIC_IP is the public address a private route is registered with (empty:
+# looked up on this machine). A runner pod (INSTALL_RUN_MODE=cluster) can't look it up.
 
 export CONTROL_OTHER_WORKLOADS_INDICATOR="{{ indicator }}"
 export CONTROL_OTHER_WORKLOADS_INDICATOR_PROJECT="{{ indicator_project | sh }}"
 export CONTROL_OTHER_WORKLOADS_INDICATOR_IMAGE="{{ indicator_image | sh }}"
+{% if route_public_ip %}
+export CONTROL_ROUTE_PUBLIC_IP="{{ route_public_ip | sh }}"
+{% else %}
+# export CONTROL_ROUTE_PUBLIC_IP=""
+{% endif %}
 
 # ------------------------------------------------------------------------------
 # Administrators

@@ -497,14 +497,17 @@ def _(mcm_vars_file, sortable_kv):
         "INSTALL_RUNNER_KEEP_ADMIN",
         "INSTALL_RUNNER_NODE_SELECTOR",
         "INSTALL_RUNNER_TTY_SIZE",
+        "INSTALL_RUNNER_ROLLOUT_TIMEOUT",
         "INSTALL_RUNNER_SWHCC_IMAGE",
+        "INSTALL_RUNNER_SWHCC_PULL_SECRET",
         "INSTALL_RUNNER_SWHCC_MEMORY_LIMIT",
     )
     install_runner_records = sortable_kv(
         label=(
             "In-cluster runner settings (blank = default: block storage class, image built in the cluster, "
             "20Gi volume, auto-resume true, 3 resumes, cluster-admin removed after the run, any node, "
-            "120x50 terminal, Control Center image imported from cp.icr.io, 4Gi Control Center memory):"
+            "120x50 terminal, 900 s for the runner pod to come up, Control Center image imported from "
+            "cp.icr.io with no extra pull secret, 4Gi Control Center memory):"
         ),
         value=[
             {"key": _k, "value": existing_config_value(_k, mcm_vars_file()) or ""}
@@ -709,6 +712,7 @@ def _(
         "indicator": str(swhcc_indicator_checkbox.value).lower(),
         "indicator_project": _setup.get("CONTROL_OTHER_WORKLOADS_INDICATOR_PROJECT"),
         "indicator_image": _setup.get("CONTROL_OTHER_WORKLOADS_INDICATOR_IMAGE"),
+        "route_public_ip": _setup.get("CONTROL_ROUTE_PUBLIC_IP"),
         "rotate_api_keys": _setup.get("CONTROL_AUTODETECT_ROTATE_API_KEYS"),
         "verify_wait_seconds": _setup.get("CONTROL_AUTODETECT_VERIFY_WAIT_SECONDS"),
         "add_cluster_admins": str(swhcc_cluster_admins_checkbox.value).lower(),

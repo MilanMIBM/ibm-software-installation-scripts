@@ -55,6 +55,7 @@ SWHCC_DEFAULTS = {
     "indicator": "true",
     "indicator_project": "swhcc-other-workloads",
     "indicator_image": "image-registry.openshift-image-registry.svc:5000/openshift/python:3.11-ubi9",
+    "route_public_ip": "",
     "account_memory_gi": "",
     "rotate_api_keys": "false",
     "verify_wait_seconds": "600",

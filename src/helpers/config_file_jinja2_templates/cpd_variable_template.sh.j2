@@ -36,8 +36,10 @@ export INSTALL_RUN_MODE="{{ install_run_mode | default('local', true) }}"
 #   KEEP_ADMIN          keep the runner's cluster-admin after the run
 #   NODE_SELECTOR       key=value, to keep the runner pod on matching nodes
 #   TTY_SIZE            terminal size of the run, columns x rows
+#   ROLLOUT_TIMEOUT     seconds to wait for a changed runner pod to come up
 #   SWHCC_IMAGE         a mirrored Software Hub Premium image for Control Center in
 #                       the pod (empty: imported from cp.icr.io into the internal registry)
+#   SWHCC_PULL_SECRET   a pull secret for SWHCC_IMAGE, already in the slot's namespace
 #   SWHCC_MEMORY_LIMIT  memory limit of the Control Center sidecar
 {% for _name, _default in [
     ("INSTALL_RUNNER_STORAGE_CLASS", ""),
@@ -49,7 +51,9 @@ export INSTALL_RUN_MODE="{{ install_run_mode | default('local', true) }}"
     ("INSTALL_RUNNER_KEEP_ADMIN", "false"),
     ("INSTALL_RUNNER_NODE_SELECTOR", ""),
     ("INSTALL_RUNNER_TTY_SIZE", "120x50"),
+    ("INSTALL_RUNNER_ROLLOUT_TIMEOUT", "900"),
     ("INSTALL_RUNNER_SWHCC_IMAGE", ""),
+    ("INSTALL_RUNNER_SWHCC_PULL_SECRET", ""),
     ("INSTALL_RUNNER_SWHCC_MEMORY_LIMIT", "4Gi"),
 ] -%}
 {% set _value = ((install_runner_settings | default({}, true)).get(_name) or "") | string | trim -%}

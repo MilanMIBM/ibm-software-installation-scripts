@@ -980,6 +980,26 @@ def test_preflight_quiet_where_nothing_applies(tmp_path):
         assert text not in result.stderr, text
 
 
+@pytest.mark.parametrize("ip,line,read", [
+    ("", '# export CONTROL_ROUTE_PUBLIC_IP=""', ""),
+    ("203.0.113.8", 'export CONTROL_ROUTE_PUBLIC_IP="203.0.113.8"', "203.0.113.8"),
+])
+def test_route_public_ip_is_a_commented_knob_in_the_generated_vars_file(tmp_path, ip, line, read):
+    """The Control Center vars file both generators write (the notebook and 0_swhub_control_center_generate_config.sh)
+    shows CONTROL_ROUTE_PUBLIC_IP commented at its default, and the runner launch reads it from there."""
+    from helpers import swhub_control_center_config_render as render
+    from helpers import cp4d_id_options_templates as options
+
+    assert {"key": "CONTROL_ROUTE_PUBLIC_IP", "value": ""} in options.default_swhub_control_center_setup
+    text = render.render_swhcc_vars({"route_public_ip": ip} if ip else None)
+    assert [l for l in text.splitlines() if "export CONTROL_ROUTE_PUBLIC_IP" in l] == [line]
+    put(tmp_path, "cp4d_config/cpd_vars.sh", "export OCP_URL=https://api.x:6443\n")
+    path = put(tmp_path, "cp4d_config/swhub_control_center/swhub_control_center_vars.sh", text)
+    result = zsh(tmp_path, f'source "{REPO}/src/helpers/swhub_control_center_image.sh"\n'
+                           f'swhcc_runner_values "{path}"\nprint -r -- "ip=${{SWHCC_RV[CONTROL_ROUTE_PUBLIC_IP]}}"\n', helpers=False)
+    assert result.stdout.strip() == f"ip={read}", result.stderr
+
+
 def test_preflight_needs_the_vars_file_only_when_control_center_runs(tmp_path):
     tool(tmp_path / "bin", "oc", '#!/bin/bash\nexit 0\n')
     env = {"CONFIG_DIR": tmp_path / "empty", "STG_CLASS_BLOCK": "blk", "STG_CLASS_FILE": "fil"}

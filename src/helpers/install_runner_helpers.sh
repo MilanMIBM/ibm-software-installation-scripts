@@ -168,6 +168,37 @@ _ir_cpd_cli_url() {   # -> stdout; empty when the install needs no cpd-cli
     cpd_cli_resolve_release "${VERSION}" linux "${CPD_CLI_EDITION:-EE}" | awk -F'\t' '$1 == "URL" { print $2 }'
 }
 
+# Every build leaves a finished Build and its pod in the system namespace. Keeps
+# the newest, which `oc logs bc/<name>` shows, and never one still going. Tidying
+# only: a failure warns and the launch goes on.
+_ir_prune_builds() {   # <build config>
+    local bc="$1" json name pod n=0
+    local -a old
+    json="$(oc get builds -n "${IR_SYSTEM_NS}" -l "openshift.io/build-config.name=${bc}" -o json 2>/dev/null)" \
+        || { ir_warn "Could not list the builds of ${bc} to prune old ones."; return 0; }
+    old=("${(@f)$(print -r -- "${json}" | jq -r '
+            [.items[] | {n: ((.metadata.annotations["openshift.io/build.number"] // "0") | tonumber? // 0),
+                         t: (.metadata.creationTimestamp // ""), item: .}]
+            | sort_by(.n, .t) | .[:-1][] | .item
+            | select(.status.phase // "" | IN("New", "Pending", "Running") | not)
+            | [.metadata.name, (.metadata.annotations["openshift.io/build.pod-name"] // (.metadata.name + "-build"))]
+            | @tsv' 2>/dev/null)}") \
+        || { ir_warn "Could not read the builds of ${bc} to prune old ones."; return 0; }
+    for name in "${old[@]}"; do
+        [[ -n "${name}" ]] || continue
+        pod="${name#*$'\t'}" name="${name%%$'\t'*}"
+        # The pod goes with its Build (owner reference); deleted by name too, as a stray one would stay.
+        if oc delete build "${name}" -n "${IR_SYSTEM_NS}" --ignore-not-found >/dev/null 2>&1; then
+            oc delete pod "${pod}" -n "${IR_SYSTEM_NS}" --ignore-not-found >/dev/null 2>&1 || true
+            (( ++n ))
+        else
+            ir_warn "Could not delete the old build ${name} in ${IR_SYSTEM_NS}."
+        fi
+    done
+    (( n == 0 )) || ir_info "Removed ${n} older build(s) of ${bc}."
+    return 0
+}
+
 ir_image_ensure() {   # <id> -> REPLY = image reference
     local id="$1" var base tag source url
     source="$(ir_image_source)"
@@ -201,6 +232,7 @@ ir_image_ensure() {   # <id> -> REPLY = image reference
             ir_info "Building the runner image in cluster (${tag})..."
             oc start-build "${build}" -n "${IR_SYSTEM_NS}" --from-dir="${IR_SRC}/image" --follow --wait \
                 || ir_die "Runner image build failed. See: oc logs -n ${IR_SYSTEM_NS} bc/${build}"
+            _ir_prune_builds "${build}"
             REPLY="${ref}"
             ;;
         build-local-push)
@@ -1151,6 +1183,11 @@ ir_collect() {   # <id> <slot> [--force] [--to <folder> | --to-loaded]
         ir_info "Collected ${taken} file(s); ${kept} kept back because they changed here too."
     fi
     oc exec -n "${ns}" "${IR_POD}" -- sh -c 'touch /work/current/collected'
+    # The supervisor reports the marker only on its next publish, up to a heartbeat
+    # later, and teardown reads ir-status: set it now, as the supervisor writes it.
+    # The marker is already there, so its next publish says yes too.
+    oc patch configmap ir-status -n "${ns}" --type merge -p '{"data":{"collected":"yes"}}' >/dev/null 2>&1 \
+        || ir_warn "Could not mark slot ${slot} collected in ir-status; the runner reports it within a minute."
     # The follow-up reads the loaded config, which --to <folder> did not fill: it
     # would work from stale details (an API key the pod has since rotated).
     if [[ -n "${to}" ]]; then
