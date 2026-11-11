@@ -161,7 +161,7 @@ scripts/install_runner/x_install_runner.sh teardown       # delete the pod, volu
 
 **If a step really fails**, the run stops and waits for you. Fix the cause, then run `x_install_runner.sh resume`. `resume --retry-warned` also repeats steps that only warned.
 
-**Collect** only brings back files the run changed. If you changed the same file here during the run, yours stays and the pod's copy lands next to it as `<file>.in-cluster-<run>`.
+**Collect** only brings back files the run changed. If you changed the same file here during the run, yours stays and the pod's copy lands next to it as `<file>.in-cluster-<run>`. With several clusters, `collect` brings each cluster's results to that cluster's own config folder. `collect --to <dir>` puts everything under one folder, so it takes one cluster at a time: add `--target-cluster NAME`.
 
 Good to know:
 

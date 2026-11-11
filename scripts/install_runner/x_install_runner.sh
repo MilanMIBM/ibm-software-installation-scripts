@@ -31,8 +31,9 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 # rename, another machine), it refuses. --to-loaded then puts each folder where
 # the config loaded now has it (flat: configs/cp4d_config and service_instances);
 # --to <dir> puts each under <dir> (<dir>/cp4d_config, <dir>/service_instances)
-# and skips the follow-up that reads the loaded config. On another machine, the
-# cluster's config must be there first.
+# and skips the follow-up that reads the loaded config. --to takes one cluster: with
+# several targets it refuses, as each would land in the same folders. On another
+# machine, the cluster's config must be there first.
 #
 # Logs in with OC_LOGIN only, never `cpd-cli manage`: that would recreate the local
 # olm-utils container and kill whatever runs in it.
@@ -58,7 +59,7 @@ while (( ${#pre} )) && [[ "${pre[1]}" == --* && "${pre[1]}" != --help ]]; do
 done
 verb="${pre[1]:-}"
 case "${verb}" in
-    -h|--help|help|"") sed -n '5,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help|help|"") sed -n '5,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 (( ${IR_VERBS[(Ie)${verb}]} )) || { echo "[ERROR] Unknown command: ${verb} (see --help)" >&2; exit 2; }
 INSTALL=""
@@ -68,7 +69,7 @@ for (( i = 1; i <= ${#ir_argv}; i++ )); do
         --install=*) INSTALL="${ir_argv[i]#*=}" ;;
     esac
 done
-unset pre i
+unset i
 
 # How a multi-cluster run of each verb goes (gap X7): reading is fine on every target,
 # a terminal or a resume (which grants cluster-admin again) is one cluster at a time,
@@ -78,6 +79,15 @@ case "${verb}" in
     attach|shell|resume)      export MCM_SCRIPT_POLICY=single-only ;;
     stop|teardown)            export MCM_SCRIPT_POLICY=confirm ;;
 esac
+# collect --to <dir> puts every root under <dir>, with no cluster in the path: on
+# several clusters each would land in the same folders, one cluster's credentials kept
+# back as another's .in-cluster-<run> copies. Without --to each cluster's results go
+# to its own config folder, so that one still runs on every target.
+if [[ "${verb}" == collect && ( ${pre[(Ie)--to]} -gt 0 || ${pre[(I)--to=*]} -gt 0 ) ]]; then
+    export MCM_SCRIPT_POLICY=single-only
+    export MCM_SCRIPT_POLICY_WHY="collect --to <dir> puts every cluster's results in the same folders. Collect each cluster on its own (--target-cluster NAME --to <dir>/NAME), or leave out --to: each cluster's results then go to its own config folder."
+fi
+unset pre
 # Every verb needs only oc: no local olm-utils container and no lease, so a watch of
 # several hours leaves the idle watcher free to stop both (gap X8).
 export MCM_SYNC_MODE=stop-only
@@ -168,7 +178,7 @@ unset ir_argv
 source "${REPO_DIR}/env_bootstrap.sh"
 unset -f env_bootstrap_target_hook
 # The policy is this script's, for this verb: a script that a hook runs from here has its own.
-unset MCM_SCRIPT_POLICY
+unset MCM_SCRIPT_POLICY MCM_SCRIPT_POLICY_WHY
 source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_helpers.sh"
 # An --env-target with no --install skipped the hook: find the install in what loaded.
 [[ -n "${INSTALL}" ]] || ir_discover_install "${CONFIGS_ROOT}"

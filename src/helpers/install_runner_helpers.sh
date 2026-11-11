@@ -376,17 +376,17 @@ ir_slot_status_value() {   # <namespace> <key>
     oc get configmap ir-status -n "$1" -o jsonpath="{.data.$2}" 2>/dev/null || true
 }
 
-ir_slot_apply() {   # <id> <slot> <image> [chain]
-    local id="$1" slot="$2" image="$3" chain="${4:-}" ns binding size selector="{}" line sidecar
+# What the slot's pod spec needs, worked out without changing the cluster: the
+# sidecars hook and, for a sidecar, its image pinned by digest (a read of the
+# registry). ir_handoff runs it before the slot's launch record, so a refusal here
+# leaves neither a slot nor a record of one.
+ir_slot_prepare() {   # <id> <slot> <image> [chain] -> _IR_SLOT_EXTRA, _IR_SLOT_SIDECAR
+    local id="$1" slot="$2" image="$3" chain="${4:-}" ns line sidecar
     ir_namespace "${slot}"; ns="${REPLY}"
-    ir_admin_binding "${slot}"; binding="${REPLY}"
-    size="${INSTALL_RUNNER_PVC_SIZE:-$(ir_conf "${id}" RUNNER_PVC_SIZE)}"
-    if [[ -n "${INSTALL_RUNNER_NODE_SELECTOR:-}" ]]; then
-        selector="{\"${INSTALL_RUNNER_NODE_SELECTOR%%=*}\": \"${INSTALL_RUNNER_NODE_SELECTOR#*=}\"}"
-    fi
     # Empty unless the module's sidecars hook asks for one: the slot then renders
     # exactly as it always has.
     typeset -ga _IR_SLOT_EXTRA=(POD_ANNOTATIONS_EXTRA= POD_SPEC_EXTRA= INIT_CONTAINERS= SIDECARS= RUNNER_ENV_EXTRA= RUNNER_MOUNTS_EXTRA= VOLUMES_EXTRA=)
+    typeset -g _IR_SLOT_SIDECAR="" _IR_SWHCC_PULL=""
     line="$(_ir_hook_staged "${id}" sidecars "${chain}")" || ir_die "The ${id} sidecars hook failed: nothing was changed."
     line="${line%%$'\n'*}"
     sidecar="${line%%$'\t'*}"
@@ -395,6 +395,23 @@ ir_slot_apply() {   # <id> <slot> <image> [chain]
         swhcc) _ir_swhcc_slot_extra "${ns}" "${slot}" "${image}" "${line}" ;;
         *)     ir_die "The ${id} sidecars hook asks for '${sidecar}', which the runner does not know." ;;
     esac
+    _IR_SLOT_SIDECAR="${sidecar}"
+    typeset -g _IR_SLOT_PREPARED="${slot}"
+}
+
+ir_slot_apply() {   # <id> <slot> <image> [chain]
+    local id="$1" slot="$2" image="$3" chain="${4:-}" ns binding size selector="{}" sidecar
+    ir_namespace "${slot}"; ns="${REPLY}"
+    ir_admin_binding "${slot}"; binding="${REPLY}"
+    size="${INSTALL_RUNNER_PVC_SIZE:-$(ir_conf "${id}" RUNNER_PVC_SIZE)}"
+    if [[ -n "${INSTALL_RUNNER_NODE_SELECTOR:-}" ]]; then
+        selector="{\"${INSTALL_RUNNER_NODE_SELECTOR%%=*}\": \"${INSTALL_RUNNER_NODE_SELECTOR#*=}\"}"
+    fi
+    [[ "${_IR_SLOT_PREPARED:-}" == "${slot}" ]] || ir_slot_prepare "${id}" "${slot}" "${image}" "${chain}"
+    unset _IR_SLOT_PREPARED
+    sidecar="${_IR_SLOT_SIDECAR}"
+    # The first change on the cluster: the sidecar's pull secret, linked before the pod starts.
+    [[ "${sidecar}" == swhcc ]] && _ir_swhcc_pull_apply "${ns}" "${slot}"
 
     # A StatefulSet already there may have had another pod spec (a sidecar the
     # last run had and this one does not, or the other way round).
@@ -451,7 +468,7 @@ _ir_swhcc_slot_extra() {   # <namespace> <slot> <runner image> <hook line> -> _I
     source="${rest%%$'\t'*}" mode="${rest#*$'\t'}"
     [[ "${rest}" == *$'\t'* && -n "${source}" ]] || ir_die "The Control Center sidecar has no image: is swhub_control_center_vars.sh there?"
     [[ "${mode}" == (same|different) ]] || ir_die "CONTROL_CLUSTER_MODE must be same or different (got '${mode}')."
-    ir_swhcc_image_prepare "${ns}" "${slot}" "${source}"
+    _ir_swhcc_image_resolve "${ns}" "${slot}" "${source}"
     pinned="${REPLY}"
     local -a fill=(IMAGE="${image}" SWHCC_IMAGE="${pinned}" SWHCC_IMAGE_SOURCE="${source}" SWHCC_MODE="${mode}"
                    SWHCC_MEMORY_LIMIT="${INSTALL_RUNNER_SWHCC_MEMORY_LIMIT:-4Gi}"
@@ -477,15 +494,24 @@ _ir_swhcc_slot_extra() {   # <namespace> <slot> <runner image> <hook line> -> _I
 # INSTALL_RUNNER_SWHCC_IMAGE (a mirrored premium image) skips the pull secret, and
 # INSTALL_RUNNER_SWHCC_PULL_SECRET names one already in the slot namespace for it.
 ir_swhcc_image_prepare() {   # <namespace> <slot> <premium image by tag> -> REPLY = image for the pod spec
+    _ir_swhcc_image_resolve "$@"
+    local pinned="${REPLY}"
+    _ir_swhcc_pull_apply "$1" "$2"
+    REPLY="${pinned}"
+}
+
+# The read-only half, run before the launch record: the digest, or the check that a
+# named pull secret is there. What the slot's service account then needs goes in
+# _IR_SWHCC_PULL ("link <secret>", "create <registry host>" or empty).
+_ir_swhcc_image_resolve() {   # <namespace> <slot> <premium image by tag> -> REPLY, _IR_SWHCC_PULL
     local ns="$1" slot="$2" source="$3" host arch af ef info digest why rc=0
+    typeset -g _IR_SWHCC_PULL=""
     if [[ -n "${INSTALL_RUNNER_SWHCC_IMAGE:-}" ]]; then
         ir_info "Control Center sidecar image (INSTALL_RUNNER_SWHCC_IMAGE): ${INSTALL_RUNNER_SWHCC_IMAGE}"
         if [[ -n "${INSTALL_RUNNER_SWHCC_PULL_SECRET:-}" ]]; then
-            _ir_slot_namespace_sa "${ns}" "${slot}"
             oc get secret "${INSTALL_RUNNER_SWHCC_PULL_SECRET}" -n "${ns}" >/dev/null 2>&1 \
                 || ir_die "INSTALL_RUNNER_SWHCC_PULL_SECRET=${INSTALL_RUNNER_SWHCC_PULL_SECRET} is not in ${ns}. Create it there first (oc create secret docker-registry ... -n ${ns})."
-            oc secrets link install-runner "${INSTALL_RUNNER_SWHCC_PULL_SECRET}" --for=pull -n "${ns}" >/dev/null \
-                || ir_die "Could not link ${INSTALL_RUNNER_SWHCC_PULL_SECRET} to the runner's service account."
+            _IR_SWHCC_PULL="link ${INSTALL_RUNNER_SWHCC_PULL_SECRET}"
         fi
         REPLY="${INSTALL_RUNNER_SWHCC_IMAGE}"
         return 0
@@ -515,15 +541,33 @@ ir_swhcc_image_prepare() {   # <namespace> <slot> <premium image by tag> -> REPL
     [[ "${source:t}" == *:* ]] && repo="${source%:*}"
     REPLY="${repo}@${digest}"
     ir_info "Pinned it at ${digest}: the tag moves with IBM's patches, this slot keeps this build."
+    _IR_SWHCC_PULL="create ${host}"
+}
 
-    _ir_slot_namespace_sa "${ns}" "${slot}"
-    IR_KEY="${IBM_ENTITLEMENT_KEY}" IR_HOST="${host}" jq -n --arg ns "${ns}" '{
-        apiVersion: "v1", kind: "Secret", type: "kubernetes.io/dockerconfigjson",
-        metadata: {name: "ir-cp-icr-pull", namespace: $ns, labels: {"app.kubernetes.io/managed-by": "install-runner"}},
-        data: {".dockerconfigjson": ({auths: {(env.IR_HOST): {auth: ("cp:" + env.IR_KEY | @base64)}}} | tojson | @base64)}}' \
-        | oc apply -f - >/dev/null || ir_die "Could not create the sidecar's pull secret in ${ns}."
-    oc secrets link install-runner ir-cp-icr-pull --for=pull -n "${ns}" >/dev/null \
-        || ir_die "Could not link the sidecar's pull secret to the runner's service account."
+# The half that changes the cluster: the slot's namespace and service account, with
+# the pull secret _ir_swhcc_image_resolve asked for linked to it.
+_ir_swhcc_pull_apply() {   # <namespace> <slot>
+    local ns="$1" slot="$2" what="${_IR_SWHCC_PULL:-}"
+    case "${what}" in
+        "") ;;
+        link\ *)
+            _ir_slot_namespace_sa "${ns}" "${slot}"
+            oc secrets link install-runner "${what#link }" --for=pull -n "${ns}" >/dev/null \
+                || ir_die "Could not link ${what#link } to the runner's service account."
+            ;;
+        create\ *)
+            [[ -n "${IBM_ENTITLEMENT_KEY:-}" ]] || ir_die "IBM_ENTITLEMENT_KEY is needed for the sidecar's pull secret."
+            _ir_slot_namespace_sa "${ns}" "${slot}"
+            IR_KEY="${IBM_ENTITLEMENT_KEY}" IR_HOST="${what#create }" jq -n --arg ns "${ns}" '{
+                apiVersion: "v1", kind: "Secret", type: "kubernetes.io/dockerconfigjson",
+                metadata: {name: "ir-cp-icr-pull", namespace: $ns, labels: {"app.kubernetes.io/managed-by": "install-runner"}},
+                data: {".dockerconfigjson": ({auths: {(env.IR_HOST): {auth: ("cp:" + env.IR_KEY | @base64)}}} | tojson | @base64)}}' \
+                | oc apply -f - >/dev/null || ir_die "Could not create the sidecar's pull secret in ${ns}."
+            oc secrets link install-runner ir-cp-icr-pull --for=pull -n "${ns}" >/dev/null \
+                || ir_die "Could not link the sidecar's pull secret to the runner's service account."
+            ;;
+        *) ir_die "Unknown sidecar pull secret step: ${what}" ;;
+    esac
 }
 
 # The slot's namespace and service account, ahead of slot.yaml.tmpl (which applies
@@ -883,6 +927,9 @@ ir_handoff() {   # <chain args...>
     ir_preflight "${id}" "${chain}"
     ir_image_ensure "${id}"
     local image="${REPLY}"
+    # The pod spec first, with no change on the cluster: a sidecar that can't go (no
+    # entitlement key, an image the key can't read) stops here, before the record.
+    ir_slot_prepare "${id}" "${slot}" "${image}" "${chain}"
     # Written before anything is created on the cluster, so a slot never exists without
     # its record: multi_cluster.sh refuses remove, rename and off while one is there
     # (gap X15). Cleared by teardown.
@@ -1235,7 +1282,7 @@ _ir_collect_destinations() {   # <id> <namespace> <run> <--to folder or ""> [loa
     fi
     # Both ways out of a refusal: each root into the folder loaded for it now (in the
     # flat layout they have different parents), or all of them under one folder.
-    hint="collect --to-loaded (into $(_ir_loaded_roots_text "${id}")) or collect --to <folder>"
+    hint="collect$(_ir_tc) --to-loaded (into $(_ir_loaded_roots_text "${id}")) or collect$(_ir_tc) --to <folder>"
     [[ -n "${now}" ]] && hint+=" (e.g. --to $(mcm_clusters_root)/${now})"
     [[ -n "${map}" ]] || ir_die "Run ${run} has no path record (an older runner staged it). Say where its results go: ${hint}."
     layout="$(_ir_record_value "${record}" IR_LAYOUT)"
@@ -1289,7 +1336,7 @@ _ir_loaded_destinations() {   # <id> <run> <recorded url or ""> <cluster that ow
         rel="${_IR_ROOT_DIR[${snap}]#${repo}/}"
         if [[ -n "${url}" ]]; then
             if [[ -n "${now}" && "${rel}" != configs/clusters/${now}/* ]] || [[ -z "${now}" && "${rel}" == configs/clusters/* ]]; then
-                ir_die "This session loaded ${rel} for ${snap}, but run ${run}'s cluster (${url}) has $(_ir_layout_text "${now:+cluster}" "${now}") here. Load that config, or use collect --to <folder>."
+                ir_die "This session loaded ${rel} for ${snap}, but run ${run}'s cluster (${url}) has $(_ir_layout_text "${now:+cluster}" "${now}") here. Load that config, or use collect$(_ir_tc) --to <folder>."
             fi
         fi
         _IR_DEST[${snap}]="${_IR_ROOT_DIR[${snap}]}"
@@ -1406,7 +1453,7 @@ ir_collect() {   # <id> <slot> [--force] [--to <folder> | --to-loaded]
     # The follow-up reads the loaded config, which --to <folder> did not fill: it
     # would work from stale details (an API key the pod has since rotated).
     if [[ -n "${to}" ]]; then
-        ir_info "Results are in ${to:A}. Skipped the ${id} follow-up: it reads the loaded config, which these results did not reach. collect --to-loaded would put them there and run it."
+        ir_info "Results are in ${to:A}. Skipped the ${id} follow-up: it reads the loaded config, which these results did not reach. collect$(_ir_tc) --to-loaded would put them there and run it."
         return 0
     fi
     ir_hook "${id}" post-collect

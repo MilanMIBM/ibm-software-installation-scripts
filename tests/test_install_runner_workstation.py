@@ -383,6 +383,58 @@ def test_target_cluster_flag_is_taken_before_the_verb_options(sb):
     assert "Unknown" not in result.stderr
 
 
+# --- collect --to over several clusters (merge of the pod and workstation tracks) ---------------------------------
+@pytest.mark.parametrize("form", ["split", "joined"])
+def test_collect_to_a_folder_takes_one_cluster(sb, form):
+    """--to <dir> has no cluster in its path: a fan-out would put every cluster's results in the same folders."""
+    clusters(sb, names=("itz-a", "itz-b"), targets="itz-a itz-b")
+    path_records(sb, ("itz-a", "itz-b"))
+    (sb.fake / "state").write_text("completed\n")
+    dest = sb.root / "results"
+    to = ["--to", str(dest)] if form == "split" else [f"--to={dest}"]
+    result = run(sb, RUNNER_TOOL, "collect", "--install", "cpd", *to)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "one cluster at a time, but the targets are: itz-a itz-b" in result.stderr
+    assert "collect --to <dir> puts every cluster's results in the same folders" in result.stderr
+    assert "[MCM] Running" not in result.stdout
+    assert oc_log(sb) == ""
+    assert not dest.exists()
+
+
+def test_collect_to_a_folder_on_one_target_still_goes(sb):
+    clusters(sb, names=("itz-a", "itz-b"), targets="itz-a itz-b")
+    path_records(sb, ("itz-a", "itz-b"))
+    (sb.fake / "state").write_text("completed\n")
+    dest = sb.root / "results"
+    result = run(sb, RUNNER_TOOL, "collect", "--target-cluster", "itz-b", "--install", "cpd", "--to", str(dest))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"Collecting into {dest.resolve()} (--to)." in result.stdout
+    assert "collect --target-cluster itz-b --to-loaded would put them there" in result.stdout
+
+
+def test_collect_to_loaded_still_runs_on_every_target(sb):
+    clusters(sb, names=("itz-a", "itz-b"), targets="itz-a itz-b")
+    path_records(sb, ("itz-a", "itz-b"))
+    (sb.fake / "state").write_text("completed\n")
+    result = run(sb, RUNNER_TOOL, "collect", "--install", "cpd", "--to-loaded")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[MCM] 1/2 itz-a: ok" in result.stdout and "[MCM] 2/2 itz-b: ok" in result.stdout
+
+
+def test_a_collect_refusal_hint_carries_the_cluster(sb):
+    """The way out of a layout refusal acts on the cluster that refused, not the current one."""
+    clusters(sb, names=("itz-a", "itz-b"), current="itz-a")
+    path_records(sb, ("itz-b",))
+    record = sb.fake / "records/itz-b/pod_run.env"
+    record.write_text(record.read_text().replace("IR_SOURCE_CLUSTER='itz-b'", "IR_SOURCE_CLUSTER='old-name'"))
+    (sb.fake / "state").write_text("completed\n")
+    result = run(sb, RUNNER_TOOL, "collect", "--target-cluster", "itz-b", "--install", "cpd")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Nothing was collected" in result.stderr
+    assert "collect --target-cluster itz-b --to-loaded (into configs/clusters/itz-b/cp4d_config" in result.stderr
+    assert "or collect --target-cluster itz-b --to <folder>" in result.stderr
+
+
 def test_install_is_discovered_in_the_cluster_folder(sb):
     """No --install, two modules: the one with a config in the pinned cluster's folder (not the flat configs/)."""
     sb.write_cluster_marker("itz-a", url("itz-a"))

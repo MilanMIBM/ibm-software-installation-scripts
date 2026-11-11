@@ -506,8 +506,9 @@ def _(mcm_vars_file, sortable_kv):
         label=(
             "In-cluster runner settings (blank = default: block storage class, image built in the cluster, "
             "20Gi volume, auto-resume true, 3 resumes, cluster-admin removed after the run, any node, "
-            "120x50 terminal, 900 s for the runner pod to come up, Control Center image imported from "
-            "cp.icr.io with no extra pull secret, 4Gi Control Center memory):"
+            "120x50 terminal, 900 s for the runner pod to come up, IBM's Control Center image pulled from "
+            "cp.icr.io and pinned by digest, with a pull secret made from IBM_ENTITLEMENT_KEY, "
+            "4Gi Control Center memory):"
         ),
         value=[
             {"key": _k, "value": existing_config_value(_k, mcm_vars_file()) or ""}

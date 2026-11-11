@@ -65,7 +65,8 @@
 #   mcm_fanout "$@"                 multi-target run: re-runs the script per cluster, exits
 #   mcm_exit_no_trap CODE           ends a process without the script's EXIT trap
 #   mcm_script_policy SCRIPT        allow, single-only or confirm (plan 5.8); an
-#                                   exported MCM_SCRIPT_POLICY wins
+#                                   exported MCM_SCRIPT_POLICY wins, and a
+#                                   single-only refusal adds MCM_SCRIPT_POLICY_WHY
 #   mcm_pin NAME                    exports the per-cluster values of this run
 #   mcm_container_name [NAME]       olm-utils container name
 #   mcm_mirror_destination_key ROOT folder name under registries/
@@ -1704,6 +1705,8 @@ mcm_fanout() {
     case "${policy}" in
         single-only)
             _mcm_err "${script:t} runs on one cluster at a time, but the targets are: ${names[*]}."
+            # A script whose policy depends on its arguments says why (MCM_SCRIPT_POLICY_WHY).
+            [[ -n "${MCM_SCRIPT_POLICY_WHY:-}" ]] && _mcm_err "${MCM_SCRIPT_POLICY_WHY}"
             _mcm_err "Pick one with --target-cluster NAME, or set the current cluster with multi_cluster.sh use NAME."
             mcm_exit_no_trap 1
             ;;

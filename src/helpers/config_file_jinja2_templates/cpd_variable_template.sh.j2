@@ -38,7 +38,9 @@ export INSTALL_RUN_MODE="{{ install_run_mode | default('local', true) }}"
 #   TTY_SIZE            terminal size of the run, columns x rows
 #   ROLLOUT_TIMEOUT     seconds to wait for a changed runner pod to come up
 #   SWHCC_IMAGE         a mirrored Software Hub Premium image for Control Center in
-#                       the pod (empty: imported from cp.icr.io into the internal registry)
+#                       the pod (empty: IBM's premium image, pulled from cp.icr.io and
+#                       pinned by digest at launch, with a pull secret made from
+#                       IBM_ENTITLEMENT_KEY in the slot's namespace)
 #   SWHCC_PULL_SECRET   a pull secret for SWHCC_IMAGE, already in the slot's namespace
 #   SWHCC_MEMORY_LIMIT  memory limit of the Control Center sidecar
 {% for _name, _default in [

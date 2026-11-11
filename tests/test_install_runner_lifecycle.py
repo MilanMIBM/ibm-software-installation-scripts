@@ -155,6 +155,51 @@ def test_a_launch_refused_before_the_cluster_leaves_no_record(sb):
     assert not record_file(sb, "itz-a").exists()
 
 
+SWHCC_CHAIN = ("scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/"
+               "full_installprocess-swhub_control_center.sh")
+
+
+def test_a_sidecar_that_cannot_be_prepared_leaves_no_record(sb):
+    """The Control Center image is pinned before the record: a key that can't read it changes nothing here or there."""
+    clusters(sb)
+    vdir = sb.repo / "configs/clusters/itz-a/cp4d_config/swhub_control_center"
+    vdir.mkdir(parents=True)
+    (vdir / "swhub_control_center_vars.sh").write_text(textwrap.dedent("""\
+        _SWHCC_VARS_DIR="${${(%):-%x}:A:h}"
+        source "${_SWHCC_VARS_DIR}/../cpd_vars.sh"
+        export CONTROL_CLUSTER_MODE="same"
+        export IMAGE_ARCH="amd64"
+        export CONTROL_IMAGE_ARCH="amd64"
+        export CONTROL_OLM_UTILS_IMAGE="cp.icr.io/cp/cpd/olm-utils-premium-v4:5.4.0.amd64"
+        export PATCH_ID="8"
+        export IBM_ENTITLEMENT_KEY="bad-or-expired-key"
+        export OCP_USERNAME="kubeadmin"
+        export OCP_PASSWORD="pw"
+        export CONTROL_ROUTE_PUBLIC_IP="203.0.113.7"
+        """))
+    for rel in ("src/helpers/swhub_control_center_image.sh", "scripts/operator_install_helpers.sh"):
+        dst = sb.repo / rel
+        if not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes((REPO / rel).read_bytes())
+    # An earlier, collected launch of the same slot: a refused relaunch must leave it as it was.
+    earlier = write_record(sb, "itz-a", state="collected", url_=url("itz-a"))
+    before = earlier.read_text()
+    result = run(sb, chain(sb, SWHCC_CHAIN), "--target-cluster", "itz-a")
+    assert result.returncode != 0
+    assert "Could not read cp.icr.io/cp/cpd/olm-utils-premium-v4:5.4.0.amd64 with IBM_ENTITLEMENT_KEY" in result.stderr
+    assert earlier.read_text() == before
+    applied = (sb.fake / "applied.yaml").read_text() if (sb.fake / "applied.yaml").exists() else ""
+    assert f"name: install-runner-{SLOT}" not in applied
+    assert not any(l.startswith(("oc create namespace", "oc create serviceaccount", "oc secrets link"))
+                   for l in oc_log(sb).splitlines())
+    earlier.unlink()
+    result = run(sb, chain(sb, SWHCC_CHAIN), "--target-cluster", "itz-a")
+    assert result.returncode != 0
+    assert not record_file(sb, "itz-a").exists()
+    assert mcm(sb, "remove", "itz-a", input="itz-a\n").stderr.count("Install slots") == 0
+
+
 def test_collect_marks_the_record_and_teardown_removes_it(sb):
     clusters(sb)
     handoff_pinned(sb)
