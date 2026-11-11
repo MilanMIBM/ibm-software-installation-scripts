@@ -13,7 +13,8 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 #                                               the live terminal; Ctrl-C only detaches
 #   x_install_runner.sh stop                    stop the chain, keep everything
 #   x_install_runner.sh resume [--retry-warned] continue a failed or stopped run
-#   x_install_runner.sh collect [--force]       bring results back to this machine
+#   x_install_runner.sh collect [--force] [--to <dir> | --to-loaded]
+#                                               bring results back to this machine
 #   x_install_runner.sh teardown [--discard]    delete the slot and its credentials
 #   x_install_runner.sh shell                   debug shell in the pod
 #   x_install_runner.sh preflight               check without changing anything
@@ -22,6 +23,14 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 #   --install <id>   which install (src/install_runner/installs/); needed when
 #                    more than one has a config here
 #   --slot <slot>    a slot other than the one the config points at
+#
+# collect puts results where the run's config came from (the flat configs/ or
+# configs/clusters/<name>/). If that changed since the launch (a migration, a
+# rename, another machine), it refuses. --to-loaded then puts each folder where
+# the config loaded now has it (flat: configs/cp4d_config and service_instances);
+# --to <dir> puts each under <dir> (<dir>/cp4d_config, <dir>/service_instances)
+# and skips the follow-up that reads the loaded config. On another machine, the
+# cluster's config must be there first.
 #
 # Logs in with OC_LOGIN only, never `cpd-cli manage`: that would recreate the local
 # olm-utils container and kill whatever runs in it.
@@ -48,7 +57,7 @@ done
 
 case "${verb}" in
     status|attach|stop|resume|collect|teardown|shell|preflight) ;;
-    -h|--help|help|"") sed -n '5,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help|help|"") sed -n '5,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "[ERROR] Unknown command: ${verb} (see --help)" >&2; exit 2 ;;
 esac
 
@@ -82,5 +91,7 @@ case "${verb}" in
     collect)   ir_collect "${INSTALL}" "${SLOT}" "${rest[@]}" ;;
     teardown)  ir_teardown "${SLOT}" "${rest[@]}" ;;
     shell)     oc exec -it -n "${NS}" "${IR_POD}" -- zsh ;;
-    preflight) ir_preflight "${INSTALL}" ;;
+    # The hand-off's local refusals too (wrong cluster's config, roots, ENV_TARGET).
+    # No chain: only the install's own config is checked.
+    preflight) _ir_stage_plan "${INSTALL}" ""; ir_preflight "${INSTALL}" ;;
 esac

@@ -12,11 +12,15 @@
 # retried automatically. A chain that exits non-zero is a real failure and waits
 # for a person (`x_install_runner.sh resume`).
 #
-# Env (from the StatefulSet): IR_SLOT, IR_NAMESPACE, IR_OCP_URL, IR_AUTO_RESUME,
+# Env (from the StatefulSet): IR_SLOT, IR_NAMESPACE, IR_OCP_URL, IR_SOURCE_CLUSTER, IR_AUTO_RESUME,
 # IR_MAX_RESUMES, IR_KEEP_ADMIN, IR_ADMIN_BINDING, IR_TTY_SIZE. IR_WORK and
 # IR_BIN exist so tests can run this outside the image.
 # =============================================================================
 setopt no_nomatch
+
+# The pod is always flat (plan §5.5); run-attempt.sh does the same for each chain.
+unset MCM_CLUSTER MCM_CLUSTER_ROOT MCM_CPD_CLI_WORKSPACE MCM_CONTAINER_SUFFIX MCM_KUBECONFIG_OVERRIDE \
+      MCM_TARGET_CLUSTERS MCM_RUN_TARGETS CPDCONFIG CPD_CLI_WORKSPACE
 
 IR_WORK="${IR_WORK:-/work}"
 IR_BIN="${IR_BIN:-/opt/install-runner/bin}"
@@ -92,6 +96,7 @@ KUBE
 # Sent on change and on a heartbeat, so a stale time means a dead supervisor.
 publish_status() {
     local run="${1:-}" state="idle" step="-" attempts=0 chain="-" id="-" warned="-" collected=no
+    local layout="-" env_target="-" path_map="-"
     if [[ -n "${run}" ]]; then
         state="$(state_get "${run}")"
         step="$(current_step "${run}")"
@@ -100,6 +105,10 @@ publish_status() {
         chain="$(sed -n 's/^IR_CHAIN=//p' "${run}/run.env" 2>/dev/null | tr -d "'\"")"
         warned="$(warned_steps "${run}" | paste -sd, -)"
         [[ -e "${run}/collected" ]] && collected=yes
+        # The run record (plan §5.4), so status and collect can tell where it came from.
+        layout="$(sed -n 's/^IR_LAYOUT=//p' "${run}/run.env" 2>/dev/null | tr -d "'\"")"
+        env_target="$(sed -n 's/^IR_ENV_TARGET=//p' "${run}/run.env" 2>/dev/null | tr -d "'\"")"
+        path_map="$(cat "${run}/path_map" 2>/dev/null)"
     fi
     local now="${EPOCHSECONDS:-$(date +%s)}" sig="${state}|${step}|${attempts}|${id}|${warned}|${collected}"
     [[ "${sig}" == "${LAST_STATUS}" ]] && (( now - LAST_PUBLISH < IR_HEARTBEAT )) && return 0
@@ -109,6 +118,9 @@ publish_status() {
         --from-literal=slot="${IR_SLOT:-}" --from-literal=state="${state}" --from-literal=step="${step}" \
         --from-literal=attempts="${attempts}" --from-literal=run="${id}" --from-literal=chain="${chain:--}" \
         --from-literal=warned="${warned:--}" --from-literal=collected="${collected}" \
+        --from-literal=cluster="${IR_SOURCE_CLUSTER:--}" --from-literal=ocp_url="${IR_OCP_URL:--}" \
+        --from-literal=layout="${layout:--}" --from-literal=env_target="${env_target:--}" \
+        --from-literal=path_map="${path_map:--}" \
         --from-literal=heartbeat="${now}" \
         --dry-run=client -o yaml 2>/dev/null \
         | oc label --local -f - app.kubernetes.io/managed-by=install-runner --dry-run=client -o yaml 2>/dev/null \

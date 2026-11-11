@@ -20,6 +20,8 @@
 _IR_HELPERS_LOADED=1
 
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+# The cluster folder that owns a URL, and a config file's literal OCP_URL.
+source "${_CP4D_REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
 
 IR_SRC="${_CP4D_REPO_ROOT}/src/install_runner"
 IR_SYSTEM_NS="install-runner-system"
@@ -171,6 +173,9 @@ ir_image_ensure() {   # <id> -> REPLY = image reference
             fi
             url="$(_ir_cpd_cli_url "${id}")" || ir_die "Could not resolve the Linux cpd-cli download. Set INSTALL_RUNNER_CPD_CLI_URL."
             _ir_dns_name "install-runner-${tag}" 63; local build="${REPLY}"
+            # The build lives in the system namespace, which the first launch on a
+            # cluster has not created yet (ir_slot_apply comes later).
+            ir_apply system.yaml.tmpl SYSTEM_NAMESPACE="${IR_SYSTEM_NS}"
             ir_apply build.yaml.tmpl SYSTEM_NAMESPACE="${IR_SYSTEM_NS}" BUILD_NAME="${build}" \
                 BASE_IMAGE="${base}" CPD_CLI_URL="${url}" IMAGE_TAG="${tag}"
             ir_info "Building the runner image in cluster (${tag})..."
@@ -236,7 +241,17 @@ ir_preflight() {   # <id>
             rc=1
         fi
     fi
-    ir_hook "${id}" preflight || rc=1
+    # The module checks the very folders that will be staged: IR_STAGED_<VAR> for
+    # each root, once _ir_stage_plan has worked them out (hand-off and preflight verb).
+    (
+        local snap
+        if [[ -n "${_IR_PLANNED:-}" ]]; then
+            for snap in "${(@k)_IR_ROOT_DIR}"; do
+                export "IR_STAGED_${_IR_ROOT_VAR[${snap}]}=${_IR_ROOT_DIR[${snap}]}"
+            done
+        fi
+        ir_hook "${id}" preflight
+    ) || rc=1
     (( rc == 0 )) || ir_die "Preflight failed: nothing was changed."
 
     local active
@@ -276,7 +291,7 @@ ir_slot_apply() {   # <id> <slot> <image>
 
     ir_apply system.yaml.tmpl SYSTEM_NAMESPACE="${IR_SYSTEM_NS}"
     ir_apply slot.yaml.tmpl NAMESPACE="${ns}" SLOT="${slot}" IMAGE="${image}" NODE_SELECTOR="${selector}" \
-        OCP_URL="${OCP_URL:-}" ADMIN_BINDING="${binding}" \
+        OCP_URL="${OCP_URL:-}" SOURCE_CLUSTER="${MCM_CLUSTER:-}" ADMIN_BINDING="${binding}" \
         AUTO_RESUME="${INSTALL_RUNNER_AUTO_RESUME:-true}" MAX_RESUMES="${INSTALL_RUNNER_MAX_RESUMES:-3}" \
         KEEP_ADMIN="${INSTALL_RUNNER_KEEP_ADMIN:-false}" TTY_SIZE="${INSTALL_RUNNER_TTY_SIZE:-120x50}" \
         CPU_REQUEST="$(ir_conf "${id}" RUNNER_CPU_REQUEST)" \
@@ -311,18 +326,247 @@ ir_wait_pod() {   # <namespace> [timeout-s, default 900]
 # =============================================================================
 # Snapshot and run
 # =============================================================================
-# Repo code the way it is right now, including uncommitted work, plus the module's
-# git-ignored paths. Nothing else: no other product's config, no .venv.
+# The pod always sees the flat layout (plan §5): each root a module names
+# (RUNNER_STAGE_ROOTS) goes to its fixed place in the snapshot, wherever it lives
+# here (configs/ or configs/clusters/<name>/), and collect maps it back from the
+# run's path record. Nothing below is ever staged, whatever names it: home folders
+# with logins, cluster markers, the multi-cluster state file, workspaces (large,
+# and other products' data), conflict copies and backups.
+_ir_pruned() {   # <path> -> 0 when it must never reach a pod
+    local p="$1" seg
+    local -a segs=(${(s:/:)p})
+    [[ "${p}" == configs/multi_cluster_management.sh || "${p}" == configs/clusters(|/*) ]] && return 0
+    for seg in "${segs[@]}"; do
+        [[ "${seg}" == (.home|.kube|.cpd-cli|*_workspace|cpd-cli-workspace|registry_mirror_cluster|oadp) ]] && return 0
+    done
+    [[ "${segs[-1]}" == (.cluster|.DS_Store|*.bak*|*.in-cluster-*) ]]
+}
+
+# Files under a folder, relative to it. The prune stops find from walking into a
+# workspace that can hold gigabytes.
+_ir_find_files() {   # <folder> -> NUL-separated paths
+    local f
+    ( cd "$1" && find . \( -name .home -o -name .kube -o -name .cpd-cli -o -name '*_workspace' \
+                          -o -name cpd-cli-workspace -o -name registry_mirror_cluster -o -name oadp \) -prune \
+                       -o -type f -print0 ) \
+        | while IFS= read -r -d '' f; do
+              f="${f#./}"
+              _ir_pruned "${f}" || print -rn -- "${f}"$'\0'
+          done | LC_ALL=C sort -zu
+}
+
+# Repo code the way it is right now, including uncommitted work. Config comes only
+# through the roots: never configs/clusters/ or the state file, even if tracked.
 _ir_snapshot_files() {   # <id> -> NUL-separated paths, repo-relative
-    local id="$1" p f
+    local f
     ( cd "${_CP4D_REPO_ROOT}" || exit 1
       git ls-files -z -c -o --exclude-standard | while IFS= read -r -d '' f; do
-          [[ -f "${f}" ]] && print -rn -- "${f}"$'\0'
-      done
-      for p in ${(s: :)$(ir_conf "${id}" RUNNER_STAGE_PATHS)}; do
-          [[ -e "${p}" ]] || continue
-          find "${p}" -type f ! -name '.DS_Store' ! -name '*.bak' ! -name '*.bak.*' -print0
+          # if, not &&: a skipped last file must not fail the pipeline.
+          if [[ -f "${f}" ]] && ! _ir_pruned "${f}"; then print -rn -- "${f}"$'\0'; fi
       done ) | LC_ALL=C sort -zu
+}
+
+_ir_count_nul() { tr -cd '\0' | wc -c | tr -d ' '; }
+
+# Snapshot paths are module constants, used in a pod shell command: keep them plain.
+_ir_snapshot_path_ok() {   # <path>
+    [[ "$1" == [A-Za-z0-9_]* && "$1" != *[^A-Za-z0-9._/-]* && "$1" != */ \
+       && "/$1/" != */../* && "/$1/" != */./* && "$1" != configs/clusters(|/*) ]]
+}
+
+# Allowlist for a root (plan §5.3, X3): one product's config folder, or the service
+# instance folder. Never a whole cluster folder, nor anything inside a home folder.
+_ir_root_allowed() {   # <absolute folder> <repo-relative folder> -> 0, or 1 with why in REPLY
+    local seg
+    for seg in ${(s:/:)2}; do
+        if [[ "${seg}" == (.home|.kube|.cpd-cli) ]]; then
+            REPLY="it is inside a ${seg} folder, which holds logins"
+            return 1
+        fi
+    done
+    if [[ "$2" == (configs|configs/clusters) || ( "$2" == configs/clusters/* && "$2" != configs/clusters/*/* ) ]]; then
+        REPLY="it is a whole configs folder, with logins and workspaces"
+        return 1
+    fi
+    [[ "${1:t}" == *_config ]] && return 0
+    [[ -n "${SERVICE_INSTANCE_FILE_DIR:-}" && "$1" == "${SERVICE_INSTANCE_FILE_DIR:A}" ]] && return 0
+    REPLY="only *_config folders and SERVICE_INSTANCE_FILE_DIR can be staged"
+    return 1
+}
+
+# Resolves "<LOCAL_VAR>:<snapshot path>" pairs from the loaded env, so a pinned run
+# stages its cluster's folders and a flat run the flat ones.
+_ir_resolve_roots() {   # <id> <conf key> -> reply = snapshot paths; fills _IR_ROOT_DIR, _IR_ROOT_VAR
+    local id="$1" key="$2" pair var snap dir rel repo="${_CP4D_REPO_ROOT:A}"
+    reply=()
+    for pair in ${(s: :)$(ir_conf "${id}" "${key}")}; do
+        var="${pair%%:*}" snap="${pair#*:}"
+        [[ "${pair}" == *:* && "${var}" == [A-Za-z_]* && "${var}" != *[^A-Za-z0-9_]* ]] \
+            || ir_die "${key} in ${id}.conf: '${pair}' is not <LOCAL_VAR>:<snapshot path>."
+        _ir_snapshot_path_ok "${snap}" || ir_die "${key} in ${id}.conf: '${snap}' is not a plain relative path."
+        dir="${(P)var:-}"
+        [[ -n "${dir}" ]] || ir_die "${key} in ${id}.conf names ${var}, which the loaded config does not set."
+        dir="${dir:A}"
+        # Missing is fine (a collect root the run creates); a file is not a root.
+        [[ ! -e "${dir}" || -d "${dir}" ]] || ir_die "${key} in ${id}.conf names ${var}=${dir}, which is not a folder."
+        [[ "${dir}" == "${repo}"/* ]] || ir_die "${var}=${dir} is outside this checkout: the runner stages only the repo's config folders."
+        rel="${dir#${repo}/}"
+        _ir_root_allowed "${dir}" "${rel}" || ir_die "Refusing to stage ${var}=${rel}: ${REPLY}."
+        if [[ -n "${_IR_ROOT_DIR[${snap}]:-}" && "${_IR_ROOT_DIR[${snap}]}" != "${dir}" ]]; then
+            ir_die "${id}.conf maps two folders to ${snap}: ${_IR_ROOT_DIR[${snap}]} and ${dir}."
+        fi
+        _IR_ROOT_DIR[${snap}]="${dir}"
+        _IR_ROOT_VAR[${snap}]="${var}"
+        (( ${reply[(Ie)${snap}]} )) || reply+=("${snap}")
+    done
+}
+
+# X1: a config written for another cluster must not run on this session's cluster.
+# Only a literal OCP_URL can be checked; a ${reference} is left to the load.
+_ir_refuse_other_cluster_config() {   # <config file>
+    local literal here="${${OCP_URL:-}%/}"
+    literal="$(_mcm_config_file_url "$1")"
+    # Compared as MCM compares clusters (host and port, any case), so one cluster
+    # written two ways is not refused.
+    [[ -z "${literal}" || "$(_mcm_url_key "${literal}")" == "$(_mcm_url_key "${here}")" ]] && return 0
+    ir_die "${1#${_CP4D_REPO_ROOT:A}/} is for ${literal%/}, but this session is on ${here:-no cluster (OCP_URL is empty)}. Nothing was staged. Load the config of the cluster you mean, or fix OCP_URL in that file."
+}
+
+# Hook for chains whose config is not the install's own (I6 fills
+# RUNNER_CHAIN_ENV_TARGETS: space-separated "<chain>=<bare target>").
+_ir_chain_env_target() {   # <id> <chain> -> REPLY = bare target, or empty
+    local entry
+    REPLY=""
+    for entry in ${(s: :)$(ir_conf "$1" RUNNER_CHAIN_ENV_TARGETS)}; do
+        [[ "${entry%%=*}" == "$2" ]] && { REPLY="${entry#*=}"; return 0; }
+    done
+    return 0
+}
+
+# X4: the pod loads the file this session loaded. Its place in the snapshot goes to
+# run.env; the bare name stays when env_bootstrap inferred it (not exported), since
+# the pod infers the same. A file outside the roots but inside the repo is staged
+# at its flat place.
+_ir_plan_env_target() {   # <id> <chain> -> _IR_ENV_TARGET, _IR_ENV_TARGET_REL; may add to _IR_EXTRA_PAIRS
+    local id="$1" chain="$2" file snap dir rel="" repo="${_CP4D_REPO_ROOT:A}" configs
+    if [[ -z "${ENV_TARGET:-}" || "${ENV_TARGET}" == all ]]; then
+        ir_die "ENV_TARGET=${ENV_TARGET:-all} loads every config, but a runner pod gets one install's config. Pick one with --env-target <name|file>."
+    fi
+    # The guard runs for a chain-specific target too: the file loaded here still says
+    # which cluster this session meant.
+    file="${ENV_TARGET_FILE:-}"
+    [[ -n "${file}" && -f "${file}" ]] && _ir_refuse_other_cluster_config "${file:A}"
+    _ir_chain_env_target "${id}" "${chain}"
+    if [[ -n "${REPLY}" ]]; then
+        typeset -g _IR_ENV_TARGET="${REPLY}" _IR_ENV_TARGET_REL="${REPLY}"
+        return 0
+    fi
+    [[ -n "${file}" && -f "${file}" ]] || ir_die "ENV_TARGET=${ENV_TARGET} loaded no config file here: nothing to stage."
+    file="${file:A}"
+    for snap in "${_IR_STAGE_ROOTS[@]}"; do
+        dir="${_IR_ROOT_DIR[${snap}]}"
+        if [[ "${file}" == "${dir}"/* ]]; then
+            rel="${snap}/${file#${dir}/}"
+            break
+        fi
+    done
+    if [[ -n "${rel}" && "${(t)ENV_TARGET}" != *export* ]]; then
+        typeset -g _IR_ENV_TARGET="${ENV_TARGET}" _IR_ENV_TARGET_REL="${rel}"
+        return 0
+    fi
+    if [[ -z "${rel}" ]]; then
+        [[ "${file}" == "${repo}"/* ]] || ir_die "The config ${file} is outside this checkout: the runner can't stage it."
+        configs="${${CONFIGS_ROOT:-${repo}/configs}:A}"
+        if [[ "${file}" == "${configs}"/* ]]; then
+            # The flat name: configs/<product>_config/..., from either layout.
+            rel="configs/${file#${configs}/}"
+        elif [[ "${file#${repo}/}" == configs/* ]]; then
+            ir_die "The config ${file#${repo}/} belongs to another cluster folder than this session's (${configs#${repo}/})."
+        else
+            rel="${file#${repo}/}"
+        fi
+        if _ir_pruned "${rel}" || ! _ir_snapshot_path_ok "${rel}"; then
+            ir_die "The config ${file#${repo}/} is in a place the runner never stages (${rel})."
+        fi
+        _IR_EXTRA_PAIRS+=("${file}"$'\t'"${rel}")
+    fi
+    typeset -g _IR_ENV_TARGET="${rel}" _IR_ENV_TARGET_REL="${rel}"
+}
+
+# A module's own extras: its `stage` hook prints "<source>\t<snapshot path>" lines
+# (source absolute or repo-relative, a file or a folder).
+_ir_plan_hook_pairs() {   # <id> -> adds to _IR_EXTRA_PAIRS
+    local id="$1" out line src snap seg rel repo="${_CP4D_REPO_ROOT:A}"
+    out="$(ir_hook "${id}" stage)" || ir_die "The ${id} stage hook failed: nothing was staged."
+    for line in "${(@f)out}"; do
+        [[ -n "${line}" ]] || continue
+        [[ "${line}" == *$'\t'* ]] || ir_die "The ${id} stage hook printed '${line}', not <source><TAB><snapshot path>."
+        src="${line%%$'\t'*}" snap="${line#*$'\t'}"
+        [[ "${src}" == /* ]] || src="${_CP4D_REPO_ROOT}/${src}"
+        [[ -e "${src}" ]] || ir_die "The ${id} stage hook names ${src}, which does not exist."
+        src="${src:A}"
+        _ir_snapshot_path_ok "${snap}" || ir_die "The ${id} stage hook gave '${snap}', not a plain relative path."
+        for seg in ${(s:/:)src}; do
+            [[ "${seg}" == (.home|.kube|.cpd-cli) ]] && ir_die "Refusing to stage ${src}: it is inside a ${seg} folder, which holds logins."
+        done
+        # A hook may name a workspace file (an archive, an inventory), but never what
+        # would pin the pod, nor a whole cluster folder with its logins.
+        rel="${src#${repo}/}"
+        if [[ "${src:t}" == .cluster || "${rel}" == (configs|configs/clusters|configs/multi_cluster_management.sh) \
+              || ( "${rel}" == configs/clusters/* && "${rel}" != configs/clusters/*/* ) ]]; then
+            ir_die "Refusing to stage ${rel}: cluster markers, the multi-cluster state file and whole cluster folders never go to a pod."
+        fi
+        _IR_EXTRA_PAIRS+=("${src}"$'\t'"${snap}")
+    done
+}
+
+# Everything ir_stage needs that can be worked out on this machine. ir_handoff calls
+# it before touching the cluster, so a refusal leaves nothing behind.
+_ir_stage_plan() {   # <id> <chain>
+    local id="$1" chain="$2"
+    [[ "${_IR_PLANNED:-}" == "${id}|${chain}" ]] && return 0
+    typeset -gA _IR_ROOT_DIR=() _IR_ROOT_VAR=()
+    typeset -ga _IR_STAGE_ROOTS=() _IR_COLLECT_ROOTS=() _IR_EXTRA_PAIRS=()
+    _ir_resolve_roots "${id}" RUNNER_STAGE_ROOTS; _IR_STAGE_ROOTS=("${reply[@]}")
+    _ir_resolve_roots "${id}" RUNNER_COLLECT_ROOTS; _IR_COLLECT_ROOTS=("${reply[@]}")
+    _ir_plan_env_target "${id}" "${chain}"
+    _ir_plan_hook_pairs "${id}"
+    typeset -g _IR_PLANNED="${id}|${chain}"
+}
+
+# One tar stream into the pod, unpacked at <snapshot>/<dest>. Made here by this
+# machine's tar (bsdtar on macOS, GNU tar on Linux) and unpacked by GNU tar in the
+# pod, so names stay plain and relative to the folder: no -s or --transform, which
+# the two read differently.
+_ir_stream_to_pod() {   # <namespace> <run> <dest, snapshot-relative, "" = top> <local folder>   stdin: NUL list
+    local ns="$1" run="$2" dest="/work/snapshots/$2${3:+/$3}"
+    ( cd "$4" && COPYFILE_DISABLE=1 tar --null -T - -cf - 2>/dev/null ) \
+        | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c \
+            "mkdir -p ${dest} /work/runs/${run} && tar -xf - --no-same-owner --warning=no-unknown-keyword -C ${dest}"
+}
+
+_ir_stage_pair() {   # <namespace> <run> <source> <snapshot path> -> REPLY = files sent
+    local ns="$1" run="$2" src="$3" snap="$4" tmp dest=""
+    if [[ -d "${src}" ]]; then
+        REPLY="$(_ir_find_files "${src}" | _ir_count_nul)"
+        (( REPLY > 0 )) && _ir_find_files "${src}" | _ir_stream_to_pod "${ns}" "${run}" "${snap}" "${src}"
+        return 0
+    fi
+    # A file lands under another name only through a copy: renaming in tar isn't portable.
+    [[ "${snap}" == */* ]] && dest="${snap:h}"
+    tmp="$(h_private_tmpdir "${TMPDIR:-/tmp}")"
+    cp -p "${src}" "${tmp}/${snap:t}"
+    print -rn -- "${snap:t}"$'\0' | _ir_stream_to_pod "${ns}" "${run}" "${dest}" "${tmp}"
+    rm -rf "${tmp}"
+    REPLY=1
+}
+
+# The run record's path map: "<snapshot path>=<VAR>:<local folder, repo-relative>".
+_ir_path_map() {
+    local snap repo="${_CP4D_REPO_ROOT:A}"
+    for snap in "${_IR_STAGE_ROOTS[@]}" "${(@)_IR_COLLECT_ROOTS:|_IR_STAGE_ROOTS}"; do
+        print -r -- "${snap}=${_IR_ROOT_VAR[${snap}]}:${_IR_ROOT_DIR[${snap}]#${repo}/}"
+    done
 }
 
 # Toggles the user may have set for this run. Never anything credential-shaped.
@@ -336,26 +580,49 @@ _ir_run_env_toggles() {
 }
 
 ir_stage() {   # <id> <namespace> <chain> <run id> [chain args...] - needs a ready pod
-    local id="$1" ns="$2" chain="$3" run="$4" count
+    local id="$1" ns="$2" chain="$3" run="$4" count total snap dir pair repo="${_CP4D_REPO_ROOT:A}"
     shift 4
+    _ir_stage_plan "${id}" "${chain}"
     ir_info "Staging run ${run}"
-    count="$(_ir_snapshot_files "${id}" | tr -cd '\0' | wc -c | tr -d ' ')"
+    count="$(_ir_snapshot_files "${id}" | _ir_count_nul)"
     (( count > 0 )) || ir_die "Nothing to stage: is this a git checkout?"
-    # shellcheck disable=SC2016
-    _ir_snapshot_files "${id}" \
-        | ( cd "${_CP4D_REPO_ROOT}" && COPYFILE_DISABLE=1 tar --null -T - -cf - 2>/dev/null ) \
-        | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c \
-            "mkdir -p /work/snapshots/${run} /work/runs/${run} && tar -xf - --no-same-owner --warning=no-unknown-keyword -C /work/snapshots/${run}"
+    _ir_snapshot_files "${id}" | _ir_stream_to_pod "${ns}" "${run}" "" "${_CP4D_REPO_ROOT}"
+    ir_info "  code: ${count} files"
+    total=${count}
+    for snap in "${_IR_STAGE_ROOTS[@]}"; do
+        dir="${_IR_ROOT_DIR[${snap}]}"
+        count=0
+        [[ -d "${dir}" ]] && count="$(_ir_find_files "${dir}" | _ir_count_nul)"
+        (( count > 0 )) && _ir_find_files "${dir}" | _ir_stream_to_pod "${ns}" "${run}" "${snap}" "${dir}"
+        ir_info "  ${snap}: ${count} files from ${dir#${repo}/}"
+        (( total += count ))
+    done
+    for pair in "${_IR_EXTRA_PAIRS[@]}"; do
+        _ir_stage_pair "${ns}" "${run}" "${pair%%$'\t'*}" "${pair#*$'\t'}"
+        ir_info "  ${pair#*$'\t'}: ${REPLY} file(s) from ${${pair%%$'\t'*}#${repo}/}"
+        (( total += REPLY ))
+    done
+    local layout=flat
+    [[ -n "${MCM_CLUSTER:-}" ]] && layout=cluster
     {
         print -r -- "IR_RUN_ID=${(qq)run}"
         print -r -- "IR_CHAIN=${(qq)chain}"
         print -r -- "IR_INSTALL_ID=${(qq)id}"
         print -r -- "IR_ARGS=(${(j: :)${(qq)@}})"
-        print -r -- "export ENV_TARGET=${(qq)$(ir_conf "${id}" INSTALL_ENV_TARGET)}"
+        print -r -- "export ENV_TARGET=${(qq)_IR_ENV_TARGET}"
+        # The run record (plan §5.4), read back by collect. IR_SOURCE_CLUSTER is for
+        # display: MCM_CLUSTER would pin the pod.
+        print -r -- "IR_CLUSTER_URL=${(qq)${${OCP_URL:-}%/}}"
+        print -r -- "IR_SOURCE_CLUSTER=${(qq)${MCM_CLUSTER:-}}"
+        print -r -- "IR_LAYOUT=${(qq)layout}"
+        print -r -- "IR_PATH_MAP=${(qq):-/work/runs/${run}/path_map}"
+        print -r -- "IR_ENV_TARGET=${(qq)_IR_ENV_TARGET_REL}"
         _ir_run_env_toggles
     } | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c "cat > /work/runs/${run}/run.env"
+    _ir_path_map | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c "cat > /work/runs/${run}/path_map"
+    # The baseline is taken once every stream is in.
     oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/finalize-stage.sh" "${run}"
-    ir_info "Staged ${count} files."
+    ir_info "Staged ${total} files."
 }
 
 # =============================================================================
@@ -375,6 +642,9 @@ ir_handoff() {   # <chain args...>
     id="${REPLY}"
     ir_slot "${id}"; slot="${REPLY}"
     ir_namespace "${slot}"; ns="${REPLY}"
+    # What to stage, and the refusals (wrong cluster's config, ENV_TARGET=all), come
+    # first: nothing on the cluster changes for a run that can't go.
+    _ir_stage_plan "${id}" "${chain}"
 
     eval "${OC_LOGIN}"
     ir_refuse_busy_slot "${ns}" "${slot}"
@@ -526,10 +796,169 @@ ir_resume() {   # <slot> [--retry-warned]
 # =============================================================================
 # Collect and teardown
 # =============================================================================
-# Brings back what the run changed, from any machine. A local file changed since
-# launch is never overwritten: the pod's copy lands next to it instead.
-ir_collect() {   # <id> <slot> [--force]
-    local id="$1" slot="$2" force="${3:-}" ns state run list tmp
+# One value from a run.env read back from a pod: parsed, never sourced.
+_ir_record_value() {   # <run.env text> <key> -> stdout
+    local line
+    for line in "${(@f)1}"; do
+        if [[ "${line}" == "$2="* ]]; then
+            print -r -- "${(Q)${line#*=}}"
+            return 0
+        fi
+    done
+}
+
+_ir_layout_text() {   # <flat|cluster> <name> -> stdout
+    if [[ "$1" == cluster ]]; then print -r -- "cluster folder configs/clusters/$2"
+    else print -r -- "the flat configs/ layout"
+    fi
+}
+
+# Where each collect root goes on this machine (plan §5.6): the run's path record,
+# checked against where the cluster's config lives now. Names are per checkout, so
+# the cluster is found by its URL. A migration, a rename or another machine with a
+# different layout is refused: --to-loaded (the folders this session loaded) or
+# --to <dir> then says where the results go.
+_ir_collect_destinations() {   # <id> <namespace> <run> <--to folder or ""> [loaded] -> _IR_DEST, _IR_COLLECT_SNAPS
+    local id="$1" ns="$2" run="$3" to="$4" loaded="${5:-}" pair snap record map line rel url layout source now now_layout
+    local repo="${_CP4D_REPO_ROOT:A}" hint
+    typeset -gA _IR_DEST=()
+    typeset -ga _IR_COLLECT_SNAPS=()
+    for pair in ${(s: :)$(ir_conf "${id}" RUNNER_COLLECT_ROOTS)}; do
+        _IR_COLLECT_SNAPS+=("${pair#*:}")
+    done
+    if [[ -n "${to}" ]]; then
+        for snap in "${_IR_COLLECT_SNAPS[@]}"; do
+            _IR_DEST[${snap}]="${to:A}/${snap:t}"
+        done
+        ir_info "Collecting into ${to:A} (--to)."
+        return 0
+    fi
+    record="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c "cat /work/runs/${run}/run.env" 2>/dev/null || true)"
+    map="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c "cat /work/runs/${run}/path_map" 2>/dev/null || true)"
+    url="$(_ir_record_value "${record}" IR_CLUSTER_URL)"
+    now="$(mcm_cluster_for_url "${url}")"
+    now_layout=flat
+    [[ -n "${now}" ]] && now_layout=cluster
+    if [[ -n "${loaded}" ]]; then
+        _ir_loaded_destinations "${id}" "${run}" "${url}" "${now}"
+        return 0
+    fi
+    # Both ways out of a refusal: each root into the folder loaded for it now (in the
+    # flat layout they have different parents), or all of them under one folder.
+    hint="collect --to-loaded (into $(_ir_loaded_roots_text "${id}")) or collect --to <folder>"
+    [[ -n "${now}" ]] && hint+=" (e.g. --to $(mcm_clusters_root)/${now})"
+    [[ -n "${map}" ]] || ir_die "Run ${run} has no path record (an older runner staged it). Say where its results go: ${hint}."
+    layout="$(_ir_record_value "${record}" IR_LAYOUT)"
+    source="$(_ir_record_value "${record}" IR_SOURCE_CLUSTER)"
+    if [[ "${layout:-flat}" != "${now_layout}" || "${source}" != "${now}" ]]; then
+        ir_die "Run ${run} was staged from $(_ir_layout_text "${layout:-flat}" "${source}"), but ${url:-its cluster} now has $(_ir_layout_text "${now_layout}" "${now}") here. Nothing was collected. Say where the results go: ${hint}."
+    fi
+    for line in "${(@f)map}"; do
+        snap="${line%%=*}" rel="${line#*=}" rel="${rel#*:}"
+        (( ${_IR_COLLECT_SNAPS[(Ie)${snap}]} )) || continue
+        [[ -n "${rel}" && "${rel}" != /* && "/${rel}/" != */../* ]] || ir_die "Run ${run} records a bad folder for ${snap}: '${rel}'."
+        # The record comes back from the pod, so it is checked like a root at staging:
+        # a config folder of this layout, never code, a login folder or another
+        # cluster's folder. Another root (the service instance folder) only at its own
+        # place: <snapshot path> when flat, as in the pod, or under the cluster folder.
+        if ! _ir_root_allowed "${repo}/${rel}" "${rel}"; then
+            if [[ "${REPLY}" != only* ]] \
+               || ! [[ ( -n "${now}" && "${rel}" == configs/clusters/${now}/${snap:t} ) || ( -z "${now}" && "${rel}" == "${snap}" ) ]]; then
+                ir_die "Run ${run} records ${rel} for ${snap}, which collect never writes to: ${REPLY}. Say where it goes: ${hint}."
+            fi
+        fi
+        if [[ -n "${now}" && "${rel}" != configs/clusters/${now}/* ]] || [[ -z "${now}" && "${rel}" == configs/clusters/* ]]; then
+            ir_die "Run ${run} records ${rel} for ${snap}, outside $(_ir_layout_text "${now_layout}" "${now}"). Say where it goes: ${hint}."
+        fi
+        _IR_DEST[${snap}]="${_CP4D_REPO_ROOT}/${rel}"
+    done
+    for snap in "${_IR_COLLECT_SNAPS[@]}"; do
+        [[ -n "${_IR_DEST[${snap}]:-}" ]] || ir_die "Run ${run} has no record of where ${snap} came from. Say where it goes: ${hint}."
+    done
+}
+
+# For a refusal's hint: the folders this session loaded for the collect roots.
+_ir_loaded_roots_text() {   # <id> -> stdout
+    local pair var dir repo="${_CP4D_REPO_ROOT:A}"
+    local -a shown=()
+    for pair in ${(s: :)$(ir_conf "$1" RUNNER_COLLECT_ROOTS)}; do
+        var="${pair%%:*}"
+        dir="${(P)var:-}"
+        [[ -n "${dir}" ]] && shown+=("${${dir:A}#${repo}/}") || shown+=("${var} (not set here)")
+    done
+    print -r -- "${(j:, :)shown}"
+}
+
+# --to-loaded: each root goes to the folder the loaded config gives it, checked as at
+# staging, and inside the folder that holds this cluster's config now.
+_ir_loaded_destinations() {   # <id> <run> <recorded url or ""> <cluster that owns it now or ""> -> _IR_DEST
+    local id="$1" run="$2" url="$3" now="$4" snap rel repo="${_CP4D_REPO_ROOT:A}"
+    typeset -gA _IR_ROOT_DIR=() _IR_ROOT_VAR=()
+    _ir_resolve_roots "${id}" RUNNER_COLLECT_ROOTS
+    for snap in "${reply[@]}"; do
+        rel="${_IR_ROOT_DIR[${snap}]#${repo}/}"
+        if [[ -n "${url}" ]]; then
+            if [[ -n "${now}" && "${rel}" != configs/clusters/${now}/* ]] || [[ -z "${now}" && "${rel}" == configs/clusters/* ]]; then
+                ir_die "This session loaded ${rel} for ${snap}, but run ${run}'s cluster (${url}) has $(_ir_layout_text "${now:+cluster}" "${now}") here. Load that config, or use collect --to <folder>."
+            fi
+        fi
+        _IR_DEST[${snap}]="${_IR_ROOT_DIR[${snap}]}"
+        ir_info "  ${snap} -> ${rel}"
+    done
+    ir_info "Collecting into the folders this session loaded (--to-loaded)."
+}
+
+# A collect-list path (snapshot-relative) -> its local file, through the longest root.
+_ir_local_path() {   # <file> -> REPLY
+    local snap best=""
+    REPLY=""
+    [[ "/$1/" == */../* ]] && return 1
+    for snap in "${_IR_COLLECT_SNAPS[@]}"; do
+        [[ "$1" == "${snap}"/* && ${#snap} -gt ${#best} ]] && best="${snap}"
+    done
+    [[ -n "${best}" ]] || return 1
+    REPLY="${_IR_DEST[${best}]}/${1#${best}/}"
+}
+
+# A collected text file can name pod paths (/work/snapshots/<run>/...): they become
+# the same places here, a root's local folder first, then the repo for the rest.
+# Text under 1 MB only; binary files are left alone.
+_ir_rewrite_pod_paths() {   # <file> <run>
+    local file="$1" pod="/work/snapshots/$2" size snap line
+    local -a order=()
+    [[ -f "${file}" ]] || return 0
+    size="$(wc -c < "${file}" | tr -d ' ')"
+    (( size > 0 && size < 1048576 )) || return 0
+    grep -qF -- "${pod}" "${file}" 2>/dev/null || return 0
+    LC_ALL=C grep -qI . "${file}" 2>/dev/null || return 0
+    for snap in "${_IR_COLLECT_SNAPS[@]}"; do order+=("${#snap}"$'\t'"${snap}"); done
+    for line in ${(On)order}; do
+        snap="${line#*$'\t'}"
+        IR_FROM="${pod}/${snap}" IR_TO="${_IR_DEST[${snap}]}" \
+            perl -pi -e 's{\Q$ENV{IR_FROM}\E(?=/|[^\w.\-]|$)}{$ENV{IR_TO}}g' "${file}"
+    done
+    IR_FROM="${pod}" IR_TO="${_CP4D_REPO_ROOT}" \
+        perl -pi -e 's{\Q$ENV{IR_FROM}\E(?=/|[^\w.\-]|$)}{$ENV{IR_TO}}g' "${file}"
+}
+
+# Brings back what the run changed. A local file changed since launch is never
+# overwritten: the pod's copy lands next to it instead. A file missing here is
+# taken, as there is nothing to protect. New folders are owner-only: these are
+# config folders, some holding credentials.
+ir_collect() {   # <id> <slot> [--force] [--to <folder> | --to-loaded]
+    local id="$1" slot="$2" force="" to="" loaded="" ns state run list tmp
+    shift 2
+    while (( $# )); do
+        case "$1" in
+            --force) force=--force ;;
+            --to)    h_need_value "$1" "${2:-}"; to="$2"; shift ;;
+            --to=*)  to="${1#*=}"; [[ -n "${to}" ]] || ir_die "--to needs a folder." ;;
+            --to-loaded) loaded=1 ;;
+            *)       ir_die "Unknown collect option: $1" ;;
+        esac
+        shift
+    done
+    [[ -n "${to}" && -n "${loaded}" ]] && ir_die "Use --to <folder> or --to-loaded, not both."
     ir_namespace "${slot}"; ns="${REPLY}"
     state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
     [[ -n "${state}" ]] || ir_die "Slot ${slot} has no reachable run."
@@ -537,7 +966,8 @@ ir_collect() {   # <id> <slot> [--force]
         ir_die "Run is still ${state}. Wait for it, or use --force for what exists so far."
     fi
     run="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'basename "$(readlink -f /work/current)"')"
-    list="$(oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/collect-list.sh" ${(s: :)$(ir_conf "${id}" RUNNER_COLLECT_PATHS)})"
+    _ir_collect_destinations "${id}" "${ns}" "${run}" "${to}" "${loaded}"
+    list="$(oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/collect-list.sh" "${_IR_COLLECT_SNAPS[@]}")"
     if [[ -z "${list}" ]]; then
         ir_info "Nothing changed under the collect paths."
     else
@@ -546,20 +976,28 @@ ir_collect() {   # <id> <slot> [--force]
             | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c "cd /work/snapshots/${run} && tar -cf - -T -" \
             | tar -xf - -C "${tmp}"
         # (not "path": in zsh that is PATH)
-        local base hash file target lhash taken=0 kept=0
+        local base hash file target shown lhash rhash taken=0 kept=0 repo="${_CP4D_REPO_ROOT:A}"
         while IFS=$'\t' read -r base hash file; do
-            target="${_CP4D_REPO_ROOT}/${file}"
+            if ! _ir_local_path "${file}"; then
+                ir_warn "Skipped ${file}: it is outside the collect roots."
+                continue
+            fi
+            target="${REPLY}" shown="${${REPLY:A}#${repo}/}"
+            # Compared after the rewrite too, so collecting twice finds nothing new.
+            _ir_rewrite_pod_paths "${tmp}/${file}" "${run}"
+            rhash="$(_ir_sha < "${tmp}/${file}")"
             lhash=-
             [[ -f "${target}" ]] && lhash="$(_ir_sha < "${target}")"
-            if [[ "${lhash}" == "${hash}" ]]; then
+            if [[ "${lhash}" == "${hash}" || "${lhash}" == "${rhash}" ]]; then
                 continue
-            elif [[ "${lhash}" == "${base}" ]]; then
-                mkdir -p "${target:h}"
+            fi
+            (umask 077; mkdir -p "${target:h}")
+            if [[ "${lhash}" == - || "${lhash}" == "${base}" ]]; then
                 cp -p "${tmp}/${file}" "${target}"
                 (( ++taken ))
             else
                 cp -p "${tmp}/${file}" "${target}.in-cluster-${run}"
-                ir_warn "Kept your local ${file}; the pod's copy is ${file}.in-cluster-${run}"
+                ir_warn "Kept your local ${shown}; the pod's copy is ${shown}.in-cluster-${run}"
                 (( ++kept ))
             fi
         done <<< "${list}"
@@ -567,6 +1005,12 @@ ir_collect() {   # <id> <slot> [--force]
         ir_info "Collected ${taken} file(s); ${kept} kept back because they changed here too."
     fi
     oc exec -n "${ns}" "${IR_POD}" -- sh -c 'touch /work/current/collected'
+    # The follow-up reads the loaded config, which --to <folder> did not fill: it
+    # would work from stale details (an API key the pod has since rotated).
+    if [[ -n "${to}" ]]; then
+        ir_info "Results are in ${to:A}. Skipped the ${id} follow-up: it reads the loaded config, which these results did not reach. collect --to-loaded would put them there and run it."
+        return 0
+    fi
     ir_hook "${id}" post-collect
     return 0
 }

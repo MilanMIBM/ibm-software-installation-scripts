@@ -25,9 +25,33 @@ CPD_CHAIN = "scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/fu
 
 FAKE_OC = r"""#!/bin/bash
 # Logs every call, keeps what `apply` receives, and answers from $FAKE_DIR.
+# Each staging stream is unpacked into $FAKE_DIR/pod/<its snapshot folder>, as the pod would.
+# With $FAKE_DIR/strict_ns, `apply` refuses an object whose namespace no applied Namespace made
+# (or $FAKE_DIR/namespaces lists), as a real cluster does.
 d="${FAKE_DIR}"
 echo "oc $*" >> "$d/oc.log"
 args="$*"
+apply() {
+  local doc; doc="$(cat)"
+  if [ -e "$d/strict_ns" ]; then
+    printf '%s\n' "$doc" | awk -v nsfile="$d/namespaces" '
+      BEGIN { while ((getline l < nsfile) > 0) have[l] = 1 }
+      function flush() {
+        if (kind == "Namespace" && name != "") { have[name] = 1; print name >> nsfile }
+        else if (ns != "" && !(ns in have) && missing == "") missing = ns
+        kind = ""; name = ""; ns = ""; meta = 0
+      }
+      /^---/ { flush(); next }
+      /^kind:/ { kind = $2 }
+      /^metadata:/ { meta = 1; next }
+      /^[^ #]/ { meta = 0 }
+      meta && /^  name:/ { name = $2 }
+      meta && /^  namespace:/ { ns = $2 }
+      END { flush(); if (missing != "") { print "Error from server (NotFound): namespaces \"" missing "\" not found" > "/dev/stderr"; exit 1 } }
+    ' || exit 1
+  fi
+  { printf '%s\n' "$doc"; echo "---"; } >> "$d/applied.yaml"
+}
 case "$args" in
   "auth can-i"*) cat "$d/can_i" 2>/dev/null || echo yes ;;
   "whoami"*) echo tester ;;
@@ -39,15 +63,20 @@ case "$args" in
       key="$(sed -E 's/.*\.data\.([a-z]+).*/\1/' <<<"$args")"
       cat "$d/status.$key" 2>/dev/null ;;
   "get configmap -A"*) cat "$d/all_status.json" 2>/dev/null || echo '{"items":[]}' ;;
-  "apply -f -"*) { cat; echo "---"; } >> "$d/applied.yaml" ;;
+  "apply -f -"*) apply ;;
   "start-build"*) ;;
   "delete"*) ;;
   *"follow.sh"*"resolve"*) echo 0 ;;
   *"follow.sh"*) echo "hello from the pod" ;;
   *"collect-list.sh"*) cat "$d/collect_list" 2>/dev/null ;;
   *"tar -cf - -T -"*) cat >/dev/null; cat "$d/collect.tar" ;;
-  *"tar -xf"*) cat > "$d/snapshot.tar" ;;
+  *"tar -xf"*)
+      dest="$(sed -E 's#.* -C /work/snapshots/[^/ ]+/?([^ ]*)$#\1#' <<<"$args")"
+      mkdir -p "$d/pod/$dest" && tar -xf - -C "$d/pod/$dest" && echo "${dest:-.}" >> "$d/streams" ;;
+  *"cat > /work/runs/"*"/path_map"*) cat > "$d/path_map" ;;
   *"cat > /work/runs"*) cat > "$d/run.env" ;;
+  *"cat /work/runs/"*"/run.env"*) cat "$d/pod_run.env" 2>/dev/null ;;
+  *"cat /work/runs/"*"/path_map"*) cat "$d/pod_path_map" 2>/dev/null ;;
   *"control.resume"*) cat > "$d/resume" ;;
   *"finalize-stage.sh"*) echo "$args" > "$d/finalized" ;;
   *"cat /work/current/state"*) cat "$d/state" 2>/dev/null ;;
@@ -191,12 +220,13 @@ def no_local_tools(box):
     return box.calls("podman") == [] and box.calls("cpd-cli") == []
 
 
-def handoff(box, *args, mode="cluster", env=None, chain=CPD_CHAIN):
-    """Runs a stand-in for `chain` in the sandbox. mode=None leaves INSTALL_RUN_MODE out of the config."""
+def handoff(box, *args, mode="cluster", env=None, chain=CPD_CHAIN, cluster=None):
+    """Runs a stand-in for `chain` in the sandbox. mode=None leaves INSTALL_RUN_MODE out of the config.
+    cluster writes the config into configs/clusters/<cluster>/ instead of the flat configs/."""
     config = dict(HANDOFF_CONFIG)
     if mode is not None:
         config["INSTALL_RUN_MODE"] = mode
-    box.write_config("cpd", ocp_url=SANDBOX_URL, extra=config)
+    box.write_config("cpd", ocp_url=SANDBOX_URL, extra=config, cluster=cluster)
     script = box.repo / chain
     if not script.exists():
         script.parent.mkdir(parents=True, exist_ok=True)
@@ -247,24 +277,35 @@ def test_run_env_keeps_arguments_exact(sb):
     assert read_back.stdout.split("\n")[:5] == ["--skip", "two words", "--from", "it's", CPD_CHAIN]
 
 
+def pod_files(box):
+    """Every file the staging streams put in the fake pod's snapshot, snapshot-relative."""
+    root = box.fake / "pod"
+    return {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()} if root.exists() else set()
+
+
 def test_snapshot_has_code_and_config_but_not_secrets_of_others(sb):
     (sb.fake / "state").write_text("completed\n")
     # Things a real checkout holds that must stay home: another product's config, a venv,
-    # a mirror workspace and payloads in service_instances/.
+    # a mirror workspace, a cluster folder with its logins, and the multi-cluster state file.
+    # service_instances/ is the cpd module's second root, so its payloads do go.
     sb.write_config("concert", ocp_url=SANDBOX_URL)
-    for rel in (".venv/lib/site.py", "registry_mirror_workspace/inventory.tsv", "service_instances/payload.json"):
+    for rel in (".venv/lib/site.py", "registry_mirror_workspace/inventory.tsv", "service_instances/payload.json",
+                "configs/clusters/x/.home/.kube/config", "configs/multi_cluster_management.sh",
+                "configs/cp4d_config/.home/.kube/config", "configs/cp4d_config/cpd_vars.sh.bak",
+                "configs/cp4d_config/kubecost_workspace/big.bin", "configs/cp4d_config/old.sh.in-cluster-r1"):
         (sb.repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (sb.repo / rel).write_text("stays home\n")
     assert handoff(sb).returncode == 0
-    with tarfile.open(sb.fake / "snapshot.tar") as tar:
-        names = set(tar.getnames())
+    names = pod_files(sb)
     assert CPD_CHAIN in names
     assert "src/helpers/common_helpers.sh" in names
     assert "src/helpers/multi_cluster_helpers.sh" in names
     assert "pyproject.toml" in names, "1.1 and 3.3.1 walk up to it"
     assert "configs/cp4d_config/cpd_vars.sh" in names, "the module's own config is staged"
-    assert not any(n.startswith((".venv/", "registry_mirror_workspace/", "service_instances/", ".git/")) for n in names)
+    assert "service_instances/payload.json" in names, "the module's second root is staged"
+    assert not any(n.startswith((".venv/", "registry_mirror_workspace/", ".git/")) for n in names)
     assert not any(n.startswith("configs/") and not n.startswith("configs/cp4d_config/") for n in names)
+    assert not any(re.search(r"(^|/)(\.home|\.kube|[^/]*_workspace)(/|$)|\.bak|\.in-cluster-", n) for n in names), names
 
 
 def test_image_is_reused_when_unchanged(sb):
@@ -386,7 +427,7 @@ def sha(text):
 def collect_repo(sb):
     """A demo module with its own config in the sandbox, collected through x_install_runner.sh."""
     (sb.repo / "src/install_runner/installs/demo.conf").write_text(
-        'INSTALL_ID="demo"\nINSTALL_ENV_TARGET="demo"\nRUNNER_COLLECT_PATHS="configs/demo_config"\n')
+        'INSTALL_ID="demo"\nINSTALL_ENV_TARGET="demo"\nRUNNER_COLLECT_ROOTS="DEMO_CONFIG_DIR:configs/demo_config"\n')
     local = sb.repo / "configs/demo_config"
     local.mkdir(parents=True)
     (local / "demo_vars.sh").write_text(f'export OCP_URL="{SANDBOX_URL}"\nexport OC_LOGIN="oc login {SANDBOX_URL} --token=fake"\n')
@@ -406,6 +447,9 @@ def collect_repo(sb):
         f"{sha('old' + chr(10))}\t{sha('from pod' + chr(10))}\tconfigs/demo_config/edited_here.sh\n",
         f"-\t{sha('from pod' + chr(10))}\tconfigs/demo_config/new.sh\n"]))
     (sb.fake / "state").write_text("completed\n")
+    # The run record the pod keeps: staged from the flat layout.
+    (sb.fake / "pod_run.env").write_text(f"IR_RUN_ID=run1\nIR_CLUSTER_URL='{SANDBOX_URL}'\nIR_SOURCE_CLUSTER=''\nIR_LAYOUT=flat\n")
+    (sb.fake / "pod_path_map").write_text("configs/demo_config=DEMO_CONFIG_DIR:configs/demo_config\n")
     return local
 
 

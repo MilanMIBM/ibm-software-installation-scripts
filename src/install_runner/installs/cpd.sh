@@ -19,9 +19,12 @@ case "${1:-}" in
             oc get storageclass "${sc}" >/dev/null 2>&1 \
                 || { h_error "Storage class ${sc} does not exist on this cluster."; rc=1; }
         done
-        # 4.1 reads the options file through the config copy in the work dir.
-        if [[ -n "${INSTALL_OPTIONS_FILE:-}" && ! -f "${CONFIG_DIR}/${INSTALL_OPTIONS_FILE}" ]]; then
-            h_error "INSTALL_OPTIONS_FILE=${INSTALL_OPTIONS_FILE} is not in ${CONFIG_DIR}."
+        # 4.1 reads the options file through the config copy in the work dir, so it
+        # must be in the folder staged as configs/cp4d_config (the cluster's own under a
+        # pin). IR_STAGED_CONFIG_DIR is that folder; without it, the loaded one.
+        staged="${IR_STAGED_CONFIG_DIR:-${CONFIG_DIR:-}}"
+        if [[ -n "${INSTALL_OPTIONS_FILE:-}" && ! -f "${staged}/${INSTALL_OPTIONS_FILE}" ]]; then
+            h_error "INSTALL_OPTIONS_FILE=${INSTALL_OPTIONS_FILE} is not in ${staged}, the folder the runner stages."
             rc=1
         fi
         exit "${rc}"

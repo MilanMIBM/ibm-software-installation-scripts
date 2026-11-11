@@ -88,6 +88,10 @@ spec:
               fieldPath: metadata.namespace
         - name: IR_OCP_URL
           value: "@OCP_URL@"
+        # The multi-cluster name the slot was launched from, for status only. Never
+        # MCM_CLUSTER: that would pin the pod (plan §5).
+        - name: IR_SOURCE_CLUSTER
+          value: "@SOURCE_CLUSTER@"
         - name: IR_AUTO_RESUME
           value: "@AUTO_RESUME@"
         - name: IR_MAX_RESUMES

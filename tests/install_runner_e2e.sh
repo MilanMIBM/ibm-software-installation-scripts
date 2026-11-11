@@ -84,8 +84,8 @@ INSTALL_ID="e2e"
 INSTALL_LABEL="End-to-end demo"
 INSTALL_ENV_TARGET="e2e"
 RUNNER_ENTRYPOINTS="scripts/e2e/chain.sh"
-RUNNER_STAGE_PATHS="configs/e2e_config"
-RUNNER_COLLECT_PATHS="configs/e2e_config"
+RUNNER_STAGE_ROOTS="E2E_CONFIG_DIR:configs/e2e_config"
+RUNNER_COLLECT_ROOTS="E2E_CONFIG_DIR:configs/e2e_config"
 RUNNER_STORAGE_CLASS_VAR="E2E_SC"
 RUNNER_PVC_SIZE="1Gi"
 RUNNER_CPU_REQUEST="1m"
@@ -96,6 +96,7 @@ cat > "${root}/configs/e2e_config/e2e_vars.sh" <<'S'
 export OCP_URL="https://api.fake.invalid:6443"
 export OC_LOGIN="true"
 export E2E_SC=demo
+export E2E_CONFIG_DIR="${CONFIGS_ROOT}/e2e_config"
 export INSTALL_RUN_MODE=cluster
 S
 # A flat checkout always has a CP4D config, and the workstation's env load keeps its

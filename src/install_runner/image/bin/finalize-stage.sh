@@ -2,9 +2,10 @@
 # =============================================================================
 # finalize-stage.sh <run id> - make a staged snapshot the slot's current run
 # -----------------------------------------------------------------------------
-# Called once the workstation has finished streaming the snapshot and run.env.
-# baseline.sha256 records the snapshot's files, so collect can tell what the
-# chain changed. The state file comes last: it is what the supervisor waits for.
+# Called once the workstation has finished every stream (the code, one per
+# config root, the extras) and written run.env and path_map. baseline.sha256
+# records the snapshot's files, so collect can tell what the chain changed.
+# The state file comes last: it is what the supervisor waits for.
 # =============================================================================
 set -euo pipefail
 work="${IR_WORK:-/work}"
