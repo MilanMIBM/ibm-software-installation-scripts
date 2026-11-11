@@ -5,8 +5,14 @@
 # Owns one slot's run state on the /work volume and stays up after the chain
 # ends, so attach, status and collect keep working. A run moves through:
 #
-#   staged -> running -> completed | completed-with-warnings | failed | stopped
+#   staged -> running -> completed | completed-with-warnings | failed | stopped | rejected
 #                  \--> interrupted (pod lost) -> running   (auto, up to a limit)
+#
+# rejected: the chain exited non-zero before its arguments passed (an unknown option,
+# a config that does not load), so nothing changed and the next launch may replace it.
+# A chain marks that point with args-ok in the run dir (h_steps_plan, or ir_dispatch
+# for a chain with no argument check); a journal entry counts too. args-ok is kept
+# across attempts: once one attempt got that far, the run may have changed things.
 #
 # A pod that dies leaves "running" on disk: that is an interruption and it is
 # retried automatically. A chain that exits non-zero is a real failure and waits
@@ -241,6 +247,7 @@ run_attempt() {
 
     local state
     if ${stopping}; then state=stopped
+    elif (( rc != 0 )) && [[ ! -e "${run}/args-ok" && ! -s "${run}/journal.tsv" ]]; then state=rejected
     elif (( rc != 0 )); then state=failed
     elif [[ -n "$(warned_steps "${run}")" ]]; then state=completed-with-warnings
     else state=completed

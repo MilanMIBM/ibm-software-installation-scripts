@@ -182,11 +182,20 @@ case "${verb}" in
         ;;
 esac
 
+# A detach (76) and a run with warnings (77) end the watch with 0 here, as before: the
+# codes are for a chain's hand-off and its fan-out table. A lost watch stays 78.
+ir_watch() {   # <slot> [attach options...]
+    local rc=0
+    ir_attach "$@" || rc=$?
+    (( rc == 76 || rc == 77 )) && rc=0
+    return "${rc}"
+}
+
 case "${verb}" in
     status)    ir_status ;;
-    attach)    ir_attach "${SLOT}" "${rest[@]}" ;;
+    attach)    ir_watch "${SLOT}" "${rest[@]}" ;;
     stop)      ir_stop "${SLOT}" ;;
-    resume)    ir_resume "${SLOT}" "${rest[@]}"; ir_attach "${SLOT}" ;;
+    resume)    ir_resume "${SLOT}" "${rest[@]}"; ir_watch "${SLOT}" ;;
     collect)   ir_collect "${INSTALL}" "${SLOT}" "${rest[@]}" ;;
     teardown)  ir_teardown "${SLOT}" "${rest[@]}" ;;
     shell)     oc exec -it -n "${NS}" "${IR_POD}" -- zsh ;;

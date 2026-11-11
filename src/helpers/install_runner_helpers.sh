@@ -334,11 +334,24 @@ ir_preflight() {   # <id> [chain]
     fi
     # The module checks the very folders that will be staged (hand-off and preflight verb).
     _ir_hook_staged "${id}" preflight "${chain}" || rc=1
+    # Two runs on one cluster share its cluster-wide steps (the global pull secret, the
+    # mirror sets, the cluster components), and those are not locked against each other
+    # yet (plan G8): a lost pull-secret update breaks image pulls on every node. So one
+    # run per cluster, unless asked (gap X10). This install's own slot is the busy-slot
+    # check's.
+    local -a active
+    active=(${(f)"$(ir_active_slots)"})
+    ir_slot "${id}"; active=("${(@)active:#${REPLY}}")
+    if (( ${#active} )); then
+        if [[ "${INSTALL_RUNNER_ALLOW_PARALLEL:-false}" == true ]]; then
+            ir_warn "Also running on this cluster: ${(j:, :)active}. Cluster-wide steps are not locked against each other yet."
+        else
+            h_error "Also running on this cluster: ${(j:, :)active}. Cluster-wide steps are not locked against each other yet, so one run at a time."
+            h_error "Wait for it to end, or set INSTALL_RUNNER_ALLOW_PARALLEL=true to run both anyway."
+            rc=1
+        fi
+    fi
     (( rc == 0 )) || ir_die "Preflight failed: nothing was changed."
-
-    local active
-    active="$(ir_active_slots)"
-    [[ -z "${active}" ]] || ir_warn "Also running on this cluster: ${(j:, :)${(f)active}}. Cluster-wide steps are not locked against each other yet."
     ir_info "Preflight passed."
 }
 
@@ -856,6 +869,7 @@ ir_handoff() {   # <chain args...>
     id="${REPLY}"
     ir_slot "${id}"; slot="${REPLY}"
     ir_namespace "${slot}"; ns="${REPLY}"
+    _ir_check_chain_args "${_CP4D_REPO_ROOT}/${chain}" "$@"
     # What to stage, and the refusals (wrong cluster's config, ENV_TARGET=all), come
     # first: nothing on the cluster changes for a run that can't go.
     _ir_stage_plan "${id}" "${chain}"
@@ -868,12 +882,50 @@ ir_handoff() {   # <chain args...>
     ir_slot_apply "${id}" "${slot}" "${REPLY}" "${chain}"
     ir_wait_pod "${ns}"
 
-    local run="$(date -u +%Y%m%dT%H%M%SZ)"
+    local run="$(date -u +%Y%m%dT%H%M%SZ)" watch rc=0
     ir_stage "${id}" "${ns}" "${chain}" "${run}" "$@"
+    watch="scripts/install_runner/x_watch_install.sh --install ${id}$(_ir_tc)"
+    _ir_fanout_note "${slot}" "${watch}"
+    # --parallel (plan 15.1 D3): launch only, so the next cluster of a fan-out can start.
+    if [[ "${IR_FANOUT_PARALLEL:-}" == 1 ]]; then
+        ir_info "Run ${run} is launched in slot ${slot}. It keeps running in the cluster; nothing waits for it here."
+        ir_info "Watch it with: ${watch}"
+        exit 76
+    fi
     ir_info "Run ${run} is in slot ${slot}. You can close this terminal: the install keeps going."
-    ir_info "Watch it again with: scripts/install_runner/x_watch_install.sh --install ${id}$(_ir_tc)"
-    ir_attach "${slot}" --from-start
-    exit $?
+    ir_info "Watch it again with: ${watch}"
+    # The run's result is this chain's: 0, 1, 76 detached, 77 warnings, 78 watch lost.
+    ir_attach "${slot}" --from-start || rc=$?
+    exit "${rc}"
+}
+
+# A fan-out child's row in the result table (mcm_fanout): the slot, and how to watch it.
+# mcm_fanout names the file in _MCM_FANOUT_NOTE; nothing to do outside a fan-out.
+_ir_fanout_note() {   # <slot> <watch command>
+    [[ -n "${_MCM_FANOUT_NOTE:-}" ]] || return 0
+    print -r -- "$1"$'\t'"$2" > "${_MCM_FANOUT_NOTE}" 2>/dev/null || true
+}
+
+# A bad option fails here, before the preflight, the image and the upload (gap X13).
+# Only for a chain that parses its options with h_steps_parse --strict: the same call
+# in a subshell has no side effects (it only sets variables, or dies). A step-name typo
+# is left to the pod, where the steps are known; it ends as a "rejected" run, which
+# frees the slot again.
+_ir_check_chain_args() {   # <chain file> <chain args...>
+    local file="$1" line err word
+    local -a flags
+    shift
+    line="$(grep -m1 -E '^[[:space:]]*h_steps_parse[[:space:]]+(--(no-from|no-help)[[:space:]]+)*--strict' "${file}" 2>/dev/null)" || return 0
+    for word in ${(z)line}; do
+        [[ "${word}" == h_steps_parse ]] && continue
+        [[ "${word}" == --(strict|no-from|no-help) ]] || break
+        flags+=("${word}")
+    done
+    if ! err="$( ( h_steps_parse "${flags[@]}" "$@" ) 2>&1 >/dev/null )"; then
+        [[ -n "${err}" ]] && print -r -- "${err}" >&2
+        h_error "Nothing was launched: fix the arguments of ${file:t} (see --help)."
+        exit 2
+    fi
 }
 
 # One run per slot, and a finished run's results must be home before the next
@@ -883,7 +935,8 @@ ir_refuse_busy_slot() {   # <namespace> <slot>
     state="$(ir_slot_status_value "${ns}" state)"
     collected="$(ir_slot_status_value "${ns}" collected)"
     case "${state}" in
-        ""|idle) return 0 ;;
+        # rejected: the last run stopped before its first step, so nothing changed (gap X13).
+        ""|idle|rejected) return 0 ;;
         staged|running|interrupted)
             ir_die "Slot ${slot} already has a run (${state}). Watch it: ${tool} attach --slot ${slot}$(_ir_tc)" ;;
     esac
@@ -900,7 +953,12 @@ ir_refuse_busy_slot() {   # <namespace> <slot>
 # =============================================================================
 # Read-only: Ctrl-C ends this viewer and nothing else. The stream carries the raw
 # terminal bytes; a dropped connection or a replaced pod just means reconnecting
-# at the same byte. Returns the run's result: 0 when it finished clean.
+# at the same byte. Returns the run's result:
+#   0 completed, 77 completed with warnings, 1 failed, stopped, rejected, no run, or
+#   the slot was torn down, 76 detached (Ctrl-C or a closed terminal: the run goes on),
+#   78 watch lost (the login is gone, or no read for INSTALL_RUNNER_ATTACH_LOST_MAX
+#   minutes, default 30: the run may still be going).
+# A fan-out (mcm_fanout) shows each code in its table.
 ir_attach() {   # <slot> [--plain] [--from-start] [--last N]
     local slot="$1" ns log=terminal position="last:200" offset_file state offset=""
     shift
@@ -914,54 +972,136 @@ ir_attach() {   # <slot> [--plain] [--from-start] [--last N]
         shift
     done
     ir_namespace "${slot}"; ns="${REPLY}"
+    # IR_ATTACH_RETRY_SECONDS exists for tests, as IR_POLL does in the supervisor.
+    local retry="${IR_ATTACH_RETRY_SECONDS:-5}" lost_max="${INSTALL_RUNNER_ATTACH_LOST_MAX:-30}"
+    if [[ "${lost_max}" != (<->|<->.<->) ]]; then
+        ir_warn "INSTALL_RUNNER_ATTACH_LOST_MAX must be a number of minutes (got '${lost_max}'); using 30."
+        lost_max=30
+    fi
+    local -i last_read=${SECONDS} lost_after=$(( lost_max * 60 ))
+    local detached=false said_lost=false said_unreachable=false relogged=false
     offset_file="$(mktemp "${TMPDIR:-/tmp}/ir-attach.XXXXXX")"
 
-    local detached=false said_lost=false
-    trap 'detached=true' INT
+    # INT is Ctrl-C, HUP a closed terminal: both only detach (gap X9). A signal that
+    # lands during a call ends that call, and the loop checks ${detached} right after.
+    # The loop runs in a function of its own so the clean-up below always runs: under
+    # errexit a non-zero return would end the shell before an "always" block.
+    local rc=0
+    trap 'detached=true' INT HUP
+    _ir_attach_follow || rc=$?
+    rm -f "${offset_file}"
+    trap - INT HUP
+    if (( rc == 76 )); then
+        # A closed terminal takes no more output; the result still counts.
+        { print -r -- ""; ir_info "Detached. The install keeps running in slot ${slot}."; } 2>/dev/null || true
+    fi
+    return "${rc}"
+}
+
+# ir_attach's loop, on its locals (slot, ns, log, position, offset_file, offset, state,
+# detached, ...). Returns ir_attach's codes. A command substitution has its "|| true"
+# outside: inside, a Ctrl-C that ends it would still fail the assignment.
+_ir_attach_follow() {
+    local before
     while ! ${detached}; do
         if [[ -z "${offset}" ]]; then
-            offset="$(oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/follow.sh" "${log}" "${position}" resolve 2>/dev/null || true)"
+            offset="$(oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/follow.sh" "${log}" "${position}" resolve 2>/dev/null)" || true
         fi
+        # A Ctrl-C during the resolve leaves no offset: that is a detach, not "no run".
+        ${detached} && break
         if [[ "${offset}" != <-> ]]; then
             offset=""
             if oc exec -n "${ns}" "${IR_POD}" -- true >/dev/null 2>&1; then
-                rm -f "${offset_file}"
-                trap - INT
                 h_error "Slot ${slot} has no run to watch."
                 return 1
             fi
+            ${detached} && break
+            _ir_attach_check_lost || return $?
             ${said_lost} || print -r -- "[attach] Runner pod not reachable; retrying..." >&2
             said_lost=true
-            sleep 5
+            sleep "${retry}" || true
             continue
         fi
+        last_read=${SECONDS}
+        relogged=false
         print -r -- "${offset}" > "${offset_file}"
-        said_lost=false
+        said_lost=false said_unreachable=false
         oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/follow.sh" "${log}" "offset:${offset}" 2>/dev/null \
             | python3 -I "${IR_SRC}/stream_counter.py" "${offset_file}" "${offset}" || true
         ${detached} && break
+        before="${offset}"
         offset="$(<"${offset_file}")"
-        state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
+        state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null)" || true
+        ${detached} && break
         case "${state}" in
-            completed)               rm -f "${offset_file}"; trap - INT; ir_info "Run finished: ${state}. Next: x_install_runner.sh collect --slot ${slot}$(_ir_tc)"; return 0 ;;
+            completed)
+                ir_info "Run finished: ${state}. Next: x_install_runner.sh collect --slot ${slot}$(_ir_tc)"
+                return 0 ;;
             completed-with-warnings)
-                rm -f "${offset_file}"; trap - INT
                 if [[ -n "${MCM_CLUSTER:-}" ]]; then
                     ir_warn "Run finished: ${state}. See x_install_runner.sh status$(_ir_tc), then collect --slot ${slot}$(_ir_tc)."
                 else
                     ir_warn "Run finished: ${state}. See x_install_runner.sh status, then collect."
                 fi
-                return 0 ;;
-            failed|stopped)          rm -f "${offset_file}"; trap - INT; ir_error_state "${slot}" "${state}"; return 1 ;;
+                return 77 ;;
+            failed|stopped)
+                ir_error_state "${slot}" "${state}"
+                return 1 ;;
+            rejected)
+                h_error "Run rejected in slot ${slot}: the chain stopped before its first step, so nothing changed. Fix what it reports above, then launch it again."
+                return 1 ;;
         esac
+        # Bytes that came in, or a state that could be read, are word from the pod.
+        if [[ -n "${state}" || "${offset}" != "${before}" ]]; then
+            last_read=${SECONDS}
+            relogged=false
+        else
+            _ir_attach_check_lost || return $?
+        fi
         ${said_lost} || print -r -- "[attach] Connection lost (run state: ${state:-unknown}); reconnecting..." >&2
         said_lost=true
-        sleep 5
+        sleep "${retry}" || true
     done
-    rm -f "${offset_file}"
-    trap - INT
-    print -r -- ""
-    ir_info "Detached. The install keeps running in slot ${slot}."
+    return 76
+}
+
+# After a reconnect that got no word from the pod (gap X11): why? Uses ir_attach's
+# locals slot, ns, last_read, lost_after, relogged and said_unreachable. 0 to keep
+# retrying, else the code to return.
+# A login that expired, or a token that no longer works, is tried once more with the
+# config's login; often that is a fixed --token, which fails again, so then the watch
+# ends with a next step. An API that does not answer (network drop, VPN, sleep) is no
+# login problem: the watch keeps retrying up to INSTALL_RUNNER_ATTACH_LOST_MAX. A
+# deleted namespace means another terminal tore the slot down.
+_ir_attach_check_lost() {
+    local watch="scripts/install_runner/x_watch_install.sh --slot ${slot}$(_ir_tc)" found err
+    if err="$(oc whoami 2>&1 >/dev/null)"; then
+        :
+    elif [[ "${err}" != *(Unauthorized|"must be logged in"|"provide credentials"|Forbidden|401|403)* ]]; then
+        # Connection refused, no such host, a timeout: on to the deadline below.
+        ${said_unreachable} || print -r -- "[attach] API not reachable; retrying..." >&2
+        said_unreachable=true
+    else
+        if ! ${relogged}; then
+            relogged=true
+            ir_warn "The login to ${OCP_URL:-the cluster}${MCM_CLUSTER:+ (cluster ${MCM_CLUSTER})} no longer works; logging in again..."
+            ( eval "${OC_LOGIN_FORCE:-${OC_LOGIN:-false}}" ) >/dev/null 2>&1 || true
+        fi
+        if ! oc whoami >/dev/null 2>&1; then
+            h_error "The login to ${OCP_URL:-the cluster}${MCM_CLUSTER:+ (cluster ${MCM_CLUSTER})} has expired. Log in again, then watch the run with: ${watch}"
+            return 78
+        fi
+        ir_info "Logged in again."
+        return 0
+    fi
+    if found="$(oc get namespace "${ns}" --ignore-not-found -o name 2>/dev/null)" && [[ -z "${found}" ]]; then
+        h_error "Slot ${slot} was torn down: its namespace ${ns} is gone."
+        return 1
+    fi
+    if (( SECONDS - last_read >= lost_after )); then
+        h_error "No word from slot ${slot} for $(( (SECONDS - last_read) / 60 )) minute(s): stopped watching. The run may still be going; watch it again with: ${watch}"
+        return 78
+    fi
     return 0
 }
 
@@ -990,6 +1130,7 @@ ir_status() {
             [[ "${line}" == - ]] || ir_warn "${slot}: finished with warnings in ${line}"
             # Something only a person can do (the Control Center browser step).
             [[ -z "${notice}" || "${notice}" == - ]] || ir_warn "${slot}: ${notice}"
+            [[ "${state}" != rejected ]] || ir_warn "${slot}: the last run stopped before its first step (rejected: a bad option?). Nothing changed; a new launch replaces it."
             # A live run reports at least every minute; silence means the pod is in trouble.
             if [[ "${state}" == (running|staged|interrupted) ]] && (( now - seen > 180 )); then
                 ir_warn "${slot}: no report for $(( now - seen ))s. If its node is gone, the pod stays stuck until:"
@@ -1010,6 +1151,9 @@ ir_resume() {   # <slot> [--retry-warned]
     [[ "${2:-}" == --retry-warned ]] && content=retry-warned
     ir_namespace "${slot}"; ns="${REPLY}"
     state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
+    # A rejected run would only stop again on the same arguments.
+    [[ "${state}" != rejected ]] \
+        || ir_die "Slot ${slot}'s last run was rejected before its first step: nothing to resume. Launch it again with fixed arguments."
     [[ "${state}" == (failed|stopped|completed-with-warnings) ]] \
         || ir_die "Slot ${slot} is '${state:-unreachable}': nothing to resume."
     ir_grant_admin "${slot}"

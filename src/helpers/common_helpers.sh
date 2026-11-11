@@ -428,6 +428,9 @@ h_steps_plan() {
     h_steps_print
     { ${H_STEPS_LIST} || ${H_STEPS_HELP}; } && exit 0
     _h_steps_check_left
+    # In a runner pod: the arguments passed, so a failure from here on may have
+    # changed the cluster and is no "rejected" run (see supervisor.sh).
+    if [[ -n "${IR_RUN_DIR:-}" ]]; then : > "${IR_RUN_DIR}/args-ok"; fi
 }
 
 # h_step_run <step> [command...]: run one step (its declared command when none is given).
@@ -476,7 +479,14 @@ h_steps_run() {
 # to a pod (src/helpers/install_runner_helpers.sh) and this process only watches
 # it. Inside a runner pod IR_IN_RUNNER is set, so the chain just runs.
 ir_dispatch() {
-    [[ -z "${IR_IN_RUNNER:-}" ]] || return 0
+    if [[ -n "${IR_IN_RUNNER:-}" ]]; then
+        # A chain without h_steps_plan has no argument check: everything after this
+        # line is real work, so a failure is "failed", never "rejected" (supervisor.sh).
+        if [[ -n "${IR_RUN_DIR:-}" ]] && ! grep -qs '^[[:space:]]*h_steps_plan' "${ZSH_ARGZERO}"; then
+            : > "${IR_RUN_DIR}/args-ok"
+        fi
+        return 0
+    fi
     # A one-off --run-mode (INSTALL_RUN_MODE_OVERRIDE) beats the config's value (gap X12).
     source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_mode.sh"
     local REPLY

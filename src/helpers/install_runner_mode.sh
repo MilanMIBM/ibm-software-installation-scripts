@@ -48,3 +48,38 @@ ir_remote_run_load() {   # <repo root>
     # Both sides resolved: :A follows symlinks, and the repo may sit behind one.
     ir_is_runner_entrypoint "$1" "${${ZSH_ARGZERO:A}#${1:A}/}"
 }
+
+# --parallel (plan 15.1 D3): a run that hands its install to a pod launches it and
+# returns, so the clusters of a fan-out install at the same time. env_bootstrap.sh
+# takes the flag and exports IR_FANOUT_PARALLEL=1; the environment may set it too.
+# A script with a --parallel option of its own keeps the flag: it is that script's.
+# Read the way _mcm_help_requested reads -h|--help, as a case label in its source.
+ir_script_owns_parallel() {   # <script>
+    [[ -f "$1" ]] && grep -qE -e '(^|[[:space:]|(])--parallel([)|]|=\*)' -- "$1" 2>/dev/null
+}
+
+# Under --parallel, a chain whose install would run here (run mode local) would block
+# like a normal run. It stops before any work, for this cluster only. Other scripts and
+# the pod itself are left alone: env_bootstrap.sh refuses --parallel on a script that is
+# no runner entry point. 1, with the error printed, when this load must stop.
+ir_parallel_mode_check() {   # <repo root>
+    emulate -L zsh
+    local REPLY where why
+    [[ "${IR_FANOUT_PARALLEL:-}" == 1 && -z "${IR_IN_RUNNER:-}" ]] || return 0
+    ir_is_runner_entrypoint "$1" "${${ZSH_ARGZERO:A}#${1:A}/}" || return 0
+    ir_run_mode
+    [[ "${REPLY}" == local ]] || return 0
+    if [[ -n "${MCM_CLUSTER:-}" ]]; then
+        where="Cluster '${MCM_CLUSTER}'"
+    else
+        where="${OCP_URL:-This cluster}"
+    fi
+    if [[ -n "${INSTALL_RUN_MODE_OVERRIDE:-}" ]]; then
+        why="--run-mode local"
+    else
+        why="INSTALL_RUN_MODE=${INSTALL_RUN_MODE:-local}"
+    fi
+    print -r -- "[ERROR] --parallel only applies to installs that run in the cluster (INSTALL_RUN_MODE=cluster)." >&2
+    print -r -- "[ERROR] ${where} runs ${ZSH_ARGZERO:t} on this machine (${why}): nothing was run there." >&2
+    return 1
+}

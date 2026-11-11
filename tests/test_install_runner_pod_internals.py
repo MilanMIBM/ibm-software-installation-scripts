@@ -87,7 +87,8 @@ echo started > "$FAKE_DIR/attempt.started"
 case "$(cat "$FAKE_DIR/chain")" in
   # exec, so the TERM reaches the sleep itself and no orphan outlives the test.
   sleep) exec sleep 300 ;;
-  fail)  exit 7 ;;
+  # Past its argument check (args-ok, as h_steps_plan writes), so a failure, not "rejected".
+  fail)  : > "$1/args-ok"; exit 7 ;;
   *)     exit 0 ;;
 esac
 """

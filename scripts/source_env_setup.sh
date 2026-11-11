@@ -229,6 +229,14 @@ if [[ -z "${MCM_CLUSTER:-}" ]]; then
 fi
 unset _env_url_files
 
+# --parallel (plan 15.1 D3) launches installs in the cluster and returns. The run mode
+# is known only now, after the config load: a chain that would run on this machine
+# stops here, before any login, container or step, for this cluster only.
+if [[ "${IR_FANOUT_PARALLEL:-}" == 1 ]]; then
+    source "${_env_repo}/src/helpers/install_runner_mode.sh"
+    ir_parallel_mode_check "${_env_repo}" || mcm_exit_no_trap 1
+fi
+
 # ------------------------------------------------------------------------------
 # Login only when needed
 # ------------------------------------------------------------------------------

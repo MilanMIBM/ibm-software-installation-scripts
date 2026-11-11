@@ -72,6 +72,19 @@ fi
 #        scripts/install_datastax_mc_standalone/              -> datastax_mc
 #        scripts/private_registry_mirroring/                  -> registry_mirror
 #      Anything else loads every config, as before.
+#
+# Other flags taken out of "$@" here:
+#   --target-cluster NAME, --target-clusters a,b, --all-clusters, --yes-all-clusters
+#                        which clusters the run is for (multi-cluster management)
+#   --run-mode local|cluster
+#                        run an install here or in the cluster, for this run only
+#   --parallel           installs that run in the cluster (INSTALL_RUN_MODE=cluster)
+#                        are launched, not watched: the clusters of a multi-cluster
+#                        run install at the same time, and the run ends with how to
+#                        watch each one. Without it each cluster's install is watched
+#                        to its end, one cluster at a time. Refused for a script that
+#                        does not run in the cluster, or for a cluster whose config
+#                        says local, and for two targets with the same URL.
 # "all" loads every configs/*/*_vars.sh. The inferred value is not exported, so
 # a child script in another product folder still infers its own target.
 # _CP4D_ENV_TARGET_WHY says which rule picked it, for the env summary.
@@ -98,11 +111,44 @@ while (( $# )); do
             export INSTALL_RUN_MODE_OVERRIDE="$2"; shift 2 ;;
         --run-mode=*)
             export INSTALL_RUN_MODE_OVERRIDE="${1#--run-mode=}"; shift ;;
+        # --parallel (plan 15.1 D3): an install that runs in the cluster is launched and
+        # not watched, so a fan-out installs its clusters at the same time. Without it a
+        # fan-out watches each run to its end, one cluster at a time. Exported, so the
+        # fan-out's children see it; taken out here, so the chain never does. Not in
+        # mcm_take_target_flags: the OADP and mirror callers run that too, and a script
+        # with a --parallel option of its own (the scale-config table's -j|--parallel N)
+        # keeps the flag.
+        --parallel)
+            (( $+functions[ir_script_owns_parallel] )) || source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_mode.sh"
+            if ! ir_is_runner_entrypoint "${_CP4D_REPO_ROOT}" "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}" \
+                && ir_script_owns_parallel "${ZSH_ARGZERO:A}"; then
+                _argv+=("$1")
+            else
+                export IR_FANOUT_PARALLEL=1; _ir_parallel_flag=1
+            fi
+            shift ;;
         *)  _argv+=("$1"); shift ;;
     esac
 done
 set -- "${_argv[@]}"
 unset _argv
+# --parallel means nothing to a script whose run never moves to a pod, or to a run told
+# to stay here: stop before a fan-out runs it on every cluster. A chain whose own config
+# says local stops later, for that cluster only, once the config is loaded.
+if [[ -n "${_ir_parallel_flag:-}" && -z "${IR_IN_RUNNER:-}" ]]; then
+    unset _ir_parallel_flag
+    if ! ir_is_runner_entrypoint "${_CP4D_REPO_ROOT}" "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}"; then
+        echo "[ERROR] --parallel only applies to installs that run in the cluster (INSTALL_RUN_MODE=cluster), and ${ZSH_ARGZERO:t} is not one (no install module in src/install_runner/installs/ lists it)." >&2
+        [[ -o interactive ]] && return 1
+        mcm_exit_no_trap 1
+    fi
+    if [[ "${INSTALL_RUN_MODE_OVERRIDE:-}" == local ]]; then
+        echo "[ERROR] --parallel only applies to installs that run in the cluster (INSTALL_RUN_MODE=cluster), not with --run-mode local." >&2
+        [[ -o interactive ]] && return 1
+        mcm_exit_no_trap 1
+    fi
+fi
+unset _ir_parallel_flag
 # Also checks a value from the environment, before a fan-out runs it on every cluster.
 if [[ -n "${INSTALL_RUN_MODE_OVERRIDE:-}" && "${INSTALL_RUN_MODE_OVERRIDE}" != (local|cluster) ]]; then
     echo "[ERROR] The run mode must be local or cluster (--run-mode or INSTALL_RUN_MODE_OVERRIDE is '${INSTALL_RUN_MODE_OVERRIDE}')." >&2

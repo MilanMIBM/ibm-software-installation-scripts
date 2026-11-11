@@ -146,6 +146,8 @@ export INSTALL_RUN_MODE="cluster"
 
 The chain moves to a pod on the cluster, and your terminal shows it as if it ran here. Once it starts you can press Ctrl-C, close the terminal or turn the machine off: the install keeps going. Each install gets its own namespace, pod, volume and copy of its config.
 
+Add `--parallel` to only launch the install and return, without watching it. With several clusters (`--target-clusters a,b` or `--all-clusters`), that lets their installs run at the same time: each one is launched in turn, and the run ends with a table (`launched (slot ...)`) and the command to watch each cluster. Without `--parallel`, each cluster's install is watched to its end, one cluster at a time; a Ctrl-C there detaches from the current cluster (its install keeps going) and the clusters after it are not launched. `--parallel` is refused for a script that does not run in the cluster, for a cluster whose config says `INSTALL_RUN_MODE="local"`, and for two cluster names that point at the same URL.
+
 ```bash
 scripts/install_runner/x_watch_install.sh                 # the live terminal; Ctrl-C only stops watching
 scripts/install_runner/x_watch_install.sh --from-start    # the whole run so far
@@ -166,7 +168,9 @@ Good to know:
 - It needs a cluster-admin login, a storage class for the runner's volume (`STG_CLASS_BLOCK` by default, or `INSTALL_RUNNER_STORAGE_CLASS`), and the internal image registry. Without that registry, set `INSTALL_RUNNER_IMAGE_SOURCE` to `build-local-push` or `prebuilt`. The first run builds a runner image of about 2.5 GB.
 - Only CP4D with `CPD_IMAGE_SOURCE=entitled` is supported so far. Other chains stop with a clear message if you set `cluster` for them.
 - The pod has cluster-admin during a run and holds your config, including passwords, until teardown. It removes its own cluster-admin when the run ends.
-- Installs running at the same time are not yet locked against each other on cluster-wide steps such as the global pull secret.
+- Installs running at the same time are not yet locked against each other on cluster-wide steps such as the global pull secret. So a launch stops if another install is still running on the same cluster; set `INSTALL_RUNNER_ALLOW_PARALLEL=true` to run both anyway.
+- A run that stops before its first step (a misspelled option, for example) is marked `rejected`: nothing changed, and the next launch replaces it. Unknown options are caught on this machine first, before anything is uploaded.
+- A watch that gets no answer from the pod for `INSTALL_RUNNER_ATTACH_LOST_MAX` minutes (`30`) stops; so does one whose login has expired, after one try to log in again. The install itself keeps going.
 - Scripts other than the chains, such as `x_*` utilities, still run on this machine.
 
 Optional settings: `INSTALL_RUNNER_PVC_SIZE`, `INSTALL_RUNNER_AUTO_RESUME` (`true`), `INSTALL_RUNNER_MAX_RESUMES` (`3`), `INSTALL_RUNNER_KEEP_ADMIN` (`false`), `INSTALL_RUNNER_NODE_SELECTOR` (`key=value`), `INSTALL_RUNNER_TTY_SIZE` (`120x50`).
@@ -341,7 +345,7 @@ The most specific setting wins:
 
 If none of these picks a cluster, the script stops and lists the registered ones. With the switch off only 1 and 2 count; without them the run uses the flat layout.
 
-With more than one target, the script runs once per cluster, one at a time. If one cluster fails the rest still run, a table of results prints at the end and the exit code is non-zero. A cluster with no config for that product is reported as skipped. Scripts with uninstall, reinstall, delete, remove, prune, force, clean, refresh or restore in the file name ask you to type a confirmation first. With no terminal (cron, a pipe) they refuse unless given `--yes-all-clusters`. At a terminal the prompt always appears. TUIs and config generators work on one cluster only and refuse several targets.
+With more than one target, the script runs once per cluster, one at a time (an install that runs in the cluster can add `--parallel` to launch each one without waiting, see [Running an install in the cluster](#running-an-install-in-the-cluster)). If one cluster fails the rest still run, a table of results prints at the end and the exit code is non-zero. A cluster with no config for that product is reported as skipped. Scripts with uninstall, reinstall, delete, remove, prune, force, clean, refresh or restore in the file name ask you to type a confirmation first. With no terminal (cron, a pipe) they refuse unless given `--yes-all-clusters`. At a terminal the prompt always appears. TUIs and config generators work on one cluster only and refuse several targets.
 
 ### Containers and the 2-hour idle rule
 

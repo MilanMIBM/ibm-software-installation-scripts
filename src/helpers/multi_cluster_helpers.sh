@@ -1534,8 +1534,10 @@ _mcm_fanout_clean_env() {
     # its cpd_vars.sh. INSTALL_RUN_MODE_OVERRIDE (--run-mode) stays, it is meant for all.
     # So do the one-run switches below: they are not in cpd_vars.sh, they name no
     # cluster, and NEW_RUN is the only way to start over on every cluster at once.
+    # ALLOW_PARALLEL (a second run on one cluster) and ATTACH_LOST_MAX (how long a
+    # watch waits) are such switches too.
     local -a _mcm_ir_names=(${(k)parameters[(I)INSTALL_RUNNER_*]})
-    _mcm_ir_names=(${_mcm_ir_names:#(INSTALL_RUNNER_NEW_RUN|INSTALL_RUNNER_CPD_CLI_URL|INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY)})
+    _mcm_ir_names=(${_mcm_ir_names:#(INSTALL_RUNNER_NEW_RUN|INSTALL_RUNNER_CPD_CLI_URL|INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY|INSTALL_RUNNER_ALLOW_PARALLEL|INSTALL_RUNNER_ATTACH_LOST_MAX)})
     _mcm_forget_names INSTALL_RUN_MODE ${_mcm_ir_names}
     return 0
 }
@@ -1636,17 +1638,55 @@ _mcm_fanout_table() {   # NAMES RESULTS DURATIONS (array names)
     done
 }
 
+# --parallel (gap X10): two targets on one cluster would run two installs there at the
+# same time, and cluster-wide steps are not locked against each other yet (plan G8).
+# Targets whose markers hold the same URL (compared by _mcm_url_key) are refused, with
+# nothing run. A target with no URL recorded cannot be compared and passes.
+_mcm_fanout_refuse_same_url() {
+    emulate -L zsh
+    local name root key
+    local -A owner
+    local -a clashes
+    for name in "${_MCM_RESOLVED[@]}"; do
+        root="$(mcm_cluster_root "${name}")" || continue
+        key="$(_mcm_url_key "$(_mcm_marker_value "${root}/.cluster" OCP_URL)")"
+        [[ -n "${key}" ]] || continue
+        if [[ -n "${owner[${key}]:-}" ]]; then
+            clashes+=("'${owner[${key}]}' and '${name}' (${key})")
+        else
+            owner[${key}]="${name}"
+        fi
+    done
+    (( ${#clashes} )) || return 0
+    _mcm_err "--parallel: these targets are one cluster under two names: ${(j:, :)clashes}."
+    _mcm_err "Two installs on one cluster at once are not safe yet (cluster-wide steps are not locked). Nothing was run."
+    _mcm_err "Target one of the names, or drop --parallel to run them one after the other."
+    return 1
+}
+
+# A fan-out child that handed its install to a pod (ir_handoff) leaves a note: the slot
+# and how to watch it, tab-separated. Sets slot and watch in the caller; 1 when none.
+_mcm_fanout_read_note() {   # FILE
+    [[ -n "$1" && -s "$1" ]] || return 1
+    IFS=$'\t' read -r slot watch < "$1" || [[ -n "${slot}" ]]
+}
+
 # Runs the calling script once per target and ends the process. env_bootstrap.sh and
 # oadp_br_helpers.sh call it with the script's arguments minus the target flags. One
 # cluster at a time; a failure does not stop the others; the exit code is the first
 # failure's, or MCM_SKIP_EXIT_CODE when every cluster was skipped. Ctrl-C (or TERM,
 # HUP) ends the current cluster, marks the rest "not run" and still prints the table.
 # A refused run (policy, cancelled) ends with code 1 and runs nothing.
+# A child that hands its install to a pod (INSTALL_RUN_MODE=cluster) has codes of its
+# own, read only when it left a note: 76 its install keeps running unwatched (launched
+# by --parallel, or detached by Ctrl-C), 77 ok with warnings, 78 its watch was lost.
 mcm_fanout() {
     emulate -L zsh
-    local script policy name when result
-    local -a names=("${_MCM_RESOLVED[@]}") results durations
+    local script policy name when result slot watch note_dir="" note
+    local -a names=("${_MCM_RESOLVED[@]}") results durations watches
     local -i total=${#_MCM_RESOLVED} n=0 rc=0 ok=0 failed=0 skipped=0 first_failure=0 started=0 elapsed=0 interrupted=0
+    local -i parallel=0 detached=0
+    [[ "${IR_FANOUT_PARALLEL:-}" == 1 ]] && parallel=1
 
     if ! script="$(_mcm_fanout_script)"; then
         _mcm_err "Cannot tell which script to re-run for each cluster (targets: ${names[*]})."
@@ -1672,13 +1712,22 @@ mcm_fanout() {
             ;;
     esac
 
+    if (( parallel )); then
+        _mcm_fanout_refuse_same_url || mcm_exit_no_trap 1
+    fi
+
     _mcm_fanout_clean_env || mcm_exit_no_trap 1
     _mcm_fanout_prepare_stdin || mcm_exit_no_trap 1
+    note_dir="$(mktemp -d "${TMPDIR:-/tmp}/mcm-fanout.XXXXXX" 2>/dev/null)" || note_dir=""
     # Keeps this process alive through a Ctrl-C meant for the running child. Local to
     # this function (emulate -L), and not inherited by the children.
     trap 'interrupted=1' INT TERM HUP
     export _MCM_FANOUT_CHILD=1 _MCM_FANOUT_SCRIPT="${script:A}" _CP4D_PREP_DONE=1
-    print -r -- "[MCM] Running ${script:t} on ${total} clusters, one at a time: ${names[*]}"
+    if (( parallel )); then
+        print -r -- "[MCM] Launching ${script:t} on ${total} clusters, one at a time; each install then runs on in its cluster (--parallel): ${names[*]}"
+    else
+        print -r -- "[MCM] Running ${script:t} on ${total} clusters, one at a time: ${names[*]}"
+    fi
     for name in "${names[@]}"; do
         n=$(( n + 1 ))
         if (( interrupted )); then
@@ -1690,6 +1739,9 @@ mcm_fanout() {
         started=${SECONDS}
         rc=0
         export MCM_CLUSTER="${name}"
+        note=""
+        [[ -n "${note_dir}" ]] && note="${note_dir}/${n}"
+        export _MCM_FANOUT_NOTE="${note}"
         if [[ -n "${_MCM_FANOUT_INPUT}" ]]; then
             zsh "${script}" "$@" < "${_MCM_FANOUT_INPUT}" || rc=$?
         else
@@ -1697,36 +1749,74 @@ mcm_fanout() {
         fi
         elapsed=$(( SECONDS - started ))
         when="$(_mcm_fanout_duration "${elapsed}")"
-        case "${rc}" in
-            0)
-                result=ok
-                ok=$(( ok + 1 ))
-                ;;
-            "${MCM_SKIP_EXIT_CODE}")
-                result=skipped
-                skipped=$(( skipped + 1 ))
-                ;;
-            130)
-                result=interrupted
-                failed=$(( failed + 1 ))
-                (( first_failure )) || first_failure=${rc}
-                interrupted=1
-                ;;
-            *)
-                result="FAILED (rc ${rc})"
-                failed=$(( failed + 1 ))
-                (( first_failure )) || first_failure=${rc}
-                ;;
-        esac
+        slot="" watch=""
+        # Another script's 76-78 is only a failure code: the note says it is a hand-off's.
+        if (( rc >= 76 && rc <= 78 )) && _mcm_fanout_read_note "${note}"; then
+            case "${rc}" in
+                76)
+                    if (( interrupted )); then
+                        result="detached (still running)"
+                        detached=1
+                    else
+                        result="launched${slot:+ (slot ${slot})}"
+                    fi
+                    ok=$(( ok + 1 ))
+                    [[ -n "${watch}" ]] && watches+=("${name}"$'\t'"${watch}")
+                    ;;
+                77)
+                    result="ok (warnings)"
+                    ok=$(( ok + 1 ))
+                    ;;
+                78)
+                    result="watch lost (still running?)"
+                    failed=$(( failed + 1 ))
+                    (( first_failure )) || first_failure=${rc}
+                    [[ -n "${watch}" ]] && watches+=("${name}"$'\t'"${watch}")
+                    ;;
+            esac
+        else
+            case "${rc}" in
+                0)
+                    result=ok
+                    ok=$(( ok + 1 ))
+                    ;;
+                "${MCM_SKIP_EXIT_CODE}")
+                    result=skipped
+                    skipped=$(( skipped + 1 ))
+                    ;;
+                130)
+                    result=interrupted
+                    failed=$(( failed + 1 ))
+                    (( first_failure )) || first_failure=${rc}
+                    interrupted=1
+                    ;;
+                *)
+                    result="FAILED (rc ${rc})"
+                    failed=$(( failed + 1 ))
+                    (( first_failure )) || first_failure=${rc}
+                    ;;
+            esac
+        fi
         results+=("${result}")
         durations+=("${when}")
         print -r -- "[MCM] ${n}/${total} ${name}: ${result} (${when})"
     done
+    unset _MCM_FANOUT_NOTE
 
     if [[ -n "${_MCM_FANOUT_INPUT}" && "${_MCM_FANOUT_INPUT}" != /dev/null ]]; then
         rm -f -- "${_MCM_FANOUT_INPUT}"
     fi
+    [[ -n "${note_dir}" ]] && rm -rf -- "${note_dir}"
     _mcm_fanout_table names results durations
+    if (( ${#watches} )); then
+        print -r -- "[MCM] Installs left running in their clusters (nothing here waits for them). Watch each one with:"
+        for watch in "${watches[@]}"; do
+            print -r -- "[MCM]   ${watch%%$'\t'*}: ${watch#*$'\t'}"
+        done
+    fi
+    if (( detached )); then
+        print -r -- "[MCM] Ctrl-C detached from a running install; the clusters after it were not launched (not run)."
+    fi
     # A child that handled the Ctrl-C itself may have ended with 0.
     (( interrupted && ! first_failure )) && first_failure=130
     if (( first_failure )); then

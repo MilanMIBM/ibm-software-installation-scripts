@@ -200,6 +200,17 @@ sleep 1.5
 check "a new pod does not retry a failed run" '[[ "$(state)" == failed && "$(grep -c "^a$" /tmp/ctl/runs)" == 1 ]]'
 kill_all
 
+section "Bad arguments: rejected before the first step"
+new_run r6r --form cpd
+: > /tmp/fake/oc.log
+sup_start
+wait_state rejected failed
+check "state rejected" '[[ "$(state)" == rejected ]]'
+check "no step ran" '[[ ! -s /tmp/ctl/runs ]]'
+check "status says rejected" 'grep -q "from-literal=state=rejected" /tmp/fake/oc.log'
+check "cluster-admin removed" 'grep -q "delete clusterrolebinding ir-test" /tmp/fake/oc.log'
+kill_all
+
 section "Warned step"
 new_run r7
 echo 5 > /tmp/ctl/rc.w
