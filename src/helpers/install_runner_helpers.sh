@@ -1016,14 +1016,18 @@ ir_refuse_busy_slot() {   # <namespace> <slot>
 #   78 watch lost (the login is gone, or no read for INSTALL_RUNNER_ATTACH_LOST_MAX
 #   minutes, default 30: the run may still be going).
 # A fan-out (mcm_fanout) shows each code in its table.
-ir_attach() {   # <slot> [--plain] [--from-start] [--last N]
-    local slot="$1" ns log=terminal position="last:200" offset_file state offset=""
+# --resumed (from the resume verb): a finished state read while control.resume is
+# still there is the old run the supervisor has yet to restart, so the watch waits
+# for it instead of reporting it.
+ir_attach() {   # <slot> [--plain] [--from-start] [--last N] [--resumed]
+    local slot="$1" ns log=terminal position="last:200" offset_file state offset="" resumed=false
     shift
     while (( $# )); do
         case "$1" in
             --plain)      log=plain ;;
             --from-start) position=start ;;
             --last)       h_need_value "$1" "${2:-}"; position="last:$2"; shift ;;
+            --resumed)    resumed=true ;;
             *) ir_die "Unknown attach option: $1" ;;
         esac
         shift
@@ -1036,7 +1040,7 @@ ir_attach() {   # <slot> [--plain] [--from-start] [--last N]
         lost_max=30
     fi
     local -i last_read=${SECONDS} lost_after=$(( lost_max * 60 ))
-    local detached=false said_lost=false said_unreachable=false relogged=false
+    local detached=false said_lost=false said_unreachable=false relogged=false said_waiting=false
     offset_file="$(mktemp "${TMPDIR:-/tmp}/ir-attach.XXXXXX")"
 
     # INT is Ctrl-C, HUP a closed terminal: both only detach (gap X9). A signal that
@@ -1060,6 +1064,7 @@ ir_attach() {   # <slot> [--plain] [--from-start] [--last N]
 # outside: inside, a Ctrl-C that ends it would still fail the assignment.
 _ir_attach_follow() {
     local before
+    local -a reply
     while ! ${detached}; do
         if [[ -z "${offset}" ]]; then
             offset="$(oc exec -n "${ns}" "${IR_POD}" -- "${IR_BIN_IN_POD}/follow.sh" "${log}" "${position}" resolve 2>/dev/null)" || true
@@ -1090,6 +1095,25 @@ _ir_attach_follow() {
         offset="$(<"${offset_file}")"
         state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null)" || true
         ${detached} && break
+        # After a resume: the old run's end until the supervisor takes the request
+        # (a slow poll, or a pod replaced in between). Once taken, states count,
+        # from the next round on: the state above may predate the take.
+        if ${resumed} && [[ "${state}" == (failed|stopped|completed-with-warnings) ]]; then
+            _ir_resume_check "${ns}"
+            ${detached} && break
+            if [[ "${reply[1]}" == (pending|taken) ]]; then
+                last_read=${SECONDS}
+                relogged=false
+                if [[ "${reply[1]}" == taken ]]; then
+                    resumed=false
+                    continue
+                fi
+                ${said_waiting} || print -r -- "[attach] Waiting for the runner to take the resume (run state: ${state})..." >&2
+                said_waiting=true said_lost=false
+                sleep "${retry}" || true
+                continue
+            fi
+        fi
         case "${state}" in
             completed)
                 ir_info "Run finished: ${state}. Next: x_install_runner.sh collect --slot ${slot}$(_ir_tc)"
@@ -1216,7 +1240,8 @@ ir_stop() {   # <slot>
 }
 
 ir_resume() {   # <slot> [--retry-warned]
-    local slot="$1" ns state content=""
+    local slot="$1" ns state content="" lines
+    local -a reply
     [[ "${2:-}" == --retry-warned ]] && content=retry-warned
     ir_namespace "${slot}"; ns="${REPLY}"
     state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
@@ -1226,8 +1251,60 @@ ir_resume() {   # <slot> [--retry-warned]
     [[ "${state}" == (failed|stopped|completed-with-warnings) ]] \
         || ir_die "Slot ${slot} is '${state:-unreachable}': nothing to resume."
     ir_grant_admin "${slot}"
+    _ir_resume_check "${ns}"; lines="${reply[3]}"
     print -r -- "${content}" | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c 'cat > /work/current/control.resume'
     ir_info "Resuming slot ${slot}."
+    _ir_resume_wait "${slot}" "${ns}" "${state}" "${lines}"
+}
+
+# Where a resume request is: reply=(<pending|taken> <state> <lines in attempts.log>),
+# empty when the pod does not answer. The no-op marker (ir-resume-check) lets the
+# test fakes tell this command apart.
+_ir_resume_check() {   # <namespace>
+    local answer
+    answer="$(oc exec -n "$1" "${IR_POD}" -- sh -c ': ir-resume-check; cd /work/current || exit 1
+        if [ -e control.resume ]; then t=pending; else t=taken; fi
+        echo "$t $(cat state 2>/dev/null) $(wc -l < attempts.log 2>/dev/null || echo 0)"' 2>/dev/null)" || answer=""
+    reply=(${=answer} "" "" "")
+}
+
+# The supervisor takes a resume on its next poll; until then the run still reads
+# failed or stopped, and a watch started now would see a finished run that then
+# moves again, which looks like a lost connection (live finding L-02). So wait for
+# the hand-over: control.resume gone and the state moved on, or a new line in
+# attempts.log (an attempt that already ended, maybe in the same state). After
+# IR_RESUME_WAIT_SECONDS the watch takes over; started with --resumed, it keeps
+# waiting while the request is still there, and reports a pod that does not answer.
+# The request is already sent, so Ctrl-C (or a closed terminal) here only detaches,
+# as it does in the watch: REPLY=detached, else REPLY=taken.
+_ir_resume_wait() {   # <slot> <namespace> <state before> <attempts.log lines before>
+    local slot="$1" ns="$2" before="$3" lines="$4" detached=false
+    local -i deadline=$(( SECONDS + ${IR_RESUME_WAIT_SECONDS:-60} )) polls=0
+    local -a reply
+    trap 'detached=true' INT HUP
+    while :; do
+        _ir_resume_check "${ns}"
+        ${detached} && break
+        if [[ "${reply[1]}" == taken ]]; then
+            [[ -n "${reply[2]}" && "${reply[2]}" != "${before}" ]] && break
+            [[ "${reply[3]}" == <-> && "${lines}" == <-> ]] && (( reply[3] > lines )) && break
+        fi
+        if (( SECONDS >= deadline )); then
+            ir_warn "The runner has not picked up the resume yet (state: ${reply[2]:-unknown}); it will on its next poll. Watching; the watch waits for it."
+            break
+        fi
+        (( ++polls == 3 )) && ir_info "Waiting for the runner to take the resume..."
+        sleep "${IR_RESUME_POLL_SECONDS:-1}" || true
+        ${detached} && break
+    done
+    trap - INT HUP
+    if ${detached}; then
+        { print -r -- ""; ir_info "Detached. The resume is sent: the install goes on in slot ${slot} once the runner takes it. Watch it with: x_install_runner.sh attach --slot ${slot}$(_ir_tc)"; } 2>/dev/null || true
+        REPLY=detached
+    else
+        REPLY=taken
+    fi
+    return 0
 }
 
 # =============================================================================

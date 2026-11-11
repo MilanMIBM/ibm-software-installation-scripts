@@ -242,7 +242,8 @@ case "${verb}" in
     status)    ir_status ;;
     attach)    ir_watch "${SLOT}" "${rest[@]}" ;;
     stop)      ir_stop "${SLOT}" ;;
-    resume)    ir_resume "${SLOT}" "${rest[@]}"; ir_watch "${SLOT}" ;;
+    # A Ctrl-C while the runner has yet to take the resume detaches, as in the watch.
+    resume)    ir_resume "${SLOT}" "${rest[@]}"; [[ "${REPLY}" == detached ]] || ir_watch "${SLOT}" --resumed ;;
     collect)   ir_collect "${INSTALL}" "${SLOT}" "${rest[@]}" ;;
     teardown)  ir_teardown "${SLOT}" "${rest[@]}" ;;
     shell)     oc exec -it -n "${NS}" "${IR_POD}" -- zsh ;;
