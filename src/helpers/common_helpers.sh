@@ -412,11 +412,18 @@ h_steps_print() {
 
 # The options env_bootstrap.sh takes for a chain that can run in the cluster (a
 # RUNNER_ENTRYPOINTS script): which cluster, which run mode, and the answers a run on
-# several clusters asks for (install_runner_fanout.sh). Nothing for any other chain.
+# several clusters asks for (install_runner_fanout.sh). A chain that calls ir_dispatch
+# but can't run in the cluster gets --local-install-fallback only. Nothing for any other.
 _h_steps_runner_usage() {
     [[ -n "${_CP4D_REPO_ROOT:-}" ]] || return 0
     (( $+functions[ir_is_runner_entrypoint] )) || source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_mode.sh"
-    ir_is_runner_entrypoint "${_CP4D_REPO_ROOT}" "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}" || return 0
+    if ! ir_is_runner_entrypoint "${_CP4D_REPO_ROOT}" "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}"; then
+        ir_is_dispatch_chain "${ZSH_ARGZERO:A}" || return 0
+        print -r -- "Where it runs (this chain can't run in the cluster: it has no install module):"
+        printf '  %-28s%s\n' "--local-install-fallback" "with INSTALL_RUN_MODE=cluster, run here without asking (the config stays as it is;" \
+            "" "several clusters run one at a time)"
+        return 0
+    fi
     print -r -- "Where it runs (multi-cluster management and the in-cluster runner):"
     printf '  %-28s%s\n' "--target-cluster NAME" "run on this cluster instead of the current one (--target-clusters a,b or" \
         "" "--all-clusters for several)" \
@@ -509,6 +516,14 @@ ir_dispatch() {
     source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_mode.sh"
     local REPLY
     ir_run_mode
+    # A chain no install module lists can't move to a pod: ask whether it runs here
+    # instead, for this run only (--local-install-fallback answers yes). Asked before
+    # install_runner_helpers.sh is loaded: nothing on the cluster changes for it.
+    if [[ "${REPLY}" == cluster ]] \
+        && ! ir_is_runner_entrypoint "${_CP4D_REPO_ROOT}" "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}"; then
+        ir_local_fallback "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}" "$@" || exit 1
+        REPLY=local
+    fi
     case "${REPLY}" in
         # One install of each type per cluster (C10): a run here is refused while the
         # same install runs on this cluster, here or in a pod launched from here.

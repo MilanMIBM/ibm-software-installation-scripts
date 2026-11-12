@@ -114,6 +114,12 @@ _source_registry_overrides() {
 # subfolder or subfolder of cp4d_config/) or a path to a config file. Scripts normally get ENV_TARGET from
 # env_bootstrap.sh, which infers it from the script's folder (cpd, confluent,
 # concert, datastax_mc) unless ENV_TARGET or --env-target is given.
+#
+# INSTALL_RUN_MODE comes from the loaded config only: a value left in the shell (an
+# earlier load of every config, an export) is dropped first, so a config that does not
+# set it, or a product whose config generator never writes it, runs here (local, the
+# default of ir_run_mode). A one-off --run-mode (INSTALL_RUN_MODE_OVERRIDE) still wins.
+unset INSTALL_RUN_MODE
 mcm_snapshot_exports
 if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all ]]; then
     _target_file="${ENV_TARGET}"

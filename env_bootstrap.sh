@@ -1,6 +1,6 @@
 #!/bin/zsh
 # =============================================================================
-# env_bootstrap.sh - universal environment loader for cp4d-installation-scripts
+# env_bootstrap.sh - universal environment loader for ibm-software-installation-scripts
 # -----------------------------------------------------------------------------
 # Purpose:
 #   Provide a single, location-independent way for any script in this repo to
@@ -78,6 +78,11 @@ fi
 #                        which clusters the run is for (multi-cluster management)
 #   --run-mode local|cluster
 #                        run an install here or in the cluster, for this run only
+#   --local-install-fallback
+#                        a chain that can't run in the cluster (no install module)
+#                        runs on this machine without asking, when the run is set to
+#                        run in the cluster. The config is not changed. A run on
+#                        several clusters runs them one at a time (--parallel ignored).
 #   --parallel           installs that run in the cluster (INSTALL_RUN_MODE=cluster)
 #                        are launched, not watched: the clusters of a multi-cluster
 #                        run install at the same time, and the run ends with how to
@@ -97,6 +102,33 @@ fi
 # a child script in another product folder still infers its own target.
 # _CP4D_ENV_TARGET_WHY says which rule picked it, for the env summary.
 _CP4D_ENV_TARGET_WHY="ENV_TARGET"
+
+# The config a script loads when nothing names one -> REPLY (empty: every config), and
+# _CP4D_ENV_TARGET_WHY, the rule that picked it. A function, so a multi-cluster run of
+# a chain with no install module can tell each cluster's config before any is loaded
+# (ir_fanout_local_fallback in src/helpers/install_runner_fanout.sh).
+_cp4d_env_target_for() {   # <absolute script path, or its folder ending in />
+    typeset -g _CP4D_ENV_TARGET_WHY="no target for this script's folder"
+    REPLY=""
+    case "${1#${_CP4D_REPO_ROOT}/}" in
+        scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/*|src/utilities/softwarehub_utils/softwarehub_control_center/*)
+            REPLY=swhub_control_center; _CP4D_ENV_TARGET_WHY="Software Hub Control Center script folder" ;;
+        scripts/install_cloud_pak_for_data/*) REPLY=cpd;       _CP4D_ENV_TARGET_WHY="script folder scripts/install_cloud_pak_for_data/" ;;
+        # Kubecost: its own config when there is one, else the CP4D config as before.
+        src/utilities/kubecost_utils/*)
+            if [[ -f "${MCM_CLUSTER_ROOT:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}}/kubecost_config/kubecost_vars.sh" ]]; then
+                REPLY=kubecost; _CP4D_ENV_TARGET_WHY="script folder src/utilities/kubecost_utils/ + configs/kubecost_config/kubecost_vars.sh"
+            else
+                REPLY=cpd;      _CP4D_ENV_TARGET_WHY="script folder src/utilities/kubecost_utils/, no kubecost_vars.sh"
+            fi ;;
+        src/utilities/*)                      REPLY=cpd;       _CP4D_ENV_TARGET_WHY="script folder src/utilities/" ;;
+        scripts/install_confluent_platform/*) REPLY=confluent; _CP4D_ENV_TARGET_WHY="script folder scripts/install_confluent_platform/" ;;
+        scripts/install_ibm_concert/*)        REPLY=concert;   _CP4D_ENV_TARGET_WHY="script folder scripts/install_ibm_concert/" ;;
+        scripts/install_datastax_mc_standalone/*) REPLY=datastax_mc; _CP4D_ENV_TARGET_WHY="script folder scripts/install_datastax_mc_standalone/" ;;
+        scripts/private_registry_mirroring/*) REPLY=registry_mirror; _CP4D_ENV_TARGET_WHY="script folder scripts/private_registry_mirroring/" ;;
+    esac
+}
+
 # Multi-cluster flags (--target-cluster, --target-clusters, --all-clusters and
 # --yes-all-clusters, which answers a destructive script's confirmation): taken out
 # here too, for the resolve step below.
@@ -122,6 +154,11 @@ while (( $# )); do
             export INSTALL_RUN_MODE_OVERRIDE="$2"; shift 2 ;;
         --run-mode=*)
             export INSTALL_RUN_MODE_OVERRIDE="${1#--run-mode=}"; shift ;;
+        # A chain with no install module, in a run set to run in the cluster, asks
+        # whether to run on this machine instead (ir_local_fallback). The flag answers
+        # yes. Exported, so a multi-cluster run's children and nested steps see it.
+        --local-install-fallback)
+            export IR_LOCAL_INSTALL_FALLBACK=1; shift ;;
         # --parallel (plan 15.1 D3): an install that runs in the cluster is launched and
         # not watched, so a fan-out installs its clusters at the same time. Without it a
         # fan-out watches each run to its end, one cluster at a time. Exported, so the
@@ -178,17 +215,27 @@ unset _argv _ir_chain_arg
 if [[ -n "${_ir_parallel_flag:-}" && -z "${IR_IN_RUNNER:-}" ]]; then
     unset _ir_parallel_flag
     if ! ir_is_runner_entrypoint "${_CP4D_REPO_ROOT}" "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}"; then
-        echo "[ERROR] --parallel only applies to installs that run in the cluster (INSTALL_RUN_MODE=cluster), and ${ZSH_ARGZERO:t} is not one (no install module in src/install_runner/installs/ lists it)." >&2
-        [[ -o interactive ]] && return 1
-        mcm_exit_no_trap 1
+        # A chain that would hand its run to a pod, but has no install module: with the
+        # fallback it runs here, so its clusters go one at a time.
+        if [[ "${IR_LOCAL_INSTALL_FALLBACK:-}" == 1 ]] && ir_is_dispatch_chain "${ZSH_ARGZERO:A}"; then
+            echo "[WARN] --parallel ignored: ${ZSH_ARGZERO:t} has no install module, so it runs on this machine (--local-install-fallback), one cluster at a time." >&2
+            unset IR_FANOUT_PARALLEL
+            _ir_parallel_ignored=1
+        else
+            echo "[ERROR] --parallel only applies to installs that run in the cluster (INSTALL_RUN_MODE=cluster), and ${ZSH_ARGZERO:t} is not one (no install module in src/install_runner/installs/ lists it)." >&2
+            ir_is_dispatch_chain "${ZSH_ARGZERO:A}" \
+                && echo "[ERROR] Drop --parallel, or add --local-install-fallback to run it on this machine, one cluster at a time." >&2
+            [[ -o interactive ]] && return 1
+            mcm_exit_no_trap 1
+        fi
     fi
-    if [[ "${INSTALL_RUN_MODE_OVERRIDE:-}" == local ]]; then
+    if [[ "${INSTALL_RUN_MODE_OVERRIDE:-}" == local && -z "${_ir_parallel_ignored:-}" ]]; then
         echo "[ERROR] --parallel only applies to installs that run in the cluster (INSTALL_RUN_MODE=cluster), not with --run-mode local." >&2
         [[ -o interactive ]] && return 1
         mcm_exit_no_trap 1
     fi
 fi
-unset _ir_parallel_flag
+unset _ir_parallel_flag _ir_parallel_ignored
 # Also checks a value from the environment, before a fan-out runs it on every cluster.
 if [[ -n "${INSTALL_RUN_MODE_OVERRIDE:-}" && "${INSTALL_RUN_MODE_OVERRIDE}" != (local|cluster) ]]; then
     echo "[ERROR] The run mode must be local or cluster (--run-mode or INSTALL_RUN_MODE_OVERRIDE is '${INSTALL_RUN_MODE_OVERRIDE}')." >&2
@@ -214,24 +261,8 @@ if [[ -z "${ENV_TARGET:-}" ]]; then
     # The running script: $ZSH_ARGZERO for ./x.sh or zsh x.sh, else the caller's SCRIPT_DIR.
     _caller="${ZSH_ARGZERO:A}"
     [[ "${_caller}" == "${_CP4D_REPO_ROOT}"/* ]] || _caller="${SCRIPT_DIR:-}/"
-    _CP4D_ENV_TARGET_WHY="no target for this script's folder"
-    case "${_caller#${_CP4D_REPO_ROOT}/}" in
-        scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/*|src/utilities/softwarehub_utils/softwarehub_control_center/*)
-            ENV_TARGET=swhub_control_center; _CP4D_ENV_TARGET_WHY="Software Hub Control Center script folder" ;;
-        scripts/install_cloud_pak_for_data/*) ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder scripts/install_cloud_pak_for_data/" ;;
-        # Kubecost: its own config when there is one, else the CP4D config as before.
-        src/utilities/kubecost_utils/*)
-            if [[ -f "${MCM_CLUSTER_ROOT:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}}/kubecost_config/kubecost_vars.sh" ]]; then
-                ENV_TARGET=kubecost; _CP4D_ENV_TARGET_WHY="script folder src/utilities/kubecost_utils/ + configs/kubecost_config/kubecost_vars.sh"
-            else
-                ENV_TARGET=cpd;      _CP4D_ENV_TARGET_WHY="script folder src/utilities/kubecost_utils/, no kubecost_vars.sh"
-            fi ;;
-        src/utilities/*)                      ENV_TARGET=cpd;       _CP4D_ENV_TARGET_WHY="script folder src/utilities/" ;;
-        scripts/install_confluent_platform/*) ENV_TARGET=confluent; _CP4D_ENV_TARGET_WHY="script folder scripts/install_confluent_platform/" ;;
-        scripts/install_ibm_concert/*)        ENV_TARGET=concert;   _CP4D_ENV_TARGET_WHY="script folder scripts/install_ibm_concert/" ;;
-        scripts/install_datastax_mc_standalone/*) ENV_TARGET=datastax_mc; _CP4D_ENV_TARGET_WHY="script folder scripts/install_datastax_mc_standalone/" ;;
-        scripts/private_registry_mirroring/*) ENV_TARGET=registry_mirror; _CP4D_ENV_TARGET_WHY="script folder scripts/private_registry_mirroring/" ;;
-    esac
+    _cp4d_env_target_for "${_caller}"
+    [[ -n "${REPLY}" ]] && ENV_TARGET="${REPLY}"
     unset _caller
     # A script whose target depends on which configs this run's cluster has (the
     # in-cluster runner's x_install_runner.sh) defines this hook. It runs here: after

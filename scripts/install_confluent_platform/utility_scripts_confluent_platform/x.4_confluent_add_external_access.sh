@@ -352,7 +352,7 @@ else
     else
         echo "[INFO] Generating a private CA and a broker certificate..."
         openssl req -new -x509 -nodes -days "${CONFLUENT_EXTERNAL_CERT_VALIDITY_DAYS}" \
-            -subj "/CN=Confluent Kafka CA (${NS})/O=cp4d-installation-scripts" \
+            -subj "/CN=Confluent Kafka CA (${NS})/O=ibm-software-installation-scripts" \
             -keyout "${_tmp}/ca.key" -out "${_tmp}/ca.crt" 2>/dev/null
 
         # X.509 caps a CN at 64 characters and a route hostname on a long
@@ -360,7 +360,7 @@ else
         # not used for validation: every real hostname is in the SAN list below,
         # which is what TLS clients actually check.
         openssl req -new -nodes \
-            -subj "/CN=confluent-kafka-broker/O=cp4d-installation-scripts" \
+            -subj "/CN=confluent-kafka-broker/O=ibm-software-installation-scripts" \
             -keyout "${_tmp}/server.key" -out "${_tmp}/server.csr" 2>/dev/null
 
         printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\n' "${_san}" > "${_tmp}/ext.cnf"

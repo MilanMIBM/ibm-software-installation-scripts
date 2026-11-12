@@ -386,10 +386,10 @@ kafka_ensure_internal_tls() {
     # X.509 caps a CN at 64 characters, so it is a fixed label; clients check
     # the SAN list, not the CN.
     if openssl req -new -x509 -nodes -days "${CONFLUENT_INTERNAL_CERT_VALIDITY_DAYS}" \
-            -subj "/CN=Confluent Kafka internal CA/O=cp4d-installation-scripts" \
+            -subj "/CN=Confluent Kafka internal CA/O=ibm-software-installation-scripts" \
             -keyout "${tmp}/ca.key" -out "${tmp}/ca.crt" 2>/dev/null \
        && openssl req -new -nodes \
-            -subj "/CN=confluent-kafka-internal/O=cp4d-installation-scripts" \
+            -subj "/CN=confluent-kafka-internal/O=ibm-software-installation-scripts" \
             -keyout "${tmp}/server.key" -out "${tmp}/server.csr" 2>/dev/null \
        && printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth,clientAuth\n' "${san}" > "${tmp}/ext.cnf" \
        && openssl x509 -req -in "${tmp}/server.csr" \

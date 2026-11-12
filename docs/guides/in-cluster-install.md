@@ -18,8 +18,14 @@ Software Hub / Cloud Pak for Data, the install that has an in-cluster mode today
   before that local install.
 - **Every other product runs from this machine**: Confluent Platform and its
   Flink add-on, DataStax Mission Control, IBM Concert, Kubecost, and every
-  `x_*` utility. With `cluster` set, the Confluent, Flink, DataStax, Concert and
-  mirroring chains stop before any work with "has no install module".
+  `x_*` utility. Their configs don't set `INSTALL_RUN_MODE`, so they run here
+  (local) even when the cluster's CP4D runs in the cluster.
+- **A chain with no install module that still gets `cluster`** (`--run-mode
+  cluster`, or a CP4D chain other than the full chain, 2.0, 2.2, 3.1 and 4.0)
+  asks whether to run on this machine instead, for this run only. The config is
+  not changed. `--local-install-fallback` answers yes. With no terminal and no
+  flag it stops before any work. On several clusters it asks once, then runs
+  them one at a time (`--parallel` is ignored).
 - **Confluent Platform today**: a local run only, with no in-cluster mode. Online
   from public registries (Docker Hub, no entitlement key), or from a private or
   air-gapped / local registry the mirroring track has filled ([details](local-install.md#other-products)).
@@ -132,7 +138,8 @@ Exit codes of a chain run in the cluster:
 ## If something goes wrong
 
 - **"has no install module"**: that chain or product can't run in the cluster.
-  Use `--run-mode local`.
+  Answer `y`, or add `--local-install-fallback` (or `--run-mode local`) to run it
+  on this machine. The config stays as it is.
 - **"supports entitled only for now"**: a private or local registry config.
   Run the install from this machine.
 - **The internal registry is not Managed**: set `INSTALL_RUNNER_IMAGE_SOURCE`.

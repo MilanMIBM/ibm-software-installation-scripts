@@ -1063,7 +1063,7 @@ ir_handoff() {   # <chain args...>
     # Both sides resolved: :A follows symlinks, and the repo may sit behind one.
     local chain="${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}" id slot ns state
     ir_install_for_chain "${chain}" \
-        || ir_die "INSTALL_RUN_MODE=cluster, but ${chain} has no install module. Use INSTALL_RUN_MODE=local, or see src/install_runner/installs/_template.conf."
+        || ir_die "INSTALL_RUN_MODE=cluster, but ${chain} has no install module. Run it here with --local-install-fallback or --run-mode local, or see src/install_runner/installs/_template.conf."
     id="${REPLY}"
     ir_slot "${id}"; slot="${REPLY}"
     ir_namespace "${slot}"; ns="${REPLY}"

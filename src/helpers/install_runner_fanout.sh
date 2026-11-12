@@ -462,6 +462,68 @@ ir_fanout_plan() {   # <script> [args...]
     return 0
 }
 
+# A multi-cluster run of a chain that calls ir_dispatch but no install module lists
+# (Confluent, Flink, DataStax, Concert, mirroring, ...): it can't move to a pod. Each
+# target's mode is read as its child would: --run-mode (INSTALL_RUN_MODE_OVERRIDE),
+# else INSTALL_RUN_MODE in that cluster's own config for the chain; no such line is
+# local. Targets set to cluster get one question here, for all of them, before anything
+# starts: run them on this machine instead, for this run only. They then run one at a
+# time, as any local run of a fan-out (--parallel was dropped by env_bootstrap.sh).
+# --local-install-fallback (IR_LOCAL_INSTALL_FALLBACK=1) answers yes; the yes is
+# exported, so no child asks again. A value that is not a plain word is left to the
+# child (ir_local_fallback). 0 go on, 1 refused or cancelled (reason printed).
+ir_fanout_local_fallback() {   # <script> [args...]
+    emulate -L zsh
+    local script="$1" arg target="" name root f file text REPLY
+    local -i rc
+    local -a clusters
+    shift
+    for arg in "$@"; do
+        [[ "${arg}" == (--list-steps|--list_steps|-h|--help) ]] && return 0
+    done
+    # The config each child loads (env_bootstrap.sh's rule, _cp4d_env_target_for).
+    if [[ -n "${ENV_TARGET:-}" && "${ENV_TARGET}" != all && "${ENV_TARGET}" != */* ]]; then
+        target="${ENV_TARGET}"
+    elif (( $+functions[_cp4d_env_target_for] )); then
+        _cp4d_env_target_for "${script:A}"
+        target="${REPLY}"
+    fi
+    [[ -n "${target}" ]] || target=cpd
+    for name in "${_MCM_RESOLVED[@]}"; do
+        root="$(mcm_cluster_root "${name}" 2>/dev/null)" || continue
+        file=""
+        for f in "${root}"/*/"${target}"_vars.sh(N) "${root}"/cp4d_config/*/"${target}"_vars.sh(N); do
+            file="${f}"
+            break
+        done
+        # No config for the chain: the child skips that cluster as usual.
+        [[ -n "${file}" ]] || continue
+        if [[ -n "${INSTALL_RUN_MODE_OVERRIDE:-}" ]]; then
+            [[ "${INSTALL_RUN_MODE_OVERRIDE}" == cluster ]] && clusters+=("${name}")
+            continue
+        fi
+        rc=0
+        _ir_fanout_assignment "${file}" INSTALL_RUN_MODE || rc=$?
+        (( rc == 0 )) && [[ "${REPLY}" == cluster ]] && clusters+=("${name}")
+    done
+    (( ${#clusters} )) || return 0
+    if [[ "${IR_LOCAL_INSTALL_FALLBACK:-}" == 1 ]]; then
+        print -r -- "[MCM] ${script:t} can't run in the cluster (no install module): ${(j:, :)clusters} run it on this machine instead, one cluster at a time (--local-install-fallback). Their configs stay as they are."
+        return 0
+    fi
+    text="${script:t} can't run in the cluster (no install module), but ${#clusters} target(s) are set to run it there: ${(j:, :)clusters}."
+    if [[ ! -t 0 ]]; then
+        _mcm_err "${text} There is no terminal to ask on, so nothing was run on any cluster."
+        _mcm_err "Add --local-install-fallback to run them on this machine, one cluster at a time (the configs stay as they are), or use --run-mode local."
+        return 1
+    fi
+    print -r -- "[MCM] ${text}"
+    _mcm_ask "Run them on this machine instead, one cluster at a time, for this run only? The configs stay as they are. [y/N] " || REPLY=""
+    [[ "${(L)${${REPLY##[[:space:]]#}%%[[:space:]]#}}" == (y|yes) ]] || { _ir_fanout_cancelled; return 1; }
+    export IR_LOCAL_INSTALL_FALLBACK=1
+    return 0
+}
+
 # After a launch of pods and a local run: where each install stands. Run as a separate
 # multi-cluster run of its own, out of this fan-out (its children would read the
 # fan-out's pin), with no input.

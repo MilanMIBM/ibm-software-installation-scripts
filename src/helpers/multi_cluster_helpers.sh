@@ -1746,6 +1746,12 @@ mcm_fanout() {
             *) mcm_exit_no_trap 1 ;;
         esac
         rc=0
+    elif _mcm_fanout_dispatch_chain "${script}"; then
+        # A chain that can't run in the cluster, on targets set to run there: one
+        # question for all of them, before anything starts. They then run here, one at
+        # a time, as below.
+        source "$(mcm_repo_root)/src/helpers/install_runner_fanout.sh"
+        ir_fanout_local_fallback "${script}" "$@" || mcm_exit_no_trap 1
     fi
     if (( planned )); then
         local_name="${_IR_PLAN_LOCAL}"
@@ -1916,6 +1922,16 @@ _mcm_fanout_runner_chain() {   # SCRIPT
     repo="$(mcm_repo_root)" || return 1
     (( $+functions[ir_is_runner_entrypoint] )) || source "${repo}/src/helpers/install_runner_mode.sh"
     ir_is_runner_entrypoint "${repo}" "${${1:A}#${repo:A}/}"
+}
+
+# 0 when SCRIPT calls ir_dispatch (INSTALL_RUN_MODE=cluster would move its run to a pod)
+# but is not a runner chain: no install module lists it (ir_fanout_local_fallback).
+_mcm_fanout_dispatch_chain() {   # SCRIPT
+    emulate -L zsh
+    local repo
+    repo="$(mcm_repo_root)" || return 1
+    (( $+functions[ir_is_dispatch_chain] )) || source "${repo}/src/helpers/install_runner_mode.sh"
+    ir_is_dispatch_chain "$1"
 }
 
 # 0 when the arguments ask the script for its usage and the script has such an option.

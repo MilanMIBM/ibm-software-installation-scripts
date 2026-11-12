@@ -87,6 +87,60 @@ ir_is_runner_entrypoint() {   # <repo root> <repo-relative path>
     return 1
 }
 
+# 0 when <script> is a chain entry point: it calls ir_dispatch, so INSTALL_RUN_MODE=cluster
+# would move its run to a pod. Read as text, like ir_dispatch reads h_steps_plan.
+ir_is_dispatch_chain() {   # <script>
+    [[ -f "$1" ]] && grep -qs '^[[:space:]]*ir_dispatch' -- "$1"
+}
+
+# Where this run's cluster mode came from, for a message -> REPLY.
+_ir_cluster_mode_why() {
+    emulate -L zsh
+    if [[ -n "${INSTALL_RUN_MODE_OVERRIDE:-}" ]]; then
+        REPLY="--run-mode ${INSTALL_RUN_MODE_OVERRIDE}"
+    elif [[ -n "${ENV_TARGET_FILE:-}" ]] \
+        && grep -qsE '^[[:space:]]*(export[[:space:]]+)?INSTALL_RUN_MODE=' -- "${ENV_TARGET_FILE}"; then
+        REPLY="INSTALL_RUN_MODE=${INSTALL_RUN_MODE:-} in ${ENV_TARGET_FILE#${_CP4D_REPO_ROOT:-}/}"
+    else
+        REPLY="INSTALL_RUN_MODE=${INSTALL_RUN_MODE:-}"
+    fi
+}
+
+# A run set to run in the cluster, of a chain no install module lists: it can't move
+# to a pod. Asks whether to run it on this machine instead, for this run only; nothing
+# is written to a config. --local-install-fallback (IR_LOCAL_INSTALL_FALLBACK=1)
+# answers yes. With no terminal and no flag the run stops, naming the flag.
+# 0: run here (INSTALL_RUN_MODE_OVERRIDE=local is exported, so the chain's nested
+# steps run here too and ask nothing). 1: stop, with the reason printed.
+ir_local_fallback() {   # <repo-relative chain> [chain args...]
+    emulate -L zsh
+    local chain="$1" arg answer REPLY why
+    shift
+    # A question about the chain is answered here anyway, as ir_handoff does.
+    for arg in "$@"; do
+        [[ "${arg}" == (--list-steps|--list_steps|-h|--help) ]] && return 0
+    done
+    _ir_cluster_mode_why; why="${REPLY}"
+    if [[ "${IR_LOCAL_INSTALL_FALLBACK:-}" == 1 ]]; then
+        print -r -- "[INFO] ${chain:t} can't run in the cluster (no install module): running it on this machine for this run (--local-install-fallback). ${why} stays as it is."
+    elif [[ ! -t 0 ]]; then
+        print -r -- "[ERROR] ${why}, but ${chain} has no install module: it can't run in the cluster." >&2
+        print -r -- "[ERROR] Add --local-install-fallback to run it on this machine for this run (the config stays as it is), or use --run-mode local. Nothing was run." >&2
+        return 1
+    else
+        print -r -- "[WARN] ${chain:t} can't run in the cluster: no install module lists it (src/install_runner/installs/), but this run is set to run there (${why})."
+        printf '%s' "Run it on this machine instead, for this run only? The config stays as it is. [y/N] "
+        answer=""
+        IFS= read -r answer || answer=""
+        if [[ "${(L)${${answer##[[:space:]]#}%%[[:space:]]#}}" != (y|yes) ]]; then
+            print -r -- "[INFO] Nothing was run. --local-install-fallback answers yes, --run-mode local skips the question." >&2
+            return 1
+        fi
+    fi
+    export INSTALL_RUN_MODE_OVERRIDE=local IR_LOCAL_INSTALL_FALLBACK=1
+    return 0
+}
+
 # 0 when this load is a workstation chain that hands its run to a pod: the run mode is
 # cluster, this is not the pod itself, and the running script is a runner entry point.
 # Such a load needs no local olm-utils container and no lease (gap X8).
