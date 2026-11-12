@@ -355,8 +355,43 @@ def follow_run(tmp_path, state, extra=None, files=()):
     (run / "terminal.log").write_text("old output\n")
     os.symlink(run, work / "current")
     env = {"PATH": "/usr/bin:/bin", "IR_WORK": str(work), **(extra or {})}
-    proc = subprocess.Popen(["bash", str(FOLLOW), "terminal", "start"], env=env, stdout=subprocess.PIPE, text=True)
+    # Its own process group: follow.sh backgrounds `tail -f`, and only the group reaches that tail.
+    proc = subprocess.Popen(["bash", str(FOLLOW), "terminal", "start"], env=env, stdout=subprocess.PIPE, text=True,
+                            start_new_session=True)
     return run, proc
+
+
+def _group_left(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def stop_follow(proc):
+    """Stop follow.sh and its `tail -f`, and check nothing of its group is left. A plain proc.kill() is SIGKILL
+    to bash alone: its EXIT trap never runs and the tail lives on, orphaned, for ever."""
+    pgid = proc.pid
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if not _group_left(pgid) and proc.poll() is not None:
+            break
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            continue
+        deadline = time.time() + 3
+        while _group_left(pgid) and time.time() < deadline:
+            time.sleep(0.05)
+    if proc.stdout:
+        proc.stdout.close()
+    assert not _group_left(pgid), "follow.sh left a process (its tail -f) running"
 
 
 def ended_within(proc, seconds):
@@ -366,9 +401,7 @@ def ended_within(proc, seconds):
     except subprocess.TimeoutExpired:
         return False
     finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
+        stop_follow(proc)
 
 
 def test_follow_keeps_a_finished_run_open_while_a_resume_is_pending(tmp_path):
@@ -384,8 +417,7 @@ def test_follow_keeps_a_finished_run_open_while_a_resume_is_pending(tmp_path):
         (run / "state").write_text("completed\n")
         assert ended_within(proc, 15), "a finished run with no request ends the stream"
     finally:
-        if proc.poll() is None:
-            proc.kill()
+        stop_follow(proc)
 
 
 def test_follow_without_a_request_ends_on_a_finished_run(tmp_path):
