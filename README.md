@@ -38,7 +38,7 @@ The Cloud Pak for Data workflow has two stages:
 
 ## Prerequisites
 
-- OpenShift cluster + `oc` and `cpd-cli` (installers for both under [scripts/install_cloud_pak_for_data/0_initial_setup/](scripts/install_cloud_pak_for_data/0_initial_setup/), macOS only)
+- OpenShift cluster + `oc` and `cpd-cli`. On macOS (Intel or Apple Silicon), the two scripts in [scripts/install_cloud_pak_for_data/0_initial_setup/](scripts/install_cloud_pak_for_data/0_initial_setup/) download and install them for you: `0.1_install_oc-MAC-ONLY.sh` and `0.2_install_cpd_cli-MAC-ONLY.sh`. They work on macOS only. On Linux, Windows or any other OS, get the builds for your platform from the OpenShift and IBM `cpd-cli` downloads and install them yourself.
 - `zsh` - the scripts are zsh scripts; run them directly (`./script.sh`), not with `sh script.sh`. To check for it, run `sh scripts/0_initial_check_in.sh` first (plain `sh`, so it runs before zsh exists, on macOS, Linux, WSL, Git Bash, MSYS2 or Cygwin). If zsh is missing, it offers to install it with the OS's own package manager. If zsh is installed somewhere other than `/bin/zsh`, it offers to link `/bin/zsh` to it.
 - `podman` (macOS: scripts start the podman machine automatically when needed)
 - Python 3.14+ and [uv](https://docs.astral.sh/uv/)
@@ -103,7 +103,8 @@ Every chained script (the `full_*` installs for each product, the step sub-chain
 Run these in order - each one is standalone and loads the config itself:
 
 ```bash
-# 0. One-time workstation + cluster setup
+# 0. One-time workstation setup, macOS only: these install oc and cpd-cli for you.
+#    On any other OS, install oc and cpd-cli yourself and skip these two.
 ./scripts/install_cloud_pak_for_data/0_initial_setup/0.1_install_oc-MAC-ONLY.sh
 ./scripts/install_cloud_pak_for_data/0_initial_setup/0.2_install_cpd_cli-MAC-ONLY.sh
 
@@ -819,3 +820,47 @@ Choices worth knowing:
 - **Other images** already have versioned tags and digests, so both patches stay installable. Nothing is pruned.
 
 **Adding a product**: copy the `_template` files (`0_initial_setup/installs/_template.{conf,sh.j2,sh}`, and `_template.sh` in segments 1 - 3) to `<id>.*`. The `.conf` holds its metadata (config target, default registry path, content kinds). The hooks are called with a verb: `components`/`prefill` (0), `map` (1, required; emits inventory lines), `download`/`verify-registry` (2, only for product-specific mirroring) and `cluster`/`tap`/`verify-cluster` (3). The numbered scripts loop over `MIRROR_INSTALLS` and need no change.
+
+## Installation mode variants and image registry options
+
+Step-by-step guides for each mode: [docs/guides/](docs/guides/README.md). A `*` means there is a note under the table.
+
+### Installation mode variants
+
+| Install | From this machine | In the cluster (`INSTALL_RUN_MODE=cluster`) |
+| --- | :---: | :---: |
+| Software Hub / Cloud Pak for Data | ✅ | ✅\* |
+| Software Hub Control Center (sub-install) | ✅ | ✅\* |
+| Confluent Platform and the Flink add-on | ✅ | ❌ |
+| DataStax Mission Control (standalone) | ✅ | ❌ |
+| IBM Concert | ✅\* | ❌ |
+| Kubecost (`src/utilities/kubecost_utils/`) | ✅ | ❌ |
+| Private registry mirroring, `x_*` utilities | ✅ | ❌ |
+
+- **Software Hub / Cloud Pak for Data**: in the cluster with entitled images only (`CPD_IMAGE_SOURCE=entitled`), and only the full chain and steps `2.0`, `2.2`, `3.1` and `4.0`. One install of each type runs on a cluster at a time.
+- **Control Center**: needs entitled images in the cluster too, and runs in a sidecar of the runner pod. The sidecar has not been proven on a live cluster yet (see [Control Center in the pod](#control-center-in-the-pod)).
+- **IBM Concert**: started from this machine, but IBM's installer itself runs as a Job in the target cluster by default (`CONCERT_RUNNER`).
+
+With `INSTALL_RUN_MODE=cluster`, a full-install chain that has no runner module (Confluent, Flink, DataStax, Concert, mirroring) stops with a clear message. Single step scripts, Kubecost and the `x_*` utilities ignore the setting and run on this machine.
+
+**Why only CP4D runs in the cluster.** A CP4D install is long and has many dependent parts: cluster prep, prerequisite operators, Software Hub, then component groups whose operators pull in their own dependencies. A full install takes hours. That is long enough for a laptop to sleep, a VPN to drop or a terminal to close. There, a pod pays off: it resumes after a lost pod, waits at a failed step for `resume`, and can be watched from any machine logged in to the cluster. Confluent, DataStax and Kubecost are a few Helm releases, operators or manifests with short rollout waits, so running them from this machine is simpler. Concert takes longer, but its long part, IBM's installer, already runs as a Job in the cluster, so a closed terminal costs little there too. More runner modules can be added from `src/install_runner/installs/_template.conf`.
+
+### Image registry options
+
+| Install | Online registry | Private registry | Air-gapped (local registry) |
+| --- | :---: | :---: | :---: |
+| Software Hub / Cloud Pak for Data | ✅ | ✅\* | ✅\* |
+| Software Hub Control Center (sub-install) | ✅ | ✅\* | ✅\* |
+| Confluent Platform and the Flink add-on | ✅\* | ✅ | ✅ |
+| DataStax Mission Control (standalone) | ✅ | ✅ | ✅\* |
+| IBM Concert | ✅ | ✅\* | ✅\* |
+| Kubecost | ✅\* | ✅\* | ✅\* |
+
+Private and air-gapped installs get their images from the [private registry mirroring](#private-registry-mirroring) track, which runs from this machine first and then points the install at the registry. Kubecost uses its own mirroring instead, and Concert can also mirror with its own steps `1.1`-`1.3`.
+
+- **Software Hub / Cloud Pak for Data**: `CPD_IMAGE_SOURCE=private` or `local`. These run from this machine only; an in-cluster run needs `entitled`.
+- **Control Center**: manual. Mirror the premium olm-utils image, point `CONTROL_OLM_UTILS_IMAGE` at it and add `ibm_swhcc` to `MIRROR_CPD_COMPONENTS`. Neither happens automatically.
+- **Confluent Platform**: online means public registries with no entitlement key: the `cp-*` images from Docker Hub (`docker.io/confluentinc`), the Flink charts from `packages.confluent.io/helm`, and a few helper images (Red Hat UBI nginx for basic auth, Keycloak or OpenLDAP for the user store).
+- **DataStax Mission Control**: preflight `1.1` still checks the chart on `icr.io` and needs `IBM_ENTITLEMENT_KEY`. Where `icr.io` cannot be reached, run the chain with `DO_PREFLIGHT=false`.
+- **IBM Concert**: its own names for the sources, `CONCERT_IMAGE_SOURCE=mirrored` (private) and `airgap` (air-gapped). Optimize (Turbonomic) is entitled only: the install stops if it is selected with `mirrored` or `airgap`.
+- **Kubecost**: online means OperatorHub (`KUBECOST_INSTALL_SOURCE=marketplace`). It mirrors with its own `mirror_kubecost_images.sh` (`--phase save` / `load` across an air gap).
