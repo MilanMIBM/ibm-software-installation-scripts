@@ -135,6 +135,9 @@ class EntrypointTests(unittest.TestCase):
         shutil.copy(REPO / "src/helpers/common_helpers.sh", helpers)
         # ir_dispatch (common_helpers.sh) reads the run mode through this helper.
         shutil.copy(REPO / "src/helpers/install_runner_mode.sh", helpers)
+        # In local mode it then checks the same-type lock (C10), which loads these.
+        for name in ("install_runner_lock.sh", "install_runner_slots.sh", "multi_cluster_helpers.sh"):
+            shutil.copy(REPO / "src/helpers" / name, helpers)
         shutil.copy(REPO / "scripts/install_confluent_platform/full_installprocess-confluent_platform.sh", self.platform)
         self.trace = self.root / "trace"
         (self.root / "env_bootstrap.sh").write_text(
