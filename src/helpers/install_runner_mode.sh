@@ -83,3 +83,50 @@ ir_parallel_mode_check() {   # <repo root>
     print -r -- "[ERROR] ${where} runs ${ZSH_ARGZERO:t} on this machine (${why}): nothing was run there." >&2
     return 1
 }
+
+# The install module that lists <chain> in RUNNER_ENTRYPOINTS -> REPLY = its id, empty and
+# 1 when none does. --suffix also takes a path that ends in /<entry point>: a lease holds
+# the path a run was started by. Leases written before they held an absolute path hold
+# it as typed, relative to wherever the run was started (./full_x.sh): with --suffix, a
+# relative path whose file name is the file name of exactly one entry point of all
+# modules is that entry point (their file names are unique in this repo).
+ir_entrypoint_install() {   # <installs folder> <chain> [--suffix]
+    emulate -L zsh
+    local dir="$1" chain="$2" suffix=0 f e
+    local -a owners
+    [[ "${3:-}" == --suffix ]] && suffix=1
+    REPLY=""
+    [[ -n "${chain}" ]] || return 1
+    for f in "${dir}"/*.conf(N); do
+        [[ "${f:t:r}" == _template ]] && continue
+        awk -F= -v want="${chain}" -v suffix="${suffix}" '
+            $1 == "RUNNER_ENTRYPOINTS" {
+                v = substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", v)
+                n = split(v, list, " ")
+                for (i = 1; i <= n; i++) {
+                    e = list[i]
+                    if (want == e) found = 1
+                    else if (suffix && length(want) > length(e) \
+                             && substr(want, length(want) - length(e)) == "/" e) found = 1
+                }
+            }
+            END { exit found ? 0 : 1 }' "${f}" || continue
+        REPLY="${f:t:r}"
+        return 0
+    done
+    (( suffix )) && [[ "${chain}" != /* && "${chain:t}" == *.sh ]] || return 1
+    for f in "${dir}"/*.conf(N); do
+        [[ "${f:t:r}" == _template ]] && continue
+        for e in ${=$(ir_module_value "${dir}" "${f:t:r}" RUNNER_ENTRYPOINTS)}; do
+            [[ "${e:t}" == "${chain:t}" ]] && owners+=("${f:t:r}")
+        done
+    done
+    (( ${#owners} == 1 )) || return 1
+    REPLY="${owners[1]}"
+}
+
+# One value of an install module, read as ir_conf reads it -> stdout (empty when absent).
+ir_module_value() {   # <installs folder> <id> <key>
+    [[ -f "$1/$2.conf" ]] || return 0
+    awk -F= -v k="$3" '$1 == k { v = substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", v); print v; exit }' "$1/$2.conf"
+}

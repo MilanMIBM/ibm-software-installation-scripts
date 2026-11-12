@@ -335,31 +335,81 @@ ir_preflight() {   # <id> [chain]
     fi
     # The module checks the very folders that will be staged (hand-off and preflight verb).
     _ir_hook_staged "${id}" preflight "${chain}" || rc=1
-    # Two runs on one cluster share its cluster-wide steps (the global pull secret, the
-    # mirror sets, the cluster components), and those are not locked against each other
-    # yet (plan G8): a lost pull-secret update breaks image pulls on every node. So one
-    # run per cluster, unless asked (gap X10). This install's own slot is the busy-slot
-    # check's.
-    local -a active
-    active=(${(f)"$(ir_active_slots)"})
-    ir_slot "${id}"; active=("${(@)active:#${REPLY}}")
-    if (( ${#active} )); then
-        if [[ "${INSTALL_RUNNER_ALLOW_PARALLEL:-false}" == true ]]; then
-            ir_warn "Also running on this cluster: ${(j:, :)active}. Cluster-wide steps are not locked against each other yet."
-        else
-            h_error "Also running on this cluster: ${(j:, :)active}. Cluster-wide steps are not locked against each other yet, so one run at a time."
-            h_error "Wait for it to end, or set INSTALL_RUNNER_ALLOW_PARALLEL=true to run both anyway."
-            rc=1
-        fi
-    fi
+    # One install of each type per cluster (C10). This install's own slot is the
+    # busy-slot check's.
+    _ir_preflight_same_type "${id}" || rc=1
     (( rc == 0 )) || ir_die "Preflight failed: nothing was changed."
     ir_info "Preflight passed."
 }
 
-ir_active_slots() {   # slots with a live run, one per line
+# Slots with a live run on the cluster, one per line: slot, state, chain and the name
+# it was launched under ("-" when none), tab-separated.
+ir_active_runs() {
     oc get configmap -A -l "${IR_LABEL}" -o json 2>/dev/null \
         | jq -r '.items[] | select(.metadata.name == "ir-status")
-                 | select(.data.state | IN("staged", "running", "interrupted")) | .data.slot' 2>/dev/null || true
+                 | select(.data.state | IN("staged", "running", "interrupted"))
+                 | [.data.slot, .data.state, (.data.chain // "-"), (.data.cluster // "-")] | @tsv' 2>/dev/null || true
+}
+
+# The install a live slot runs -> REPLY: the module that lists its chain, else the
+# module its slot name starts with (ir_slot: <id> or <id>-<instance>), else empty.
+_ir_run_install() {   # <slot> <chain or ->
+    local id best=""
+    if [[ -n "$2" && "$2" != - ]] && ir_install_for_chain "$2"; then
+        return 0
+    fi
+    for id in $(ir_install_ids); do
+        [[ "$1" == "${id}" || "$1" == "${id}"-* ]] || continue
+        (( ${#id} > ${#best} )) && best="${id}"
+    done
+    REPLY="${best}"
+}
+
+# C10, one install of each type per cluster (install_runner_lock.sh): refuses a launch
+# while an install of the same type runs on this cluster, in a slot (seen in the
+# cluster, whoever launched it), on its way to one from this machine (a launch mark:
+# image build, pod start, upload), or on this machine (a lease, multi-cluster mode
+# only). Other types are allowed, and only named. Prints why; 1 when the launch must
+# not go.
+_ir_preflight_same_type() {   # <id>
+    local id="$1" own line slot state chain cluster other where
+    local -a same others locals launching
+    source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_lock.sh"
+    ir_slot "${id}"; own="${REPLY}"
+    for line in "${(@f)$(ir_active_runs)}"; do
+        [[ -n "${line}" ]] || continue
+        IFS=$'\t' read -r slot state chain cluster <<< "${line}"
+        [[ -n "${slot}" && "${slot}" != "${own}" ]] || continue
+        _ir_run_install "${slot}" "${chain}"; other="${REPLY}"
+        where=""
+        [[ -n "${cluster}" && "${cluster}" != - ]] && where=", launched as ${cluster}"
+        if [[ "${other}" == "${id}" ]]; then
+            same+=("${slot}"$'\t'"${state}${where}")
+        else
+            others+=("${slot} (${other:-unknown install})")
+        fi
+    done
+    locals=(${(f)"$(ir_lock_local_runs "${IR_SRC}/installs" "${id}")"})
+    launching=(${(f)"$(ir_lock_launching_runs "${id}")"})
+    (( ${#others} )) && ir_info "Also running on this cluster, other install types (allowed): ${(j:, :)others}."
+    (( ${#same} || ${#locals} || ${#launching} )) || return 0
+    # Hidden back-end bypass, for debugging the runner only: _IR_DEBUG_ALLOW_SAME_TYPE=true
+    # launches a second install of the same type on one cluster anyway. Users have no
+    # override (decision Q-a1, 2026-11-12), so it is documented nowhere else.
+    if [[ "${_IR_DEBUG_ALLOW_SAME_TYPE:-}" == true ]]; then
+        ir_warn "_IR_DEBUG_ALLOW_SAME_TYPE=true: launching ${id} although another ${id} install runs on this cluster."
+        return 0
+    fi
+    h_error "$(ir_conf "${id}" INSTALL_LABEL) (install ${id}) already runs on this cluster. One install of each type per cluster."
+    for line in "${same[@]}"; do
+        slot="${line%%$'\t'*}"
+        h_error "  in the cluster: slot ${slot} (${line#*$'\t'})."
+        h_error "  Watch it with: scripts/install_runner/x_watch_install.sh --install ${id} --slot ${slot}$(_ir_tc)"
+        h_error "  Wait for it to end and collect it, then launch again."
+    done
+    (( ${#launching} )) && ir_lock_explain_launching "${id}" "${(F)launching}"
+    (( ${#locals} )) && ir_lock_explain_local_runs "${(F)locals}"
+    return 1
 }
 
 # =============================================================================
@@ -924,6 +974,10 @@ ir_handoff() {   # <chain args...>
 
     eval "${OC_LOGIN}"
     ir_refuse_busy_slot "${ns}" "${slot}"
+    # Until the run is staged, only this mark tells another launch or local run of the
+    # same install that this one is on its way (C10, install_runner_lock.sh).
+    source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_lock.sh"
+    ir_lock_launch_mark "${id}" "${slot}"
     ir_preflight "${id}" "${chain}"
     ir_image_ensure "${id}"
     local image="${REPLY}"
@@ -941,6 +995,7 @@ ir_handoff() {   # <chain args...>
     local run="$(date -u +%Y%m%dT%H%M%SZ)" watch rc=0
     ir_stage "${id}" "${ns}" "${chain}" "${run}" "$@"
     ir_slot_record_set "${MCM_CLUSTER:-}" "${slot}" run="${run}" state=launched
+    ir_lock_launch_unmark
     watch="scripts/install_runner/x_watch_install.sh --install ${id}$(_ir_tc)"
     _ir_fanout_note "${slot}" "${watch}"
     # --parallel (plan 15.1 D3): launch only, so the next cluster of a fan-out can start.

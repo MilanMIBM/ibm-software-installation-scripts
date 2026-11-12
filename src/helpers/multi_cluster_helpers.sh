@@ -1535,12 +1535,20 @@ _mcm_fanout_clean_env() {
     # its cpd_vars.sh. INSTALL_RUN_MODE_OVERRIDE (--run-mode) stays, it is meant for all.
     # So do the one-run switches below: they are not in cpd_vars.sh, they name no
     # cluster, and NEW_RUN is the only way to start over on every cluster at once.
-    # ALLOW_PARALLEL (a second run on one cluster) and ATTACH_LOST_MAX (how long a
-    # watch waits) are such switches too.
+    # ATTACH_LOST_MAX (how long a watch waits) is such a switch too.
     local -a _mcm_ir_names=(${(k)parameters[(I)INSTALL_RUNNER_*]})
-    _mcm_ir_names=(${_mcm_ir_names:#(INSTALL_RUNNER_NEW_RUN|INSTALL_RUNNER_CPD_CLI_URL|INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY|INSTALL_RUNNER_ALLOW_PARALLEL|INSTALL_RUNNER_ATTACH_LOST_MAX)})
+    _mcm_ir_names=(${_mcm_ir_names:#(INSTALL_RUNNER_NEW_RUN|INSTALL_RUNNER_CPD_CLI_URL|INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY|INSTALL_RUNNER_ATTACH_LOST_MAX)})
     _mcm_forget_names INSTALL_RUN_MODE ${_mcm_ir_names}
     return 0
+}
+
+# One answer typed at the terminal -> REPLY, as typed. The prompt goes to stdout, on the
+# line the answer is typed on. 1 at the end of input (REPLY is then what was typed, if
+# anything). Used by the fan-out's questions (_mcm_fanout_confirm, install_runner_fanout.sh).
+_mcm_ask() {   # PROMPT
+    printf '%s' "[MCM] $1"
+    REPLY=""
+    IFS= read -r REPLY
 }
 
 # Typed confirmation for a destructive script. At a terminal it is always asked. With
@@ -1559,8 +1567,8 @@ _mcm_fanout_confirm() {   # SCRIPT
     for name in "${_MCM_RESOLVED[@]}"; do
         print -r -- "[MCM]   ${name}"
     done
-    printf '%s' "[MCM] Type ${expected} to run it on all ${#_MCM_RESOLVED} (anything else cancels): "
-    IFS= read -r answer || answer=""
+    _mcm_ask "Type ${expected} to run it on all ${#_MCM_RESOLVED} (anything else cancels): " || REPLY=""
+    answer="${REPLY}"
     if [[ "${answer}" != "${expected}" ]]; then
         _mcm_err "Cancelled: nothing was run. Pick one cluster with --target-cluster NAME."
         return 1
@@ -1642,13 +1650,16 @@ _mcm_fanout_table() {   # NAMES RESULTS DURATIONS (array names)
 # --parallel (gap X10): two targets on one cluster would run two installs there at the
 # same time, and cluster-wide steps are not locked against each other yet (plan G8).
 # Targets whose markers hold the same URL (compared by _mcm_url_key) are refused, with
-# nothing run. A target with no URL recorded cannot be compared and passes.
-_mcm_fanout_refuse_same_url() {
+# nothing run. A target with no URL recorded cannot be compared and passes. The
+# confirmation round of a runner chain (install_runner_fanout.sh) checks the targets it
+# runs at the same time, under its own label.
+_mcm_fanout_refuse_same_url() {   # [LABEL NAME...]
     emulate -L zsh
-    local name root key
+    local label="${1:---parallel}" name root key
     local -A owner
-    local -a clashes
-    for name in "${_MCM_RESOLVED[@]}"; do
+    local -a clashes names=("${_MCM_RESOLVED[@]}")
+    (( $# > 1 )) && names=("${@:2}")
+    for name in "${names[@]}"; do
         root="$(mcm_cluster_root "${name}")" || continue
         key="$(_mcm_url_key "$(_mcm_marker_value "${root}/.cluster" OCP_URL)")"
         [[ -n "${key}" ]] || continue
@@ -1659,9 +1670,13 @@ _mcm_fanout_refuse_same_url() {
         fi
     done
     (( ${#clashes} )) || return 0
-    _mcm_err "--parallel: these targets are one cluster under two names: ${(j:, :)clashes}."
+    _mcm_err "${label}: these targets are one cluster under two names: ${(j:, :)clashes}."
     _mcm_err "Two installs on one cluster at once are not safe yet (cluster-wide steps are not locked). Nothing was run."
-    _mcm_err "Target one of the names, or drop --parallel to run them one after the other."
+    if [[ "${label}" == --parallel ]]; then
+        _mcm_err "Target one of the names, or drop --parallel to run them one after the other."
+    else
+        _mcm_err "Target one of the names (--target-clusters a,b)."
+    fi
     return 1
 }
 
@@ -1681,12 +1696,15 @@ _mcm_fanout_read_note() {   # FILE
 # A child that hands its install to a pod (INSTALL_RUN_MODE=cluster) has codes of its
 # own, read only when it left a note: 76 its install keeps running unwatched (launched
 # by --parallel, or detached by Ctrl-C), 77 ok with warnings, 78 its watch was lost.
+# Such a chain with a target whose install would run on this machine first gets the
+# questions of install_runner_fanout.sh (C12); then the in-cluster targets launch
+# without watching, the one local target runs, and the status of every cluster follows.
 mcm_fanout() {
     emulate -L zsh
-    local script policy name when result slot watch note_dir="" note
-    local -a names=("${_MCM_RESOLVED[@]}") results durations watches
+    local script policy name when result slot watch note_dir="" note local_name=""
+    local -a names=("${_MCM_RESOLVED[@]}") results durations watches plan_skipped child_env
     local -i total=${#_MCM_RESOLVED} n=0 rc=0 ok=0 failed=0 skipped=0 first_failure=0 started=0 elapsed=0 interrupted=0
-    local -i parallel=0 detached=0
+    local -i parallel=0 detached=0 planned=0 staged=0
     [[ "${IR_FANOUT_PARALLEL:-}" == 1 ]] && parallel=1
 
     if ! script="$(_mcm_fanout_script)"; then
@@ -1715,7 +1733,32 @@ mcm_fanout() {
             ;;
     esac
 
-    if (( parallel )); then
+    # The questions come first: nothing starts before the last answer (C12). --parallel
+    # gets them too: a local target would otherwise fail after the pods before it, and
+    # the switches of its local targets must reach their children.
+    if _mcm_fanout_runner_chain "${script}"; then
+        source "$(mcm_repo_root)/src/helpers/install_runner_fanout.sh"
+        rc=0
+        ir_fanout_plan "${script}" "$@" || rc=$?
+        case "${rc}" in
+            0) planned=1 ;;
+            2) ;;
+            *) mcm_exit_no_trap 1 ;;
+        esac
+        rc=0
+    fi
+    if (( planned )); then
+        local_name="${_IR_PLAN_LOCAL}"
+        names=("${_IR_PLAN_PODS[@]}")
+        if [[ -n "${local_name}" ]]; then
+            names+=("${local_name}")
+            staged=1
+        fi
+        plan_skipped=("${_IR_PLAN_SKIPPED[@]}")
+        total=${#names}
+        # ir_fanout_plan has refused targets that would run at the same time on one
+        # cluster under two names, before its last question.
+    elif (( parallel )); then
         _mcm_fanout_refuse_same_url || mcm_exit_no_trap 1
     fi
 
@@ -1726,7 +1769,11 @@ mcm_fanout() {
     # this function (emulate -L), and not inherited by the children.
     trap 'interrupted=1' INT TERM HUP
     export _MCM_FANOUT_CHILD=1 _MCM_FANOUT_SCRIPT="${script:A}" _CP4D_PREP_DONE=1
-    if (( parallel )); then
+    if (( staged && total > 1 )); then
+        print -r -- "[MCM] Launching ${script:t} on $(( total - 1 )) cluster(s) without watching (${(j:, :)${(@)names:#${local_name}}}), then running it here on ${local_name}."
+    elif (( staged )); then
+        print -r -- "[MCM] Running ${script:t} here on ${local_name} only."
+    elif (( parallel )); then
         print -r -- "[MCM] Launching ${script:t} on ${total} clusters, one at a time; each install then runs on in its cluster (--parallel): ${names[*]}"
     else
         print -r -- "[MCM] Running ${script:t} on ${total} clusters, one at a time: ${names[*]}"
@@ -1745,7 +1792,27 @@ mcm_fanout() {
         note=""
         [[ -n "${note_dir}" ]] && note="${note_dir}/${n}"
         export _MCM_FANOUT_NOTE="${note}"
-        if [[ -n "${_MCM_FANOUT_INPUT}" ]]; then
+        if (( planned )); then
+            # In-cluster targets only launch while a local one waits its turn (Q-a6); a
+            # target switched by the questions runs in the cluster for this run only.
+            child_env=()
+            if (( staged )) && [[ "${name}" != "${local_name}" ]]; then
+                child_env+=(IR_FANOUT_PARALLEL=1)
+            fi
+            if (( ${_IR_PLAN_SWITCHED[(Ie)${name}]} )); then
+                child_env+=(INSTALL_RUN_MODE_OVERRIDE=cluster)
+            fi
+            # A launch that is not watched (next to the local run, or --parallel) reads
+            # nothing: the terminal, and what is typed ahead on it, stays for the local
+            # run. A pty on stdin can also hang the staging upload (zsh read -d '').
+            if (( staged || parallel )) && [[ "${name}" != "${local_name}" ]]; then
+                env "${child_env[@]}" zsh "${script}" "$@" < /dev/null || rc=$?
+            elif [[ -n "${_MCM_FANOUT_INPUT}" ]]; then
+                env "${child_env[@]}" zsh "${script}" "$@" < "${_MCM_FANOUT_INPUT}" || rc=$?
+            else
+                env "${child_env[@]}" zsh "${script}" "$@" || rc=$?
+            fi
+        elif [[ -n "${_MCM_FANOUT_INPUT}" ]]; then
             zsh "${script}" "$@" < "${_MCM_FANOUT_INPUT}" || rc=$?
         else
             zsh "${script}" "$@" || rc=$?
@@ -1805,6 +1872,12 @@ mcm_fanout() {
         print -r -- "[MCM] ${n}/${total} ${name}: ${result} (${when})"
     done
     unset _MCM_FANOUT_NOTE
+    # Targets the questions left out: a local install runs on one target only.
+    for name in "${plan_skipped[@]}"; do
+        names+=("${name}")
+        results+=("skipped (runs here, but only ${local_name} does in this run)")
+        durations+=("-")
+    done
 
     if [[ -n "${_MCM_FANOUT_INPUT}" && "${_MCM_FANOUT_INPUT}" != /dev/null ]]; then
         rm -f -- "${_MCM_FANOUT_INPUT}"
@@ -1820,6 +1893,9 @@ mcm_fanout() {
     if (( detached )); then
         print -r -- "[MCM] Ctrl-C detached from a running install; the clusters after it were not launched (not run)."
     fi
+    # Once pods were planned next to the local run, whatever each launch returned
+    # (Q-a6); not after a Ctrl-C, which asked to stop.
+    (( staged && ${#_IR_PLAN_PODS} && ! interrupted )) && ir_fanout_status
     # A child that handled the Ctrl-C itself may have ended with 0.
     (( interrupted && ! first_failure )) && first_failure=130
     if (( first_failure )); then
@@ -1830,6 +1906,16 @@ mcm_fanout() {
         mcm_exit_no_trap "${MCM_SKIP_EXIT_CODE}"
     fi
     mcm_exit_no_trap 0
+}
+
+# 0 when SCRIPT is an install chain that can run in the cluster (a RUNNER_ENTRYPOINTS
+# script of src/install_runner/installs/).
+_mcm_fanout_runner_chain() {   # SCRIPT
+    emulate -L zsh
+    local repo
+    repo="$(mcm_repo_root)" || return 1
+    (( $+functions[ir_is_runner_entrypoint] )) || source "${repo}/src/helpers/install_runner_mode.sh"
+    ir_is_runner_entrypoint "${repo}" "${${1:A}#${repo:A}/}"
 }
 
 # 0 when the arguments ask the script for its usage and the script has such an option.
@@ -2120,11 +2206,13 @@ _mcm_lease_live() {
 }
 
 # Marks this top-level run as live on the cluster (default MCM_CLUSTER). The file is
-# ~/cpd-cli/clusters/<name>/.leases/<pid>. A dead PID counts as stale, so no EXIT
-# trap is needed. Never fails the run.
+# ~/cpd-cli/clusters/<name>/.leases/<pid> and holds the script the run was started by,
+# as an absolute path when it is a file (install_runner_lock.sh reads which install
+# that is). A dead PID counts as stale, so no EXIT trap is needed. Never fails the run.
 mcm_take_lease() {
     emulate -L zsh
-    local cluster="${1:-${MCM_CLUSTER:-}}" dir
+    local cluster="${1:-${MCM_CLUSTER:-}}" dir started="${ZSH_ARGZERO:-zsh}"
+    [[ -f "${started}" ]] && started="${started:A}"
     [[ -n "${cluster}" ]] || return 0
     if _mcm_long_lived_load; then
         return 0
@@ -2133,7 +2221,7 @@ mcm_take_lease() {
         return 0
     fi
     dir="$(_mcm_clusters_home)/${cluster}/.leases"
-    if ! mkdir -p "${dir}" 2>/dev/null || ! { print -r -- "${ZSH_ARGZERO:-zsh}" > "${dir}/$$" } 2>/dev/null; then
+    if ! mkdir -p "${dir}" 2>/dev/null || ! { print -r -- "${started}" > "${dir}/$$" } 2>/dev/null; then
         _mcm_warn "Could not write a lease in ${dir}; the idle checks cannot see this run."
         return 0
     fi

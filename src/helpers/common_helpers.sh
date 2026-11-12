@@ -410,6 +410,23 @@ h_steps_print() {
     done
 }
 
+# The options env_bootstrap.sh takes for a chain that can run in the cluster (a
+# RUNNER_ENTRYPOINTS script): which cluster, which run mode, and the answers a run on
+# several clusters asks for (install_runner_fanout.sh). Nothing for any other chain.
+_h_steps_runner_usage() {
+    [[ -n "${_CP4D_REPO_ROOT:-}" ]] || return 0
+    (( $+functions[ir_is_runner_entrypoint] )) || source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_mode.sh"
+    ir_is_runner_entrypoint "${_CP4D_REPO_ROOT}" "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}" || return 0
+    print -r -- "Where it runs (multi-cluster management and the in-cluster runner):"
+    printf '  %-28s%s\n' "--target-cluster NAME" "run on this cluster instead of the current one (--target-clusters a,b or" \
+        "" "--all-clusters for several)" \
+        "--run-mode local|cluster" "run here or in the cluster, for this run only, whatever INSTALL_RUN_MODE says" \
+        "--parallel" "several clusters: launch each install in its cluster without watching it" \
+        "--switch-to-cluster a,b|none" "several clusters: these local targets run in the cluster this time" \
+        "--local-cluster NAME" "several clusters: the one local target that runs on this machine" \
+        "--yes" "several clusters: start without the last confirmation"
+}
+
 # h_steps_plan: check, print the plan; --help / --list-steps exit here.
 h_steps_plan() {
     _h_steps_check_names
@@ -421,6 +438,7 @@ h_steps_plan() {
         ${H_STEPS_STRICT} && printf '  %-28s%s\n' "--<step>" "same as --only <step>, e.g. --${H_STEPS[1]}"
         printf '  %-28s%s\n' "--list-steps" "print the steps and what this run would do, then exit"
         [[ -n "${H_STEPS_USAGE:-}" ]] && print -r -- "${H_STEPS_USAGE}"
+        _h_steps_runner_usage
         print -r -- "Option names accept '_' for '-' (e.g. --skip_steps)."
         print -r -- "A step runs when its toggle is on and ${H_STEPS_FROM_OPT} / --skip / --only select it."
         print ""
@@ -492,7 +510,12 @@ ir_dispatch() {
     local REPLY
     ir_run_mode
     case "${REPLY}" in
-        local)   return 0 ;;
+        # One install of each type per cluster (C10): a run here is refused while the
+        # same install runs on this cluster, here or in a pod launched from here.
+        local)
+            source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_lock.sh"
+            ir_lock_check_local "${_CP4D_REPO_ROOT}" "$@" || exit 1
+            return 0 ;;
         cluster) ;;
         *)       h_die "${${INSTALL_RUN_MODE_OVERRIDE:+INSTALL_RUN_MODE_OVERRIDE}:-INSTALL_RUN_MODE} must be local or cluster (got '${REPLY}')." ;;
     esac

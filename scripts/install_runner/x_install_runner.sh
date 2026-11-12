@@ -25,6 +25,13 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 #   --install <id>   which install (src/install_runner/installs/); needed when
 #                    more than one has a config here
 #   --slot <slot>    a slot other than the one the config points at
+#   --target-cluster NAME
+#                    another cluster than the current one (multi-cluster
+#                    management); --target-clusters a,b or --all-clusters for
+#                    several (attach, resume and shell take one)
+#
+# A chain itself takes --target-cluster NAME too, and --run-mode local|cluster to
+# run here or in the cluster for that run only, whatever INSTALL_RUN_MODE says.
 #
 # collect puts results where the run's config came from (the flat configs/ or
 # configs/clusters/<name>/). If that changed since the launch (a migration, a
@@ -59,7 +66,7 @@ while (( ${#pre} )) && [[ "${pre[1]}" == --* && "${pre[1]}" != --help ]]; do
 done
 verb="${pre[1]:-}"
 case "${verb}" in
-    -h|--help|help|"") sed -n '5,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help|help|"") sed -n '5,47p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 (( ${IR_VERBS[(Ie)${verb}]} )) || { echo "[ERROR] Unknown command: ${verb} (see --help)" >&2; exit 2; }
 INSTALL=""

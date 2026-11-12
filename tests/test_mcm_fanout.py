@@ -421,7 +421,7 @@ RUNNER_PROBE = r'''#!/bin/zsh
 set -euo pipefail
 SCRIPT_DIR="${0:A:h}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="${_b:h}"; done; source "${_b}/env_bootstrap.sh"; unset _b
-print -r -- "RUNNER ${MCM_CLUSTER:-flat} mode=${INSTALL_RUN_MODE:-} override=${INSTALL_RUN_MODE_OVERRIDE:-} sc=${INSTALL_RUNNER_STORAGE_CLASS:-} image=${INSTALL_RUNNER_IMAGE:-} new=${INSTALL_RUNNER_NEW_RUN:-} par=${INSTALL_RUNNER_ALLOW_PARALLEL:-} lost=${INSTALL_RUNNER_ATTACH_LOST_MAX:-}"
+print -r -- "RUNNER ${MCM_CLUSTER:-flat} mode=${INSTALL_RUN_MODE:-} override=${INSTALL_RUN_MODE_OVERRIDE:-} sc=${INSTALL_RUNNER_STORAGE_CLASS:-} image=${INSTALL_RUNNER_IMAGE:-} new=${INSTALL_RUNNER_NEW_RUN:-} lost=${INSTALL_RUNNER_ATTACH_LOST_MAX:-}"
 '''
 
 
@@ -441,14 +441,13 @@ def test_i7_shell_runner_settings_do_not_cross_clusters_but_the_override_does():
             "INSTALL_RUNNER_STORAGE_CLASS": "shell-class",
             "INSTALL_RUNNER_IMAGE": "registry.itz-a.example.com/runner:1",
             "INSTALL_RUNNER_NEW_RUN": "true",
-            "INSTALL_RUNNER_ALLOW_PARALLEL": "true",
             "INSTALL_RUNNER_ATTACH_LOST_MAX": "5",
         }
         result = sb.run_script(ALLOW, env=shell, args=["--all-clusters"])
         assert result.returncode == 0, result.stdout + result.stderr
         lines = {line.split()[1]: line for line in result.stdout.splitlines() if line.startswith("RUNNER ")}
-        assert lines["itz-a"] == "RUNNER itz-a mode= override=local sc=class-a image= new=true par=true lost=5"
-        assert lines["itz-b"] == "RUNNER itz-b mode= override=local sc= image= new=true par=true lost=5"
+        assert lines["itz-a"] == "RUNNER itz-a mode= override=local sc=class-a image= new=true lost=5"
+        assert lines["itz-b"] == "RUNNER itz-b mode= override=local sc= image= new=true lost=5"
 
 
 def test_t8_a_preset_target_kubeconfig_is_left_alone():

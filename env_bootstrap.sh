@@ -84,7 +84,15 @@ fi
 #                        watch each one. Without it each cluster's install is watched
 #                        to its end, one cluster at a time. Refused for a script that
 #                        does not run in the cluster, or for a cluster whose config
-#                        says local, and for two targets with the same URL.
+#                        says local (a multi-cluster run asks first whether to switch
+#                        it), and for two targets with the same URL.
+#   --switch-to-cluster a,b|none, --local-cluster NAME, --yes
+#                        answers to the questions a multi-cluster run of an install
+#                        chain asks when its install would run on this machine on
+#                        more than one target, or on any with --parallel
+#                        (src/helpers/install_runner_fanout.sh).
+#                        Taken only from a chain that can run in the cluster; any other
+#                        script keeps them. A run on one cluster ignores them.
 # "all" loads every configs/*/*_vars.sh. The inferred value is not exported, so
 # a child script in another product folder still infers its own target.
 # _CP4D_ENV_TARGET_WHY says which rule picked it, for the env summary.
@@ -95,6 +103,9 @@ _CP4D_ENV_TARGET_WHY="ENV_TARGET"
 mcm_take_target_flags "$@" || { [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
 set -- "${_MCM_ARGV[@]}"
 _argv=()
+# The answers for install_runner_fanout.sh (read by the fan-out, below); _ir_chain_arg
+# is 1 once this script is known to be an install chain that can run in the cluster.
+_IR_ARG_SWITCH="" _IR_ARG_LOCAL="" _IR_ARG_YES=0 _ir_chain_arg=""
 while (( $# )); do
     case "$1" in
         --env-target)
@@ -127,11 +138,40 @@ while (( $# )); do
                 export IR_FANOUT_PARALLEL=1; _ir_parallel_flag=1
             fi
             shift ;;
+        # The questions of a multi-cluster install run (C12): which local targets run
+        # in the cluster this time, which one runs here, and no last confirmation.
+        --switch-to-cluster|--switch-to-cluster=*|--local-cluster|--local-cluster=*|--yes)
+            if [[ -z "${_ir_chain_arg}" ]]; then
+                (( $+functions[ir_is_runner_entrypoint] )) || source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_mode.sh"
+                _ir_chain_arg=0
+                ir_is_runner_entrypoint "${_CP4D_REPO_ROOT}" "${${ZSH_ARGZERO:A}#${_CP4D_REPO_ROOT:A}/}" && _ir_chain_arg=1
+            fi
+            if [[ "${_ir_chain_arg}" != 1 || -n "${IR_IN_RUNNER:-}" ]]; then
+                _argv+=("$1"); shift
+            elif [[ "$1" == --yes ]]; then
+                _IR_ARG_YES=1; shift
+            else
+                _ir_flag="${1%%=*}"
+                if [[ "$1" == *=* ]]; then _ir_value="${1#*=}"; shift
+                else _ir_value="${2:-}"; (( $# >= 2 )) && shift 2 || shift
+                fi
+                if [[ -z "${_ir_value}" || "${_ir_value}" == --* ]]; then
+                    if [[ "${_ir_flag}" == --local-cluster ]]; then echo "[ERROR] --local-cluster needs a cluster name" >&2
+                    else echo "[ERROR] --switch-to-cluster needs cluster names (a,b) or none" >&2
+                    fi
+                    unset _argv _ir_flag _ir_value _ir_chain_arg _IR_ARG_SWITCH _IR_ARG_LOCAL _IR_ARG_YES
+                    [[ -o interactive ]] && return 1; mcm_exit_no_trap 1
+                fi
+                if [[ "${_ir_flag}" == --switch-to-cluster ]]; then _IR_ARG_SWITCH="${_ir_value}"
+                else _IR_ARG_LOCAL="${_ir_value}"
+                fi
+                unset _ir_flag _ir_value
+            fi ;;
         *)  _argv+=("$1"); shift ;;
     esac
 done
 set -- "${_argv[@]}"
-unset _argv
+unset _argv _ir_chain_arg
 # --parallel means nothing to a script whose run never moves to a pod, or to a run told
 # to stay here: stop before a fan-out runs it on every cluster. A chain whose own config
 # says local stops later, for that cluster only, once the config is loaded.
@@ -163,7 +203,12 @@ fi
 # Mode off: nothing changes, unless the run names a delineated cluster (--target-cluster,
 # MCM_CLUSTER), which stays per cluster for good. A failure must not fall through to the
 # flat paths.
-mcm_env_setup "$@" || { [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
+mcm_env_setup "$@" || { unset _IR_ARG_SWITCH _IR_ARG_LOCAL _IR_ARG_YES; [[ -o interactive ]] && return 1; mcm_exit_no_trap 1; }
+# Here the run is on one cluster: there were no questions to answer (Q-a7).
+if [[ -n "${_IR_ARG_SWITCH:-}${_IR_ARG_LOCAL:-}" ]]; then
+    echo "[WARN] --switch-to-cluster and --local-cluster only answer the questions of a run on several clusters: ignored. This run keeps its cluster's INSTALL_RUN_MODE (--run-mode local|cluster picks another)." >&2
+fi
+unset _IR_ARG_SWITCH _IR_ARG_LOCAL _IR_ARG_YES
 
 if [[ -z "${ENV_TARGET:-}" ]]; then
     # The running script: $ZSH_ARGZERO for ./x.sh or zsh x.sh, else the caller's SCRIPT_DIR.

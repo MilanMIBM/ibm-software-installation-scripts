@@ -318,10 +318,20 @@ def test_a_bad_run_mode_stops_before_the_fanout(sb):
 
 
 def test_run_mode_override_reaches_every_cluster_of_a_fanout(sb):
+    """--run-mode local sets every target's mode (Q-a4), so both would run here. One multi-cluster run runs one
+    install here at most (C12): the current cluster runs, the other is skipped, and with no terminal the plan
+    needs --yes."""
     clusters(sb, names=("itz-a", "itz-b"), targets="itz-a itz-b")
-    result = run(sb, chain(sb, body=ARGS_CHAIN), "--run-mode", "local")
+    rel = chain(sb, body=ARGS_CHAIN)
+    refused = run(sb, rel, "--run-mode", "local")
+    assert refused.returncode == 1
+    assert "This plan needs a last confirmation. There is no terminal to ask on" in refused.stderr
+    assert "CHAIN-RAN-LOCALLY" not in refused.stdout
+    result = run(sb, rel, "--run-mode", "local", "--yes")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.count("CHAIN-RAN-LOCALLY args=<>") == 2
+    assert result.stdout.count("CHAIN-RAN-LOCALLY args=<>") == 1, "--yes must not reach the chain"
+    assert "[MCM]   itz-b                local    --run-mode local" in result.stdout
+    assert "[MCM]   itz-b    skipped (runs here, but only itz-a does in this run)" in result.stdout
     assert oc_log(sb) == ""
 
 

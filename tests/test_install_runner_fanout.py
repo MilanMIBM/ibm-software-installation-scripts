@@ -211,17 +211,23 @@ def test_parallel_flat_local_config_names_the_url(sb):
     assert "CHAIN-RAN-LOCALLY" not in result.stdout
 
 
-def test_parallel_fanout_fails_only_the_local_cluster(sb):
+def test_parallel_fanout_with_a_local_cluster_launches_nothing(sb):
+    """C12: a local target of a --parallel fan-out is asked about before any launch. Without a terminal that
+    refuses the run, with nothing launched; --switch-to-cluster answers it (tests/test_install_runner_fanout_confirm.py)."""
     clusters(sb, names=("itz-a", "itz-b"), targets="itz-a itz-b")
     local = sb.repo / "configs/clusters/itz-b/cp4d_config/cpd_vars.sh"
     local.write_text(local.read_text().replace('INSTALL_RUN_MODE="cluster"', 'INSTALL_RUN_MODE="local"'))
     result = run(sb, chain(sb), "--parallel")
     assert result.returncode == 1, result.stdout + result.stderr
-    assert table_row(result, "itz-a").startswith("launched")
-    assert table_row(result, "itz-b").startswith("FAILED (rc 1)")
-    assert "Cluster 'itz-b' runs" in result.stderr
+    assert "--parallel runs nothing on this machine, but 1 target(s) would run full_swhub_x_cpd_installprocess.sh here (itz-b)." in result.stderr
+    assert "--switch-to-cluster a,b" in result.stderr
     assert "CHAIN-RAN-LOCALLY" not in result.stdout
-    assert oc_log(sb).count("finalize-stage.sh") == 1
+    assert "finalize-stage.sh" not in oc_log(sb)
+    switched = run(sb, chain(sb), "--parallel", "--switch-to-cluster", "itz-b")
+    assert switched.returncode == 0, switched.stdout + switched.stderr
+    assert "Result per cluster" in switched.stdout
+    assert oc_log(sb).count("finalize-stage.sh") == 2
+    assert "CHAIN-RAN-LOCALLY" not in switched.stdout
 
 
 @pytest.mark.parametrize("args", [("--parallel", "--run-mode", "local"), ("--run-mode=local", "--parallel")])
@@ -276,23 +282,27 @@ def test_sequential_fanout_still_runs_two_names_for_one_url(sb):
     assert "[MCM] Running" in result.stdout
 
 
-def all_status(fake_dir, *slots):
+def all_status(fake_dir, *slots, chain="-"):
     items = [{"metadata": {"name": "ir-status", "namespace": f"install-runner-{s}"},
-              "data": {"slot": s, "state": "running"}} for s in slots]
+              "data": {"slot": s, "state": "running", "chain": chain}} for s in slots]
     (fake_dir / "all_status.json").write_text(__import__("json").dumps({"items": items}))
 
 
-def test_preflight_refuses_another_live_run_on_the_cluster(fake):
+PREFLIGHT_BASE = {"STG_CLASS_BLOCK": "blk", "STG_CLASS_FILE": "fil", "CONFIG_DIR": "/nonexistent"}
+
+
+def test_preflight_refuses_another_live_run_of_the_same_install(fake):
+    """C10: a second cpd on one cluster is refused, whatever its instance; the message names the slot, its
+    install and how to watch it. There is no user override (Q-a1): the old switch no longer does anything."""
     all_status(fake, "cpd-other")
-    base = {"STG_CLASS_BLOCK": "blk", "STG_CLASS_FILE": "fil", "CONFIG_DIR": "/nonexistent"}
-    refused = zsh("ir_preflight cpd", fake, base)
+    refused = zsh("ir_preflight cpd", fake, {**PREFLIGHT_BASE, "MCM_CLUSTER": "itz-a",
+                                             "INSTALL_RUNNER_ALLOW_PARALLEL": "true"})
     assert refused.returncode != 0
-    assert "Also running on this cluster: cpd-other" in refused.stderr
-    assert "INSTALL_RUNNER_ALLOW_PARALLEL=true" in refused.stderr
+    assert "IBM Software Hub / Cloud Pak for Data (install cpd) already runs on this cluster." in refused.stderr
+    assert "in the cluster: slot cpd-other (running)." in refused.stderr
+    assert f"Watch it with: {WATCH} --install cpd --slot cpd-other --target-cluster itz-a" in refused.stderr
     assert "Preflight failed: nothing was changed." in refused.stderr
-    allowed = zsh("ir_preflight cpd", fake, {**base, "INSTALL_RUNNER_ALLOW_PARALLEL": "true"})
-    assert allowed.returncode == 0, allowed.stderr
-    assert "Also running on this cluster: cpd-other" in allowed.stderr
+    assert "ALLOW_PARALLEL" not in refused.stderr + refused.stdout
 
 
 def test_preflight_ignores_its_own_slot(fake):

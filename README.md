@@ -136,7 +136,7 @@ Scripts run `./scripts/0.0_make_executable.sh` on their own if any `.sh` isn't e
 
 Control Center is a separate sub-install, not a component in the regular list. It runs the premium olm-utils image in its own container and workspace, so your regular cpd-cli setup is unaffected. Set `INSTALL_SWHUB_CONTROL_CENTER="true"` in `cpd_vars.sh` to run it at the end of the main install, or run it on its own. See [its README](scripts/install_cloud_pak_for_data/optional_install_swhub_control_center/README.md). With `INSTALL_RUN_MODE="cluster"` it runs in the cluster too, in a sidecar of the runner pod (see [Control Center in the pod](#control-center-in-the-pod)).
 
-### Running an install in the cluster
+## Running an install in the cluster
 
 To start an install and walk away, set this in `cpd_vars.sh` and run the chain as usual:
 
@@ -144,9 +144,9 @@ To start an install and walk away, set this in `cpd_vars.sh` and run the chain a
 export INSTALL_RUN_MODE="cluster"
 ```
 
-The chain moves to a pod on the cluster, and your terminal shows it as if it ran here. Once it starts you can press Ctrl-C, close the terminal or turn the machine off: the install keeps going. Each install gets its own namespace, pod, volume and copy of its config.
+The chain moves to a pod on the cluster, and your terminal shows it as if it ran here. Once it starts you can press Ctrl-C, close the terminal or turn the machine off: the install keeps going. Each install gets its own slot: a namespace, pod, volume and copy of its config.
 
-To change the mode for one run only, add `--run-mode cluster` or `--run-mode local` to the chain. It beats `INSTALL_RUN_MODE` in the config. Add `--parallel` to only launch the install and return, without watching it. On one cluster (the flat layout or `--target-cluster`), a `--parallel` launch exits with `76`, not `0`, and a watched run that ends with warnings exits with `77`, so `&&` and CI treat both as failures. With several clusters, see [In-cluster runs with multi-cluster management](#in-cluster-runs-with-multi-cluster-management).
+To change the mode for one run only, add `--run-mode cluster` or `--run-mode local` to the chain. It beats `INSTALL_RUN_MODE` in the config. In the same way, `--target-cluster NAME` runs the chain on another cluster than the current one (see [Managing several clusters](#managing-several-clusters)). Both are picked in the command; a run on one cluster asks no questions. `--help` on a chain lists these options. Add `--parallel` to only launch the install and return, without watching it. On one cluster (the flat layout or `--target-cluster`), a `--parallel` launch exits with `76`, not `0`, and a watched run that ends with warnings exits with `77`, so `&&` and CI treat both as failures. With several clusters, see [In-cluster runs with multi-cluster management](#in-cluster-runs-with-multi-cluster-management).
 
 ```bash
 scripts/install_runner/x_watch_install.sh                 # the live terminal; Ctrl-C only stops watching
@@ -170,7 +170,8 @@ Good to know:
 - It needs a cluster-admin login, a storage class for the runner's volume (`STG_CLASS_BLOCK` by default, or `INSTALL_RUNNER_STORAGE_CLASS`), and the internal image registry. Without that registry, set `INSTALL_RUNNER_IMAGE_SOURCE` to `build-local-push` or `prebuilt`. The first run builds a runner image of about 2.5 GB.
 - Only CP4D with `CPD_IMAGE_SOURCE=entitled` is supported so far. The chains that can move to a pod are the full install (`full_swhub_x_cpd_installprocess.sh`), `2.0`, `2.2`, `3.1`, `4.0` and the Control Center sub-install. Other chains stop with a clear message if you set `cluster` for them.
 - The pod has cluster-admin during a run and holds your config, including passwords, until teardown. It removes its own cluster-admin when the run ends.
-- Installs running at the same time are not yet locked against each other on cluster-wide steps such as the global pull secret. So a launch stops if another install is still running on the same cluster; set `INSTALL_RUNNER_ALLOW_PARALLEL=true` to run both anyway.
+- One install of each type runs on a cluster at a time (see [One install of each type per cluster](#one-install-of-each-type-per-cluster)).
+- A slot is named after the install and its instance, for CP4D `cpd-<PROJECT_CPD_INST_OPERANDS>`, in lowercase with any other character than a letter, digit or `-` turned into `-`. A name longer than 48 characters is cut to its first 41 characters, followed by `-` and the first 6 characters of a SHA-256 hash of the whole name, so two long names never collide. The slot's namespace is `install-runner-<slot>`.
 - A run that stops before its first step (a misspelled option, for example) is marked `rejected`: nothing changed, and the next launch replaces it. Unknown options are caught on this machine first, before anything is uploaded.
 - A watch that gets no answer from the pod for `INSTALL_RUNNER_ATTACH_LOST_MAX` minutes (`30`) stops; so does one whose login has expired, after one try to log in again. The install itself keeps going.
 - Scripts other than the chains, such as `x_*` utilities, still run on this machine.
@@ -193,7 +194,22 @@ Optional settings, in `cpd_vars.sh` (the generated file lists each one, commente
 | `INSTALL_RUNNER_SWHCC_PULL_SECRET` | empty | A pull secret for `INSTALL_RUNNER_SWHCC_IMAGE`, already in the slot's namespace |
 | `INSTALL_RUNNER_SWHCC_MEMORY_LIMIT` | `4Gi` | Memory limit of the Control Center sidecar |
 
-One-run switches, set in the shell rather than the config: `INSTALL_RUNNER_NEW_RUN=true` (start over in a slot whose run failed, stopped or was not collected), `INSTALL_RUNNER_ALLOW_PARALLEL`, `INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY` (a local registry that does not run on this machine), `INSTALL_RUNNER_ATTACH_LOST_MAX` and `INSTALL_RUNNER_CPD_CLI_URL` (the Linux `cpd-cli` download for the image).
+One-run switches, set in the shell rather than the config: `INSTALL_RUNNER_NEW_RUN=true` (start over in a slot whose run failed, stopped or was not collected), `INSTALL_RUNNER_ALLOW_LOCAL_REGISTRY` (a local registry that does not run on this machine), `INSTALL_RUNNER_ATTACH_LOST_MAX` and `INSTALL_RUNNER_CPD_CLI_URL` (the Linux `cpd-cli` download for the image).
+
+### One install of each type per cluster
+
+A launch stops, with nothing changed, while an install of the same type runs on the same cluster. The same type means the same install module, such as `cpd` with `cpd`, whatever the instance. Installs of different types (`cpd` and `confluent`, for example) may run on one cluster together; today `cpd` is the only install module, so this means one CP4D install per cluster. Two cluster names whose `OCP_URL` is the same are one cluster. There is no override.
+
+The refusal names the running slot, its install, and the command to watch it.
+
+What each side can see:
+
+| The new run | Runs of the same type it sees |
+| --- | --- |
+| A launch in the cluster (and `x_install_runner.sh preflight`) | Every live slot on the cluster (`staged`, `running` or `interrupted`), whichever machine launched it. A launch from this machine that is still on its way (image build, pod start, upload). A run on this machine, through its lease (multi-cluster mode only) |
+| A run on this machine (`INSTALL_RUN_MODE="local"`) | A launch from this machine that is still on its way. A launch from this machine that is not collected yet and whose slot still runs: the run asks the cluster for that slot's state. A slot that has ended only gets a note to collect it. If the cluster cannot be asked, the run stops, and the message says how to collect the slot or tear it down (`teardown --discard`, or `teardown --forget` when the cluster is gone). A run on this machine, through its lease (multi-cluster mode only) |
+
+Not seen: a run on this machine in the flat layout (with multi-cluster mode off it takes no lease), a run started through a script that is not one of the chains, a launch from another machine when the new run is local, and a launch from another machine that is not staged yet. A run whose process ID now belongs to another program still counts; the message names the file to delete. Two launches of the same type started at the same moment both stop.
 
 ### In-cluster runs with multi-cluster management
 
@@ -215,7 +231,7 @@ The chains and both control scripts take the usual cluster flags: `--target-clus
 
 | Command | Its own flags | On several clusters |
 | --- | --- | --- |
-| a chain, for example `full_swhub_x_cpd_installprocess.sh` | `--run-mode local\|cluster`, `--parallel` | One cluster after the other (see below) |
+| a chain, for example `full_swhub_x_cpd_installprocess.sh` | `--run-mode local\|cluster`, `--parallel`, `--switch-to-cluster a,b\|none`, `--local-cluster NAME`, `--yes` | One cluster after the other (see below). With an install that would run on this machine, see [Installs on this machine](#installs-on-this-machine-in-a-multi-cluster-run) |
 | `x_install_runner.sh status` | | Each cluster, then one table of all slots (`CLUSTER`, `URL`, `SLOT`, `STATE`, `STEP`, `ATTEMPT`, `COLLECTED`, `SEEN`) |
 | `x_install_runner.sh preflight` | | Each cluster |
 | `x_install_runner.sh collect` | `--force`, `--to <dir>`, `--to-loaded` | Each cluster, into its own folder. `--to` takes one cluster only |
@@ -245,6 +261,41 @@ scripts/install_runner/x_install_runner.sh teardown --target-cluster itz-a
 
 Each cluster's `cpd_vars.sh` sets its own `INSTALL_RUN_MODE`, so one run can install some clusters here and others in the cluster. A value you exported in the shell does not reach the clusters of a multi-cluster run, and neither do the other runner settings: each cluster reads its own. `--run-mode local|cluster` (or `INSTALL_RUN_MODE_OVERRIDE`) is for the whole run and applies to every cluster. So do the one-run switches listed above.
 
+A run on one cluster (`--target-cluster NAME`, or the current cluster) asks nothing and uses that cluster's mode. Pick another cluster or mode in the command: `--target-cluster NAME`, `--run-mode local|cluster`.
+
+#### Installs on this machine in a multi-cluster run
+
+An install that runs on this machine runs in the foreground, for hours. So a multi-cluster run of a chain runs it here on one target at most. When more than one target's install would run here, the run asks first, before anything starts:
+
+1. It lists the targets and where each one's install runs. Then it asks which of the local targets should run in the cluster instead. The answer is for this run only; to switch a cluster for good, set `INSTALL_RUN_MODE="cluster"` in its `cpd_vars.sh` (the question prints each file's path). `none` keeps them all local. With `--run-mode`, which sets every target's mode, this question is not asked.
+2. If more than one target is still local, only the current cluster (`multi_cluster.sh use NAME`, `MCM_CURRENT_CLUSTER`) runs here. The other local targets are skipped, and the result table shows them as `skipped`.
+3. If the current cluster is not one of them, it asks which one runs here.
+4. It shows the plan and asks you to confirm it.
+
+Every question can be answered with `cancel`, which ends the whole run with nothing started (exit code `1`). Nothing reaches any cluster before the last answer.
+
+Once answered, the targets that run in the cluster launch first, without being watched (as with `--parallel`). Then the one local target runs here in the foreground. At the end, after the result table, the run prints `x_install_runner.sh status --all-clusters`. With exactly one local target there are no questions (except with `--parallel`, see below), and the run goes in this same order. With no local target, nothing changes: each cluster is watched in turn, or launched with `--parallel`.
+
+These flags answer the questions in the command, so they are not asked. They work at a terminal too:
+
+| Flag | Answers |
+| --- | --- |
+| `--switch-to-cluster a,b` | These local targets run in the cluster, for this run only. `--switch-to-cluster none` keeps them all local |
+| `--local-cluster NAME` | The one local target that runs here, when the current cluster is not one of the local targets (question 3). While the current cluster is one of them, only it runs here, and naming another one is refused |
+| `--yes` | Starts without the last confirmation |
+
+With no terminal (a notebook, CI, a pipe), a question that is needed and not answered by a flag stops the run, with nothing started, and the message names these flags. On one cluster they mean nothing and are ignored. Other scripts keep their own `--yes`.
+
+```bash
+# itz-a and itz-c are local, itz-b runs in the cluster; itz-a is the current cluster.
+# itz-c runs in the cluster this time, itz-a runs here once the pods are launched:
+scripts/install_cloud_pak_for_data/0_x_full_quick_install_script/full_swhub_x_cpd_installprocess.sh --all-clusters --switch-to-cluster itz-c --yes
+```
+
+Two targets with the same URL are refused before anything starts, and before the last confirmation, when they would run at the same time, as with `--parallel`. `--parallel` runs nothing on this machine, so with it even one local target gets the first question, and a local target left after it stops the whole run, with nothing launched: switch it, or drop `--parallel` to run it here once the others are launched. `--local-cluster` is refused with `--parallel`. Once every local target is switched, `--parallel` launches them all and returns.
+
+The status at the end is printed whenever in-cluster targets were planned next to the local one, even when a launch failed; not after Ctrl-C. A target whose `INSTALL_RUN_MODE` is not a plain `"local"` or `"cluster"` (a variable, a command or any other word) stops the whole run before anything starts, naming the file and line: the run has to know where each install runs first. `--run-mode` sets it for every target instead.
+
 **Sequential or `--parallel`**
 
 | | Default | `--parallel` |
@@ -254,7 +305,7 @@ Each cluster's `cpd_vars.sh` sets its own `INSTALL_RUN_MODE`, so one run can ins
 | Ctrl-C | Detaches from the current cluster. Its install keeps going. The clusters after it are not launched | Stops the launch in progress. The clusters after it are not launched; installs already launched keep going |
 | At the end | A table of results | A table (`launched (slot ...)`) and the command to watch each cluster |
 
-`--parallel` is refused, with nothing run, for a script that does not run in the cluster, with `--run-mode local`, and for two cluster names that point at the same URL. A cluster whose config says `INSTALL_RUN_MODE="local"` stops before any work, and the other clusters go on.
+`--parallel` is refused, with nothing run, for a script that does not run in the cluster, with `--run-mode local`, and for two cluster names that point at the same URL. With targets whose config says `INSTALL_RUN_MODE="local"`, it asks which of them to switch to the cluster, before anything starts, and stops with nothing launched if any is left (see [Installs on this machine](#installs-on-this-machine-in-a-multi-cluster-run)). On one cluster, a `--parallel` run whose config says local stops before any work.
 
 Each cluster's row in the result table comes from that cluster's code, which is also the exit code of a run on one cluster:
 
@@ -306,8 +357,8 @@ If the cluster is gone (an expired reservation, for example), `teardown --forget
 
 Two installs on one cluster are not yet locked against each other on cluster-wide steps, such as the global pull secret. Until that lock exists:
 
-- A launch stops while another install runs on the same cluster. `INSTALL_RUNNER_ALLOW_PARALLEL=true` runs both anyway.
-- `--parallel` refuses two cluster names with the same URL. There is no override.
+- A launch stops while an install of the same type runs on the same cluster (see [One install of each type per cluster](#one-install-of-each-type-per-cluster)). There is no override.
+- `--parallel`, and a multi-cluster run that launches pods while one target runs here, refuse two cluster names with the same URL. There is no override.
 - Only CP4D with `CPD_IMAGE_SOURCE=entitled` can run in the cluster.
 
 ### Control Center in the pod
@@ -495,7 +546,7 @@ The most specific setting wins:
 
 If none of these picks a cluster, the script stops and lists the registered ones. With the switch off only 1 and 2 count; without them the run uses the flat layout.
 
-With more than one target, the script runs once per cluster, one at a time (an install that runs in the cluster can add `--parallel` to launch each one without waiting, see [In-cluster runs with multi-cluster management](#in-cluster-runs-with-multi-cluster-management)). If one cluster fails the rest still run, a table of results prints at the end and the exit code is non-zero. A cluster with no config for that product is reported as skipped. Scripts with uninstall, reinstall, delete, remove, prune, force, clean, refresh or restore in the file name ask you to type a confirmation first. With no terminal (cron, a pipe) they refuse unless given `--yes-all-clusters`. At a terminal the prompt always appears. TUIs and config generators work on one cluster only and refuse several targets.
+With more than one target, the script runs once per cluster, one at a time (an install that runs in the cluster can add `--parallel` to launch each one without waiting, see [In-cluster runs with multi-cluster management](#in-cluster-runs-with-multi-cluster-management)). An install chain whose install would run on this machine on more than one target asks a few questions first, see [Installs on this machine](#installs-on-this-machine-in-a-multi-cluster-run). If one cluster fails the rest still run, a table of results prints at the end and the exit code is non-zero. A cluster with no config for that product is reported as skipped. Scripts with uninstall, reinstall, delete, remove, prune, force, clean, refresh or restore in the file name ask you to type a confirmation first. With no terminal (cron, a pipe) they refuse unless given `--yes-all-clusters`. At a terminal the prompt always appears. TUIs and config generators work on one cluster only and refuse several targets.
 
 ### Containers and the 2-hour idle rule
 

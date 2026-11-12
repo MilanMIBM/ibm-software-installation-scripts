@@ -14,6 +14,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 ir_dispatch "$@"
+# No options of its own: each lane installs only what CPD_COMPONENTS needs (below).
+case "${1:-}" in
+  -h|--help)
+    print -r -- "Usage: ${0:t} [options]"
+    print -r -- "Installs the prerequisite operators the components in CPD_COMPONENTS need: NFD and the GPU"
+    print -r -- "Operator, OpenShift AI, MCG and Knative Eventing (see the comments in this script). It takes no"
+    print -r -- "options of its own; INSTALL_OPERATORS_IN_PARALLEL and the SKIP_*_INSTALL settings steer it."
+    _h_steps_runner_usage
+    exit 0 ;;
+esac
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Run the independent lanes below concurrently (true) or every script one after
