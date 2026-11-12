@@ -17,6 +17,11 @@
 #      (MCM_CURRENT_CLUSTER, while the mode is on), runs here. The other local targets
 #      are skipped, and shown as skipped in the result table.
 #   3. No main target among them: which one of them runs here.
+#
+# --local-cluster X (Q-b2, 2026-11-12): X, a target whose own mode is local, is the
+# one that runs here in this run, the current cluster or not. Nothing is saved. Rules
+# 2 and 3 do not apply then: question 1 asks about the other local targets only (the
+# current cluster too), and those not switched are skipped. X cannot be switched too.
 #   4. The plan, and a last confirmation. Targets that would then run at the same time
 #      on one cluster under two names are refused before it.
 #
@@ -220,15 +225,15 @@ _ir_fanout_no_terminal() {   # <what needs an answer>
     _mcm_err "$1 There is no terminal to ask on, so nothing was run on any cluster."
     _mcm_err "Answer it in the command:"
     _mcm_err "  --switch-to-cluster a,b   these local targets run in the cluster, for this run only (none: --switch-to-cluster none)"
-    _mcm_err "  --local-cluster NAME      the one local target that runs on this machine; the other local targets are skipped"
+    _mcm_err "  --local-cluster NAME      the one local target that runs on this machine; the other local targets are skipped unless switched"
     _mcm_err "  --yes                     start without the last confirmation"
     return 1
 }
 
 ir_fanout_plan() {   # <script> [args...]
     emulate -L zsh
-    local script="$1" repo dir chain target name arg REPLY main="" here="" text
-    local -a targets locals switched skipped pods wanted reply unknown together
+    local script="$1" repo dir chain target name arg REPLY main="" here="" pinned="" text
+    local -a targets locals switched skipped pods wanted reply unknown together asked
     local -A mode why file
     local -i tty=0 several=0 i rc parallel=0
     shift
@@ -303,15 +308,32 @@ ir_fanout_plan() {   # <script> [args...]
         _mcm_err "--local-cluster cannot be combined with --parallel, which runs nothing on this machine. Drop --parallel to run ${_IR_ARG_LOCAL} here once the others are launched. Nothing was run."
         return 1
     fi
+    # --local-cluster X (Q-b2): a local target, by its own config or --run-mode local,
+    # runs here in this run whether or not it is the current cluster. The others go to
+    # question 1 (switch them, or they are skipped).
+    if [[ -n "${_IR_ARG_LOCAL:-}" ]]; then
+        if (( ! ${locals[(Ie)${_IR_ARG_LOCAL}]} )); then
+            _mcm_err "--local-cluster: ${_IR_ARG_LOCAL} does not run on this machine in this run (${(j:, :)locals}). Nothing was run."
+            return 1
+        fi
+        if (( ${wanted[(Ie)${_IR_ARG_LOCAL}]} )); then
+            _mcm_err "--local-cluster ${_IR_ARG_LOCAL} and --switch-to-cluster ${_IR_ARG_LOCAL} contradict each other: it cannot run here and in the cluster. Nothing was run."
+            return 1
+        fi
+        pinned="${_IR_ARG_LOCAL}"
+    fi
+    asked=("${(@)locals:#${pinned}}")
 
     # 1. More than one local target (with --parallel, any): which run in the cluster
     # instead, this run only. --switch-to-cluster answers it in the command; --run-mode
     # already set every target's mode, so there is nothing to switch (Q-a4).
     if [[ -n "${_IR_ARG_SWITCH:-}" ]]; then
         switched=("${wanted[@]}")
-    elif (( ${#locals} > 1 || parallel )) && [[ -z "${INSTALL_RUN_MODE_OVERRIDE:-}" ]]; then
+    elif (( ${#asked} )) && (( ${#locals} > 1 || parallel )) && [[ -z "${INSTALL_RUN_MODE_OVERRIDE:-}" ]]; then
         if (( parallel )); then
             text="--parallel runs nothing on this machine, but ${#locals} target(s) would run ${script:t} here (${(j:, :)locals})."
+        elif [[ -n "${pinned}" ]]; then
+            text="${pinned} runs ${script:t} on this machine (--local-cluster), and ${#asked} other target(s) would run it here too (${(j:, :)asked}): they run in the cluster for this run, or are skipped."
         else
             text="${#locals} targets would run ${script:t} on this machine (${(j:, :)locals}), and one multi-cluster run runs at most one install here."
         fi
@@ -321,20 +343,22 @@ ir_fanout_plan() {   # <script> [args...]
         fi
         if (( parallel )); then
             print -r -- "[MCM] --parallel runs nothing on this machine, but ${#locals} target(s) would run ${script:t} here."
+        elif [[ -n "${pinned}" ]]; then
+            print -r -- "[MCM] ${pinned} runs ${script:t} on this machine in this run (--local-cluster). The other local targets are skipped unless they run in the cluster."
         else
             print -r -- "[MCM] ${#locals} targets would run ${script:t} on this machine, but one multi-cluster run runs at most one install here."
         fi
         print -r -- "[MCM] Which of them should run in the cluster instead, for this run only?"
         i=0
-        for name in "${locals[@]}"; do
+        for name in "${asked[@]}"; do
             print -r -- "[MCM]   $(( ++i ))) ${name}"
         done
         print -r -- "[MCM] To switch a cluster for good, set INSTALL_RUN_MODE=\"cluster\" in its cpd_vars.sh:"
-        for name in "${locals[@]}"; do
+        for name in "${asked[@]}"; do
             print -r -- "[MCM]   ${name}: ${file[${name}]}"
         done
         rc=0
-        _ir_fanout_ask_pick 1 "Numbers or names (comma or space separated), none, or cancel: " "${locals[@]}" || rc=$?
+        _ir_fanout_ask_pick 1 "Numbers or names (comma or space separated), none, or cancel: " "${asked[@]}" || rc=$?
         case "${rc}" in
             0) switched=("${reply[@]}") ;;
             4) ;;
@@ -350,25 +374,17 @@ ir_fanout_plan() {   # <script> [args...]
 
     # 2 and 3. Still more than one: one runs here, the others are skipped. The main
     # target is the current cluster (Q-a3), which counts only while the mode is on.
-    # --local-cluster answers question 3, so it cannot pick another target than the
-    # main one: question 3 is not asked while the main target is one of them.
+    # --local-cluster settled it already (Q-b2): it wins over the main target.
     if (( ${#locals} > 1 )) && [[ "${MULTI_CLUSTER_MANAGEMENT:-}" == true && -n "${MCM_CURRENT_CLUSTER:-}" ]] \
         && (( ${locals[(Ie)${MCM_CURRENT_CLUSTER}]} )); then
         main="${MCM_CURRENT_CLUSTER}"
     fi
-    if [[ -n "${_IR_ARG_LOCAL:-}" ]]; then
-        if (( ! ${locals[(Ie)${_IR_ARG_LOCAL}]} )); then
-            _mcm_err "--local-cluster: ${_IR_ARG_LOCAL} does not run on this machine in this run (${${(j:, :)locals}:-none does}). Nothing was run."
-            return 1
-        fi
-        if [[ -n "${main}" && "${_IR_ARG_LOCAL}" != "${main}" ]]; then
-            _mcm_err "--local-cluster: the current cluster, ${main} (MCM_CURRENT_CLUSTER), is one of the local targets, and of those only it runs here. Nothing was run."
-            _mcm_err "To run ${_IR_ARG_LOCAL} here instead, make it the current cluster (multi_cluster.sh use ${_IR_ARG_LOCAL}), switch ${main} to the cluster for this run (--switch-to-cluster ${main}), or leave ${main} out of the targets."
-            return 1
-        fi
-        here="${_IR_ARG_LOCAL}"
-        if [[ -n "${main}" ]]; then
-            print -r -- "[MCM] Only the current cluster, ${main} (MCM_CURRENT_CLUSTER), runs here. Skipped in this run: ${(j:, :)${(@)locals:#${main}}}."
+    if [[ -n "${pinned}" ]]; then
+        here="${pinned}"
+        if (( ${#locals} > 1 )); then
+            text="${(j:, :)${(@)locals:#${pinned}}}"
+            [[ -n "${main}" && "${main}" != "${pinned}" ]] && text="${text/${main}/${main} (the current cluster)}"
+            print -r -- "[MCM] --local-cluster: ${pinned} runs here in this run. Skipped in this run: ${text}."
         fi
     elif (( ${#locals} > 1 )); then
         if [[ -n "${main}" ]]; then

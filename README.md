@@ -159,7 +159,7 @@ scripts/install_runner/x_install_runner.sh teardown       # delete the pod, volu
 
 **If the pod is lost** (a node drain, for example), a new one continues by itself: finished steps are skipped and the interrupted step runs again.
 
-**If a step really fails**, the run stops and waits for you. Fix the cause, then run `x_install_runner.sh resume`. `resume --retry-warned` also repeats steps that only warned.
+**If a step really fails**, the run stops and waits for you. Fix the cause, then run `x_install_runner.sh resume`. `resume --retry-warned` also repeats steps that only warned. Ctrl-C once the resume is on its way detaches, as in a watch. Ctrl-C before it is sent ends with `130`, changes nothing and takes back the cluster-admin the resume granted.
 
 **Collect** only brings back files the run changed. If you changed the same file here during the run, yours stays and the pod's copy lands next to it as `<file>.in-cluster-<run>`. Results go back to the folder the config came from. `collect --force` takes what exists so far from a run that is still going. After a collect, the CP4D follow-up rebuilds your local `cpd-cli` profile from the collected details.
 
@@ -174,6 +174,9 @@ Good to know:
 - A slot is named after the install and its instance, for CP4D `cpd-<PROJECT_CPD_INST_OPERANDS>`, in lowercase with any other character than a letter, digit or `-` turned into `-`. A name longer than 48 characters is cut to its first 41 characters, followed by `-` and the first 6 characters of a SHA-256 hash of the whole name, so two long names never collide. The slot's namespace is `install-runner-<slot>`.
 - A run that stops before its first step (a misspelled option, for example) is marked `rejected`: nothing changed, and the next launch replaces it. Unknown options are caught on this machine first, before anything is uploaded.
 - A watch that gets no answer from the pod for `INSTALL_RUNNER_ATTACH_LOST_MAX` minutes (`30`) stops; so does one whose login has expired, after one try to log in again. The install itself keeps going.
+- A watch also stops, with `78`, when the runner in the pod has not reported for as long, even though the pod still answers. The message names `status`, `x_watch_install.sh` and `oc logs`. This needs a runner image built from this version on, which any new launch builds; with an older image it acts only between reconnects.
+- After an image build, older runner BuildConfigs and their builds are removed. The newest two stay, and so does any one a slot still runs. Image tags are never deleted.
+- The Control Center sub-install can launch from a `0_swhub_control_center_generate_config.sh --empty` vars file: the runner's base image then comes from `VERSION` and `PATCH_ID`, and its volume from the cluster's default storage class (or `INSTALL_RUNNER_STORAGE_CLASS`).
 - Scripts other than the chains, such as `x_*` utilities, still run on this machine.
 
 Optional settings, in `cpd_vars.sh` (the generated file lists each one, commented out, with its default):
@@ -270,6 +273,9 @@ An install that runs on this machine runs in the foreground, for hours. So a mul
 1. It lists the targets and where each one's install runs. Then it asks which of the local targets should run in the cluster instead. The answer is for this run only; to switch a cluster for good, set `INSTALL_RUN_MODE="cluster"` in its `cpd_vars.sh` (the question prints each file's path). `none` keeps them all local. With `--run-mode`, which sets every target's mode, this question is not asked.
 2. If more than one target is still local, only the current cluster (`multi_cluster.sh use NAME`, `MCM_CURRENT_CLUSTER`) runs here. The other local targets are skipped, and the result table shows them as `skipped`.
 3. If the current cluster is not one of them, it asks which one runs here.
+
+`--local-cluster NAME` picks the one that runs here up front, the current cluster or not. Steps 2 and 3 then do not apply: step 1 asks only about the other local targets, and those not switched are skipped.
+
 4. It shows the plan and asks you to confirm it.
 
 Every question can be answered with `cancel`, which ends the whole run with nothing started (exit code `1`). Nothing reaches any cluster before the last answer.
@@ -281,7 +287,7 @@ These flags answer the questions in the command, so they are not asked. They wor
 | Flag | Answers |
 | --- | --- |
 | `--switch-to-cluster a,b` | These local targets run in the cluster, for this run only. `--switch-to-cluster none` keeps them all local |
-| `--local-cluster NAME` | The one local target that runs here, when the current cluster is not one of the local targets (question 3). While the current cluster is one of them, only it runs here, and naming another one is refused |
+| `--local-cluster NAME` | The one local target that runs here in this run, whether or not it is the current cluster. Nothing is saved. Every other local target, the current cluster too, gets question 1: switched to the cluster for this run, or skipped. A target that runs in the cluster cannot be named, nor one that is also in `--switch-to-cluster` |
 | `--yes` | Starts without the last confirmation |
 
 With no terminal (a notebook, CI, a pipe), a question that is needed and not answered by a flag stops the run, with nothing started, and the message names these flags. On one cluster they mean nothing and are ignored. Other scripts keep their own `--yes`.
@@ -557,7 +563,7 @@ Every cluster has its own olm-utils container, all on the one podman VM. These r
 - A targeted container also stops after 2 hours with no commands sent in and nothing running in it.
 - When the last container has stopped and podman runs nothing else (a local registry or a Concert runner counts), the VM shuts down too. The next script starts it again.
 
-A container that was stopped comes back by itself on the next script that needs it. `./multi_cluster.sh containers status` shows each container, whether it is targeted and how long until it stops. Only the repo's own olm-utils and Control Center containers are ever touched.
+A container that was stopped comes back by itself on the next script that needs it. `./multi_cluster.sh containers status` shows each container, whether it is targeted and how long until it stops, and then the in-cluster runs launched from this machine. Those runs never keep a container or the VM awake. Only the repo's own olm-utils and Control Center containers are ever touched.
 
 ### Migrating an existing setup
 

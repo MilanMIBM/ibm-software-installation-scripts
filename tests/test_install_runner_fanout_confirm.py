@@ -329,13 +329,68 @@ def test_no_terminal_and_no_main_target_needs_the_local_cluster(sb):
     assert table_row(result, "itz-a").startswith("skipped (runs here, but only itz-c does in this run)")
 
 
-def test_local_cluster_cannot_pass_over_the_main_target(sb):
-    """--local-cluster answers question 3, which is not asked while the current cluster is local (rule 2, Q-a3)."""
+def test_local_cluster_takes_priority_over_the_main_target(sb):
+    """Q-b2: --local-cluster names a local target that is not the current cluster: it runs here for this run.
+    The current cluster goes to the normal list with the others: switched, or skipped (here: none, skipped)."""
     rel = setup(sb, THREE)
     result = run(sb, rel, "--switch-to-cluster", "none", "--local-cluster", "itz-c", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--local-cluster: itz-c runs here in this run. Skipped in this run: itz-a (the current cluster)." in result.stdout
+    assert timeline(sb) == ["pod itz-b", "local itz-c", "status"]
+    assert table_row(result, "itz-a").startswith("skipped (runs here, but only itz-c does in this run)")
+    assert "CHAIN-RAN-LOCALLY on=itz-c" in result.stdout
+    for name in ("itz-a", "itz-c"):
+        assert 'INSTALL_RUN_MODE="local"' in (sb.repo / f"configs/clusters/{name}/cp4d_config/cpd_vars.sh").read_text(), \
+            "nothing is saved to any config"
+
+
+def test_local_cluster_lets_the_current_cluster_be_switched(sb):
+    rel = setup(sb, THREE)
+    result = run(sb, rel, "--switch-to-cluster", "itz-a", "--local-cluster", "itz-c", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "in the cluster, launched first and not watched: itz-a, itz-b (switched for this run: itz-a)" in result.stdout
+    assert timeline(sb) == ["pod itz-a", "pod itz-b", "local itz-c", "status"]
+    assert "skipped" not in result.stdout.split("Result per cluster:")[1]
+
+
+def test_local_cluster_asks_about_the_other_local_targets_only(sb):
+    """At a terminal, question 1 lists the other local targets (the current cluster too), never the named one."""
+    rel = setup(sb, {"itz-a": "local", "itz-b": "local", "itz-c": "local"})
+    result, seen = converse(sb, rel, [(Q1, "1"), (START, "y")], args=("--local-cluster", "itz-c"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen == ["", ""], "nothing starts before the last answer"
+    question = result.stdout.split("Which of them should run in the cluster instead", 1)[1].split(Q1, 1)[0]
+    assert "1) itz-a" in question and "2) itz-b" in question and "itz-c" not in question.split("To switch")[0]
+    assert "itz-c runs full_swhub_x_cpd_installprocess.sh on this machine in this run (--local-cluster)" in result.stdout
+    assert timeline(sb) == ["pod itz-a", "local itz-c", "status"]
+    assert table_row(result, "itz-b").startswith("skipped (runs here, but only itz-c does in this run)")
+
+
+def test_local_cluster_with_no_terminal_still_needs_the_switch_answer(sb):
+    rel = setup(sb, THREE)
+    result = run(sb, rel, "--local-cluster", "itz-c", "--yes")
     assert result.returncode == 1
-    assert "--local-cluster: the current cluster, itz-a (MCM_CURRENT_CLUSTER), is one of the local targets" in result.stderr
-    assert "multi_cluster.sh use itz-c" in result.stderr and "--switch-to-cluster itz-a" in result.stderr
+    assert "itz-c runs full_swhub_x_cpd_installprocess.sh on this machine (--local-cluster), and 1 other target(s) would run it here too (itz-a)" in result.stderr
+    assert_flags_named(result)
+    nothing_started(sb, result)
+
+
+def test_local_cluster_with_run_mode_local_skips_the_others(sb):
+    """--run-mode local leaves nothing to switch (Q-a4): the named target runs here, every other is skipped."""
+    rel = setup(sb, THREE)
+    result = run(sb, rel, "--run-mode", "local", "--local-cluster", "itz-b", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert Q1 not in result.stdout
+    assert timeline(sb) == ["local itz-b"]
+    for name in ("itz-a", "itz-c"):
+        assert table_row(result, name).startswith("skipped (runs here, but only itz-b does in this run)")
+
+
+def test_local_cluster_and_the_same_switch_contradict(sb):
+    rel = setup(sb, THREE)
+    result = run(sb, rel, "--switch-to-cluster", "itz-c", "--local-cluster", "itz-c", "--yes")
+    assert result.returncode == 1
+    assert "--local-cluster itz-c and --switch-to-cluster itz-c contradict each other" in result.stderr
     nothing_started(sb, result)
 
 
