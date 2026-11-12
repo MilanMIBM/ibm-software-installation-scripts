@@ -23,6 +23,8 @@ source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 # The cluster folder that owns a URL, and a config file's literal OCP_URL.
 source "${_CP4D_REPO_ROOT}/src/helpers/multi_cluster_helpers.sh"
 source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_slots.sh"
+# Where install modules live (ir_module_file, ir_module_confs).
+(( $+functions[ir_module_file] )) || source "${_CP4D_REPO_ROOT}/src/helpers/install_runner_mode.sh"
 
 IR_SRC="${_CP4D_REPO_ROOT}/src/install_runner"
 IR_SYSTEM_NS="install-runner-system"
@@ -39,16 +41,21 @@ ir_die()  { h_die "$@"; }
 # =============================================================================
 # Install modules
 # =============================================================================
+# A module is src/install_runner/installs/<id>.{conf,sh}. Tests add folders of their
+# own through IR_MODULE_DIRS (install_runner_mode.sh): never set it for a real run.
 ir_conf() {   # <id> <key>  -> value on stdout (empty when absent)
-    local f="${IR_SRC}/installs/$1.conf"
-    [[ -f "${f}" ]] || ir_die "No install module: $1 (${f})"
+    local f REPLY
+    ir_module_file "${_CP4D_REPO_ROOT}" "$1" conf || ir_die "No install module: $1 (${IR_SRC}/installs/$1.conf)"
+    f="${REPLY}"
     awk -F= -v k="$2" '$1 == k { v = substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", v); print v; exit }' "${f}"
 }
 
 ir_install_ids() {   # every module, without the template
     local f
-    for f in "${IR_SRC}"/installs/*.conf(N); do
-        [[ "${f:t:r}" == _template ]] || print -r -- "${f:t:r}"
+    local -a reply
+    ir_module_confs "${_CP4D_REPO_ROOT}"
+    for f in "${reply[@]}"; do
+        print -r -- "${f:t:r}"
     done
 }
 
@@ -65,9 +72,9 @@ ir_install_for_chain() {   # <repo-relative chain> -> REPLY = install id
 }
 
 ir_hook() {   # <id> <verb> [args...] - run a module hook when the module has one
-    local f="${IR_SRC}/installs/$1.sh"
-    [[ -f "${f}" ]] || return 0
-    zsh "${f}" "$2" "${@:3}"
+    local REPLY
+    ir_module_file "${_CP4D_REPO_ROOT}" "$1" sh || return 0
+    zsh "${REPLY}" "$2" "${@:3}"
 }
 
 # A hook that checks or sizes a launch sees the very folders that will be staged:
@@ -208,6 +215,65 @@ _ir_prune_builds() {   # <build config>
     return 0
 }
 
+# Each image tag has a BuildConfig of its own (install-runner-<tag>), so every code
+# change leaves the old one behind with its Builds and their pods. Keeps the newest
+# IR_KEEP_IMAGE_TAGS (default 2, a test knob like IR_POLL) by last use, the current one always,
+# any with a build still going, and any whose tag a slot StatefulSet (in an
+# install-runner-* namespace) still runs. Only BuildConfigs, Builds and build pods go:
+# image tags stay in the ImageStream. Tidying only: a failure warns, and a list
+# that can't be read prunes nothing.
+_ir_prune_build_configs() {   # <current build config>
+    local current="$1" keep="${IR_KEEP_IMAGE_TAGS:-2}" bcs builds sets line bc tag name pod n=0 failed
+    local -a old in_use
+    [[ "${keep}" == <-> ]] && (( keep >= 1 )) || keep=2
+    bcs="$(oc get buildconfigs -n "${IR_SYSTEM_NS}" -l "${IR_LABEL}" -o json 2>/dev/null)" \
+        && builds="$(oc get builds -n "${IR_SYSTEM_NS}" -o json 2>/dev/null)" \
+        && sets="$(oc get statefulsets -A -l "${IR_LABEL}" -o json 2>/dev/null)" \
+        || { ir_warn "Could not list the runner's older BuildConfigs in ${IR_SYSTEM_NS} to prune them."; return 0; }
+    # Image tags of the internal-registry runner images the slots run.
+    in_use=("${(@f)$(print -r -- "${sets}" | jq -r --arg ns "${IR_SYSTEM_NS}" '
+            .items[] | select(.metadata.namespace | startswith("install-runner-"))
+            | .spec.template.spec | ((.containers // []) + (.initContainers // []))[] | .image // ""
+            | select(contains("/" + $ns + "/install-runner:")) | split("/install-runner:")[-1]' 2>/dev/null)}") \
+        || { ir_warn "Could not read which runner images the slots use; no BuildConfig was pruned."; return 0; }
+    # <name>\t<tag>, oldest first, beyond the newest <keep>; a build of it still going keeps it.
+    old=("${(@f)$(jq -rn --argjson bcs "${bcs}" --argjson builds "${builds}" --arg current "${current}" \
+                     --argjson keep "${keep}" '
+            ($builds.items | map({bc: (.metadata.labels["openshift.io/build-config.name"] // .status.config.name // ""),
+                                  t: (.metadata.creationTimestamp // ""), phase: (.status.phase // "")})) as $b
+            | [$bcs.items[] | .metadata.name as $n
+               | {name: $n, tag: ((.spec.output.to.name // "") | split(":")[-1]),
+                  used: ([.metadata.creationTimestamp // ""] + [$b[] | select(.bc == $n) | .t] | max),
+                  live: ([$b[] | select(.bc == $n and (.phase | IN("New", "Pending", "Running")))] | length > 0)}]
+            | sort_by(.used) | reverse | .[$keep:][]
+            | select(.name != $current and (.live | not)) | [.name, .tag] | @tsv' 2>/dev/null)}") \
+        || { ir_warn "Could not read the runner's BuildConfigs to prune old ones."; return 0; }
+    for line in "${old[@]}"; do
+        [[ -n "${line}" ]] || continue
+        bc="${line%%$'\t'*}" tag="${line#*$'\t'}"
+        (( ${in_use[(Ie)${tag}]} )) && continue
+        failed=""
+        for name in $(print -r -- "${builds}" | jq -r --arg bc "${bc}" '.items[]
+                | select((.metadata.labels["openshift.io/build-config.name"] // .status.config.name // "") == $bc)
+                | [.metadata.name, (.metadata.annotations["openshift.io/build.pod-name"] // (.metadata.name + "-build"))]
+                | join("/")' 2>/dev/null); do
+            pod="${name#*/}" name="${name%%/*}"
+            if oc delete build "${name}" -n "${IR_SYSTEM_NS}" --ignore-not-found >/dev/null 2>&1; then
+                oc delete pod "${pod}" -n "${IR_SYSTEM_NS}" --ignore-not-found >/dev/null 2>&1 || true
+            else
+                failed=1
+            fi
+        done
+        if [[ -z "${failed}" ]] && oc delete buildconfig "${bc}" -n "${IR_SYSTEM_NS}" --ignore-not-found >/dev/null 2>&1; then
+            (( ++n ))
+        else
+            ir_warn "Could not delete the old BuildConfig ${bc} (or one of its builds) in ${IR_SYSTEM_NS}."
+        fi
+    done
+    (( n == 0 )) || ir_info "Removed ${n} older runner BuildConfig(s) and their builds; kept the newest ${keep} and any a slot still uses."
+    return 0
+}
+
 # Multi-cluster mode: a cluster-mode chain's env load takes no lease and starts nothing
 # (gap X8), so the local build holds a lease of its own while podman works. Without it
 # the idle watcher may stop the VM in the middle of a build or push (gap X8b). 0 when
@@ -245,7 +311,8 @@ ir_image_ensure() {   # <id> -> REPLY = image reference
     fi
 
     var="$(ir_conf "${id}" RUNNER_BASE_IMAGE_VAR)"
-    base="${(P)var:-}"
+    # The module's runner-inputs hook may stand in for a chain whose config has none.
+    base="${(P)var:-${_IR_INPUT_BASE_IMAGE:-}}"
     [[ -n "${base}" ]] || ir_die "${var:-RUNNER_BASE_IMAGE_VAR} is not set: no base image for the runner."
     _ir_image_tag "${base}"; tag="${REPLY}"
 
@@ -268,6 +335,7 @@ ir_image_ensure() {   # <id> -> REPLY = image reference
             oc start-build "${build}" -n "${IR_SYSTEM_NS}" --from-dir="${IR_SRC}/image" --follow --wait \
                 || ir_die "Runner image build failed. See: oc logs -n ${IR_SYSTEM_NS} bc/${build}"
             _ir_prune_builds "${build}"
+            _ir_prune_build_configs "${build}"
             REPLY="${ref}"
             ;;
         build-local-push)
@@ -298,13 +366,46 @@ ir_image_ensure() {   # <id> -> REPLY = image reference
 ir_storage_class() {   # <id> -> stdout
     local var
     var="$(ir_conf "$1" RUNNER_STORAGE_CLASS_VAR)"
-    print -r -- "${INSTALL_RUNNER_STORAGE_CLASS:-${(P)var:-}}"
+    print -r -- "${INSTALL_RUNNER_STORAGE_CLASS:-${(P)var:-${_IR_INPUT_STORAGE_CLASS:-}}}"
+}
+
+# What the runner pod itself needs (a base image, a volume) when the chain's config
+# does not give it: some chains load a config of their own that has no such value
+# (Control Center on a cluster of its own, from a vars file written with --empty). The
+# module's optional runner-inputs hook prints "base_image=<image>" and
+# "storage_class=default" (the cluster's default storage class) for such a chain, and
+# nothing for one that needs its config's values: those stay required. Sets
+# _IR_INPUT_BASE_IMAGE and _IR_INPUT_STORAGE_CLASS, which only fill in for an empty
+# variable; INSTALL_RUNNER_STORAGE_CLASS still wins.
+_ir_runner_inputs() {   # <id> [chain]
+    local id="$1" chain="${2:-}" out line sc
+    local -a defaults
+    typeset -g _IR_INPUT_BASE_IMAGE="" _IR_INPUT_STORAGE_CLASS=""
+    out="$(_ir_hook_staged "${id}" runner-inputs "${chain}")" || ir_die "The ${id} runner-inputs hook failed: nothing was changed."
+    for line in "${(@f)out}"; do
+        case "${line}" in
+            "") ;;
+            base_image=?*)          _IR_INPUT_BASE_IMAGE="${line#*=}" ;;
+            storage_class=default)  sc=default ;;
+            *) ir_die "The ${id} runner-inputs hook printed '${line}', which the runner does not know." ;;
+        esac
+    done
+    [[ "${sc:-}" == default && -z "$(ir_storage_class "${id}")" ]] || return 0
+    defaults=("${(@f)$(oc get storageclass -o json 2>/dev/null | jq -r '.items[]
+        | select(.metadata.annotations["storageclass.kubernetes.io/is-default-class"] == "true") | .metadata.name' 2>/dev/null)}")
+    defaults=("${(@)defaults:#}")
+    if (( ${#defaults} == 1 )); then
+        _IR_INPUT_STORAGE_CLASS="${defaults[1]}"
+        ir_info "Runner volume: the cluster's default storage class ${_IR_INPUT_STORAGE_CLASS} (this chain's config names none; INSTALL_RUNNER_STORAGE_CLASS picks another)."
+    fi
+    return 0
 }
 
 # Prints every problem before stopping, so one run shows all that needs fixing.
 ir_preflight() {   # <id> [chain]
     local id="$1" chain="${2:-}" rc=0 sc source state
     ir_info "Preflight for $(ir_conf "${id}" INSTALL_LABEL)"
+    _ir_runner_inputs "${id}" "${chain}"
 
     if [[ "$(oc auth can-i '*' '*' 2>/dev/null)" != yes ]]; then
         h_error "This login is not cluster-admin: it can't create the runner's namespace and binding."
@@ -1069,7 +1170,8 @@ ir_refuse_busy_slot() {   # <namespace> <slot>
 #   0 completed, 77 completed with warnings, 1 failed, stopped, rejected, no run, or
 #   the slot was torn down, 76 detached (Ctrl-C or a closed terminal: the run goes on),
 #   78 watch lost (the login is gone, or no read for INSTALL_RUNNER_ATTACH_LOST_MAX
-#   minutes, default 30: the run may still be going).
+#   minutes, default 30, or a runner that answers but has stopped reporting and whose
+#   log has not moved for that long: the run may still be going).
 # A fan-out (mcm_fanout) shows each code in its table.
 # --resumed (from the resume verb): a finished state read while control.resume is
 # still there is the old run the supervisor has yet to restart, so the watch waits
@@ -1094,8 +1196,10 @@ ir_attach() {   # <slot> [--plain] [--from-start] [--last N] [--resumed]
         ir_warn "INSTALL_RUNNER_ATTACH_LOST_MAX must be a number of minutes (got '${lost_max}'); using 30."
         lost_max=30
     fi
-    local -i last_read=${SECONDS} lost_after=$(( lost_max * 60 ))
+    local -i last_read=${SECONDS} lost_after=$(( lost_max * 60 )) progress_at=${SECONDS}
     local detached=false said_lost=false said_unreachable=false relogged=false said_waiting=false
+    local said_stuck=false beat_seen=""
+    local -i beat_at=${SECONDS}
     offset_file="$(mktemp "${TMPDIR:-/tmp}/ir-attach.XXXXXX")"
 
     # INT is Ctrl-C, HUP a closed terminal: both only detach (gap X9). A signal that
@@ -1163,6 +1267,8 @@ _ir_attach_follow() {
                     resumed=false
                     continue
                 fi
+                # A supervisor that never takes it (stuck) does not hold the watch for ever.
+                _ir_attach_check_stuck || return $?
                 ${said_waiting} || print -r -- "[attach] Waiting for the runner to take the resume (run state: ${state})..." >&2
                 said_waiting=true said_lost=false
                 sleep "${retry}" || true
@@ -1188,17 +1294,70 @@ _ir_attach_follow() {
                 return 1 ;;
         esac
         # Bytes that came in, or a state that could be read, are word from the pod.
+        [[ "${offset}" != "${before}" ]] && progress_at=${SECONDS}
         if [[ -n "${state}" || "${offset}" != "${before}" ]]; then
             last_read=${SECONDS}
             relogged=false
+            # The pod answers, but is its supervisor still going? (a stream that ends
+            # while the state reads active: follow.sh gives up on a silent supervisor)
+            if [[ -n "${state}" ]]; then
+                _ir_attach_check_stuck || return $?
+            fi
         else
             _ir_attach_check_lost || return $?
         fi
-        ${said_lost} || print -r -- "[attach] Connection lost (run state: ${state:-unknown}); reconnecting..." >&2
-        said_lost=true
+        if ! ${said_stuck}; then
+            ${said_lost} || print -r -- "[attach] Connection lost (run state: ${state:-unknown}); reconnecting..." >&2
+            said_lost=true
+        fi
         sleep "${retry}" || true
     done
     return 76
+}
+
+# A pod that answers exec while its supervisor has stopped (gap C2): the state reads
+# running for ever and, without this, the watch would wait until Ctrl-C. The
+# supervisor reports (ir-status's heartbeat) at least every minute, so a heartbeat
+# that has not changed for IR_ATTACH_STALE_SECONDS (default 180, three missed reports;
+# a test knob) of this watch means it is stuck. Once neither a report nor a new byte
+# has come for INSTALL_RUNNER_ATTACH_LOST_MAX minutes of this watch, it stops with 78.
+# Judged on this machine's clock alone, by whether the reported time changes: the
+# value is the pod's clock, and a workstation clock ahead of the cluster's would
+# otherwise make every healthy runner look stuck. Uses ir_attach's locals slot, ns,
+# state, lost_max, lost_after, progress_at, beat_seen, beat_at and said_stuck. No
+# heartbeat to read (no status, an RBAC gap): nothing to judge, 0.
+# The check runs between streams. A runner image from before this change has a
+# follow.sh that never ends a stream on its own, so there the cap only acts once a
+# stream ends (a dropped connection); the next launch builds the new image.
+_ir_attach_check_stuck() {
+    local beat
+    local -i quiet silent stale="${IR_ATTACH_STALE_SECONDS:-180}"
+    beat="$(ir_slot_status_value "${ns}" heartbeat)"
+    [[ "${beat}" == <-> ]] || return 0
+    # A new report (the first one read counts as new) is progress.
+    if [[ "${beat}" != "${beat_seen}" ]]; then
+        beat_seen="${beat}" beat_at=${SECONDS} progress_at=${SECONDS} said_stuck=false
+        return 0
+    fi
+    quiet=$(( SECONDS - beat_at ))
+    if (( quiet <= stale )); then
+        said_stuck=false
+        return 0
+    fi
+    silent=$(( SECONDS - progress_at ))
+    if (( silent >= lost_after )); then
+        h_error "The runner in slot ${slot} has not reported for $(_ir_span "${quiet}") of this watch, and its log has not moved for $(_ir_span "${silent}"), though its pod still answers: stopped watching. The install may still be running."
+        h_error "Check it with: scripts/install_runner/x_install_runner.sh status$(_ir_tc); watch it again with: scripts/install_runner/x_watch_install.sh --slot ${slot}$(_ir_tc). If the supervisor stays silent, see: oc logs ${IR_POD} -n ${ns}"
+        return 78
+    fi
+    ${said_stuck} || print -r -- "[attach] The runner has not reported for $(_ir_span "${quiet}") (run state: ${state:-unknown}); still watching, for up to ${lost_max} minute(s) with no progress..." >&2
+    said_stuck=true
+    return 0
+}
+
+# Seconds as "N minute(s)", or "N second(s)" under a minute.
+_ir_span() {   # <seconds>
+    if (( $1 >= 60 )); then print -r -- "$(( $1 / 60 )) minute(s)"; else print -r -- "$1 second(s)"; fi
 }
 
 # After a reconnect that got no word from the pod (gap X11): why? Uses ir_attach's
@@ -1294,22 +1453,106 @@ ir_stop() {   # <slot>
     ir_info "Stop requested for slot $1."
 }
 
+# REPLY=taken (the watch may follow), detached (Ctrl-C or a closed terminal once the
+# request was on its way: the run goes on, so the verb ends as a detached watch does),
+# or a return of 130 with a message when the Ctrl-C came before anything was sent
+# (then "Detached" would be untrue: nothing goes on). A cluster-admin binding this
+# resume granted is removed again whenever it is sure no request reached the pod;
+# one that was there before is never touched.
 ir_resume() {   # <slot> [--retry-warned]
-    local slot="$1" ns state content="" lines
+    local slot="$1" ns state="" content="" lines binding had_binding=true found detached=false rc=0
     local -a reply
     [[ "${2:-}" == --retry-warned ]] && content=retry-warned
     ir_namespace "${slot}"; ns="${REPLY}"
-    state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null || true)"
+    ir_admin_binding "${slot}"; binding="${REPLY}"
+    # From here a Ctrl-C (or a closed terminal) is answered, never a bare exit 130: each
+    # oc call below takes a second or more, and the request may be on its way.
+    trap 'detached=true' INT HUP
+    state="$(oc exec -n "${ns}" "${IR_POD}" -- sh -c 'cat /work/current/state' 2>/dev/null)" || true
+    if ${detached}; then
+        trap - INT HUP
+        { print -r -- ""; h_error "Interrupted before the resume was sent: nothing changed in slot ${slot}. Run resume again to continue it."; } || true
+        REPLY=interrupted
+        return 130
+    fi
+    trap - INT HUP
     # A rejected run would only stop again on the same arguments.
     [[ "${state}" != rejected ]] \
         || ir_die "Slot ${slot}'s last run was rejected before its first step: nothing to resume. Launch it again with fixed arguments."
     [[ "${state}" == (failed|stopped|completed-with-warnings) ]] \
         || ir_die "Slot ${slot} is '${state:-unreachable}': nothing to resume."
-    ir_grant_admin "${slot}"
-    _ir_resume_check "${ns}"; lines="${reply[3]}"
-    print -r -- "${content}" | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c 'cat > /work/current/control.resume'
+    trap 'detached=true' INT HUP
+    # Was the binding there already (a run launched with INSTALL_RUNNER_KEEP_ADMIN=true)?
+    # Only one this resume makes is ever removed again; a failed read counts as there.
+    if found="$(oc get clusterrolebinding "${binding}" --ignore-not-found -o name 2>/dev/null)" && ! ${detached}; then
+        [[ -n "${found}" ]] || had_binding=false
+    fi
+    ${detached} || { ir_grant_admin "${slot}" || rc=$?; }
+    if ! ${detached}; then
+        if (( rc != 0 )); then
+            trap - INT HUP
+            _ir_resume_revoke "${binding}" "${had_binding}"
+            ir_die "Could not grant the slot's cluster-admin binding again: nothing was resumed."
+        fi
+        _ir_resume_check "${ns}"; lines="${reply[3]}"
+    fi
+    if ${detached}; then
+        trap - INT HUP
+        # A closed terminal takes no more output: a failed write must not end it early.
+        { print -r -- ""; h_error "Interrupted before the resume was sent: slot ${slot} still reads ${state}. Run resume again to continue it."; } || true
+        _ir_resume_revoke "${binding}" "${had_binding}"
+        REPLY=interrupted
+        return 130
+    fi
+    print -r -- "${content}" | oc exec -i -n "${ns}" "${IR_POD}" -- sh -c 'cat > /work/current/control.resume' || rc=$?
+    if ${detached}; then
+        # The pod side opens the file as the call starts, so a cut-off write can still
+        # be a request: look before saying which.
+        _ir_resume_check "${ns}"
+        trap - INT HUP
+        if [[ "${reply[1]}" == pending || ( "${reply[1]}" == taken && -n "${reply[2]}" && "${reply[2]}" != "${state}" ) ]]; then
+            _ir_resume_detached "${slot}"
+        else
+            { print -r -- ""; ir_warn "Detached while sending the resume: it may not have reached slot ${slot}. Check with x_install_runner.sh status$(_ir_tc); if the run still reads ${state}, run resume again."; } || true
+            _ir_resume_unsent "${state}" "${lines}" && _ir_resume_revoke "${binding}" "${had_binding}"
+            REPLY=detached
+        fi
+        return 0
+    fi
+    trap - INT HUP
+    if (( rc != 0 )); then
+        _ir_resume_check "${ns}"
+        _ir_resume_unsent "${state}" "${lines}" && _ir_resume_revoke "${binding}" "${had_binding}"
+        ir_die "Could not send the resume to slot ${slot} (oc exec exited ${rc}). The run still reads ${state}; try again."
+    fi
     ir_info "Resuming slot ${slot}."
     _ir_resume_wait "${slot}" "${ns}" "${state}" "${lines}"
+}
+
+# 0 when the check just made (ir_resume's reply) shows no request reached the pod:
+# no control.resume, the same state and no new attempt. A pod that does not answer
+# cannot tell, so 1. With control.resume removed only once the new attempt is
+# running (supervisor.sh), a taken request never reads as the old state.
+_ir_resume_unsent() {   # <state before> <attempts.log lines before>
+    [[ "${reply[1]}" == taken && -n "${reply[2]}" && "${reply[2]}" == "$1" && "${reply[3]}" == "$2" ]]
+}
+
+# Removes the slot's cluster-admin binding again after a resume that sent nothing,
+# unless it was there before the resume (then it is not this resume's to remove).
+_ir_resume_revoke() {   # <binding> <true when it was there before>
+    [[ "$2" == false ]] || return 0
+    if oc delete clusterrolebinding "$1" --ignore-not-found >/dev/null 2>&1; then
+        { ir_info "Removed the cluster-admin binding ${1} this resume had granted again."; } 2>/dev/null || true
+    else
+        { ir_warn "Could not remove the cluster-admin binding ${1}. A later resume's run, or teardown, removes it."; } 2>/dev/null || true
+    fi
+    return 0
+}
+
+# The detach after a resume request is sent: the message and REPLY=detached.
+_ir_resume_detached() {   # <slot>
+    { print -r -- ""; ir_info "Detached. The resume is sent: the install goes on in slot $1 once the runner takes it. Watch it with: x_install_runner.sh attach --slot $1$(_ir_tc)"; } 2>/dev/null || true
+    REPLY=detached
 }
 
 # Where a resume request is: reply=(<pending|taken> <state> <lines in attempts.log>),
@@ -1354,8 +1597,7 @@ _ir_resume_wait() {   # <slot> <namespace> <state before> <attempts.log lines be
     done
     trap - INT HUP
     if ${detached}; then
-        { print -r -- ""; ir_info "Detached. The resume is sent: the install goes on in slot ${slot} once the runner takes it. Watch it with: x_install_runner.sh attach --slot ${slot}$(_ir_tc)"; } 2>/dev/null || true
-        REPLY=detached
+        _ir_resume_detached "${slot}"
     else
         REPLY=taken
     fi

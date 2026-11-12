@@ -21,6 +21,12 @@ wants_swhcc() {   # <chain>
     esac
 }
 
+# The standalone Control Center chain. It loads its own vars file, which may have no
+# cpd_vars.sh behind it (written with --empty, for a Control Center cluster of its
+# own): no CP4D storage classes, options file or olm-utils image. Its launch needs
+# none of them; the CP4D chains still need all three.
+is_swhcc_chain() { [[ "${1:-}" == "${SWHCC_CHAIN}" ]]; }
+
 # False when the full chain's arguments (IR_HOOK_ARGS, one per line) leave the
 # swhub-control-center step out: --skip it, or --only / --<step> without it. It is
 # the last step, so --from never does. Arguments that do not parse keep it (the
@@ -115,16 +121,22 @@ case "${1:-}" in
             h_error "CPD_IMAGE_SOURCE=${CPD_IMAGE_SOURCE}: the in-cluster runner supports entitled only for now."
             rc=1
         fi
+        chain="${IR_HOOK_CHAIN:-${2:-}}"
         for sc in "${STG_CLASS_BLOCK:-}" "${STG_CLASS_FILE:-}"; do
-            [[ -n "${sc}" ]] || { h_error "STG_CLASS_BLOCK and STG_CLASS_FILE must be set."; rc=1; continue; }
+            if [[ -z "${sc}" ]]; then
+                # The Control Center chain only checks the ones its vars file has.
+                is_swhcc_chain "${chain}" && continue
+                h_error "STG_CLASS_BLOCK and STG_CLASS_FILE must be set."; rc=1; continue
+            fi
             oc get storageclass "${sc}" >/dev/null 2>&1 \
                 || { h_error "Storage class ${sc} does not exist on this cluster."; rc=1; }
         done
         # 4.1 reads the options file through the config copy in the work dir, so it
         # must be in the folder staged as configs/cp4d_config (the cluster's own under a
-        # pin). IR_STAGED_CONFIG_DIR is that folder; without it, the loaded one.
+        # pin). IR_STAGED_CONFIG_DIR is that folder; without it, the loaded one. The
+        # Control Center chain runs no 4.1.
         staged="${IR_STAGED_CONFIG_DIR:-${CONFIG_DIR:-}}"
-        if [[ -n "${INSTALL_OPTIONS_FILE:-}" && ! -f "${staged}/${INSTALL_OPTIONS_FILE}" ]]; then
+        if ! is_swhcc_chain "${chain}" && [[ -n "${INSTALL_OPTIONS_FILE:-}" && ! -f "${staged}/${INSTALL_OPTIONS_FILE}" ]]; then
             h_error "INSTALL_OPTIONS_FILE=${INSTALL_OPTIONS_FILE} is not in ${staged}, the folder the runner stages."
             rc=1
         fi
@@ -132,6 +144,17 @@ case "${1:-}" in
             swhcc_preflight || rc=1
         fi
         exit "${rc}"
+        ;;
+    runner-inputs)
+        # What the runner pod needs that the Control Center chain's vars file may not
+        # have (written with --empty): the standard olm-utils image of its release as
+        # the runner's base, and the cluster's default storage class for its volume.
+        # Nothing for the CP4D chains: OLM_UTILS_IMAGE and STG_CLASS_BLOCK stay required.
+        is_swhcc_chain "${IR_HOOK_CHAIN:-${2:-}}" || exit 0
+        if [[ -z "${OLM_UTILS_IMAGE:-}" && -n "${VERSION:-}" ]]; then
+            print -r -- "base_image=icr.io/cpopen/cpd/olm-utils-v4:${VERSION}${PATCH_ID:+.${PATCH_ID}}"
+        fi
+        [[ -n "${STG_CLASS_BLOCK:-}" ]] || print -r -- "storage_class=default"
         ;;
     sidecars)
         # "swhcc<TAB><premium image by tag><TAB><same|different>" when the launch runs

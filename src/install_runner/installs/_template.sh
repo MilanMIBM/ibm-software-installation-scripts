@@ -18,6 +18,13 @@
 #                          by tag><TAB><same|different>" (Control Center, see
 #                          cpd.sh and manifests/swhcc-sidecar.fragments.tmpl).
 #                          A pod without a sidecar renders as it always has
+#   <id>.sh runner-inputs [chain]
+#                          for a chain whose config lacks what the runner pod
+#                          itself needs: "base_image=<olm-utils image>" (when
+#                          RUNNER_BASE_IMAGE_VAR is empty) and/or
+#                          "storage_class=default" (the cluster's default
+#                          storage class, when RUNNER_STORAGE_CLASS_VAR is
+#                          empty). Print nothing to keep them required
 #   <id>.sh stage          extra files for the snapshot, beyond RUNNER_STAGE_ROOTS:
 #                          one "<source>\t<snapshot path>" line each on stdout
 #                          (source absolute or repo-relative, a file or a folder);
@@ -34,6 +41,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 
 case "${1:-}" in
     preflight)    ;;
+    runner-inputs) ;;
     sidecars)     ;;
     stage)        ;;
     post-collect) ;;

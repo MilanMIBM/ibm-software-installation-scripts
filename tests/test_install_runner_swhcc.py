@@ -1190,6 +1190,109 @@ def test_handoff_of_the_control_center_chain():
         assert staged.exists(), "the vars file goes with configs/cp4d_config"
 
 
+# --- C5: Control Center on a cluster of its own, from a vars file written with --empty ---------------------------
+STORAGE_CLASSES = json.dumps({"items": [
+    {"metadata": {"name": "ocs-rbd", "annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}},
+    {"metadata": {"name": "ocs-fs"}}]})
+EMPTY_HANDOFF_OC = HANDOFF_OC.replace('case "$args" in\n', 'case "$args" in\n'
+                                      '  "get storageclass -o json"*) cat "$d/storageclasses.json" ;;\n', 1)
+
+
+def empty_vars_text():
+    """What 0_swhub_control_center_generate_config.sh --empty writes, with the login and key filled in: no
+    cpd_vars.sh behind it, so no OLM_UTILS_IMAGE, STG_CLASS_*, INSTALL_OPTIONS_FILE or OCP_URL."""
+    from helpers import swhub_control_center_config_render as render
+
+    text = render.render_swhcc_vars({"has_cpd_vars": False, "cluster_mode": "different", "patch_id": "8",
+                                     "ocp_url": "https://api.cc.example.com:6443", "ocp_token": "cc-token",
+                                     "stg_block": "cc-blk", "stg_file": "cc-fil", "oauth_secret": "s"})
+    assert "cpd_vars.sh\"" not in text and "OLM_UTILS_IMAGE=\"icr.io" not in text
+    return text.replace('export IBM_ENTITLEMENT_KEY=""', f'export IBM_ENTITLEMENT_KEY="{KEY}"')
+
+
+def empty_box(box, storage_classes=STORAGE_CLASSES):
+    box.fake = box.root / "fake"
+    box.fake.mkdir()
+    (box.bin / "oc").write_text(EMPTY_HANDOFF_OC)
+    (box.fake / "storageclasses.json").write_text(storage_classes)
+    subprocess.run(["git", "init", "-q"], cwd=box.repo, env=box.env(), check=True, capture_output=True)
+    put(box.repo, "configs/cp4d_config/swhub_control_center/swhub_control_center_vars.sh", empty_vars_text())
+    for rel in (SWHCC_CHAIN, FULL_CHAIN):
+        chain = box.repo / rel
+        chain.parent.mkdir(parents=True, exist_ok=True)
+        chain.write_text(STAND_IN_CHAIN)
+        chain.chmod(0o755)
+    (box.fake / "state").write_text("completed\n")
+    (box.fake / "image_missing").touch()
+    # The Software Hub cluster, where the pod runs, comes from the shell: the vars file names only Control Center's.
+    return {"FAKE_DIR": box.fake, "OCP_URL": SANDBOX_URL, "OC_LOGIN": "true", "INSTALL_RUN_MODE": "cluster",
+            "INSTALL_RUNNER_CPD_CLI_URL": "https://x/cli.tgz"}
+
+
+def test_control_center_from_an_empty_vars_file_launches_without_cp4d_values():
+    """C5: the standalone Control Center chain in different mode needs no CP4D storage classes, options file or
+    olm-utils image: the runner's base image comes from the vars file's release, its volume from the cluster's
+    default storage class."""
+    with make_sandbox(extra=SANDBOX_EXTRA + [CC_DIR]) as box:
+        env = empty_box(box)
+        result = box.run_script(SWHCC_CHAIN, env=env, timeout=120)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "STG_CLASS_BLOCK and STG_CLASS_FILE must be set" not in result.stderr
+        assert "OLM_UTILS_IMAGE is not set" not in result.stderr
+        assert "the cluster's default storage class ocs-rbd" in result.stdout
+        docs = [d for d in yaml.safe_load_all((box.fake / "applied.yaml").read_text()) if d]
+        build = next(d for d in docs if d["kind"] == "BuildConfig")
+        args = {a["name"]: a["value"] for a in build["spec"]["strategy"]["dockerStrategy"]["buildArgs"]}
+        assert args["BASE_IMAGE"] == "icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8"
+        pvc = next(d for d in docs if d["kind"] == "PersistentVolumeClaim")
+        assert pvc["spec"]["storageClassName"] == "ocs-rbd"
+        sts = next(d for d in docs if d.get("kind") == "StatefulSet")
+        assert [c["name"] for c in sts["spec"]["template"]["spec"]["containers"]] == ["runner", "swhcc"]
+        assert box.calls("podman") == [] and box.calls("cpd-cli") == []
+
+
+def test_install_runner_storage_class_still_wins_for_control_center():
+    with make_sandbox(extra=SANDBOX_EXTRA + [CC_DIR]) as box:
+        env = empty_box(box)
+        result = box.run_script(SWHCC_CHAIN, env={**env, "INSTALL_RUNNER_STORAGE_CLASS": "picked"}, timeout=120)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "default storage class" not in result.stdout
+        docs = [d for d in yaml.safe_load_all((box.fake / "applied.yaml").read_text()) if d]
+        assert next(d for d in docs if d["kind"] == "PersistentVolumeClaim")["spec"]["storageClassName"] == "picked"
+
+
+def test_no_default_storage_class_still_stops_control_center_with_the_runner_hint():
+    with make_sandbox(extra=SANDBOX_EXTRA + [CC_DIR]) as box:
+        env = empty_box(box, storage_classes=json.dumps({"items": [{"metadata": {"name": "ocs-fs"}}]}))
+        result = box.run_script(SWHCC_CHAIN, env=env, timeout=120)
+        assert result.returncode != 0
+        assert "No storage class for the runner's volume: set INSTALL_RUNNER_STORAGE_CLASS." in result.stderr
+        assert not (box.fake / "applied.yaml").exists(), "nothing was changed"
+
+
+def test_the_cp4d_chains_stay_strict_with_the_same_config():
+    """The full chain on the same config (no cpd_vars.sh values) is still refused for each missing value."""
+    with make_sandbox(extra=SANDBOX_EXTRA + [CC_DIR]) as box:
+        env = empty_box(box)
+        result = box.run_script(FULL_CHAIN, env={**env, "ENV_TARGET": "swhub_control_center"}, timeout=120)
+        assert result.returncode != 0
+        assert "STG_CLASS_BLOCK and STG_CLASS_FILE must be set." in result.stderr
+        assert "No storage class for the runner's volume" in result.stderr
+        assert "default storage class" not in result.stdout
+        assert not (box.fake / "applied.yaml").exists()
+
+
+@pytest.mark.parametrize("chain,expected", [
+    (SWHCC_CHAIN, ["base_image=icr.io/cpopen/cpd/olm-utils-v4:5.4.0.8", "storage_class=default"]),
+    (FULL_CHAIN, []), (STEP4_CHAIN, []), ("", [])])
+def test_runner_inputs_only_for_the_control_center_chain(tmp_path, chain, expected):
+    result = hook(tmp_path, "runner-inputs", chain, {"VERSION": "5.4.0", "PATCH_ID": "8"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == expected
+    full = hook(tmp_path, "runner-inputs", SWHCC_CHAIN, {"VERSION": "5.4.0", "OLM_UTILS_IMAGE": "x:1", "STG_CLASS_BLOCK": "b"})
+    assert full.stdout == "", "a vars file that has them (from cpd_vars.sh) keeps its own"
+
+
 # --- 11. the notice ------------------------------------------------------------------------------------------
 NOTICE_STUBS = """
 swhcc_cluster_verified() { [[ -e "$FAKE_DIR/verified" ]]; }

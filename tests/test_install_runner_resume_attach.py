@@ -14,6 +14,7 @@ Nothing reaches a cluster, podman or cpd-cli.
 import os
 import signal
 import subprocess
+import time
 
 import pytest
 from test_install_runner import FAKE_OC, HELPERS, REPO, fake, zsh  # noqa: F401
@@ -203,3 +204,279 @@ def test_ctrl_c_while_waiting_for_the_pick_up_detaches(sb, sig):  # noqa: F811
     assert "Resuming slot" in out
     assert "Detached. The resume is sent: the install goes on in slot" in out, out
     assert "follow.sh" not in oc_log(sb), "no watch after a detach"
+
+
+# --- C1: a Ctrl-C at any point of a resume is answered ------------------------------------------------------------
+def resume_with_slow(sb, slow, binding_there=False):  # noqa: F811
+    """`x_install_runner.sh resume` with one fake oc call that marks itself and takes 3 s: the first state read,
+    the grant (apply), the check before the request (ir-resume-check), or the request itself (control.resume).
+    SIGINT lands in it. <binding_there>: the slot's cluster-admin binding exists before the resume."""
+    clusters(sb)
+    if binding_there:
+        (sb.fake / "binding_there").touch()
+    pairs = {
+        "state": [('*"cat /work/current/state"*) cat "$d/state" 2>/dev/null ;;',
+                   '*"cat /work/current/state"*) touch "$d/streaming"; sleep 3; cat "$d/state" 2>/dev/null ;;')],
+        "grant": [('"apply -f -"*) apply ;;', '"apply -f -"*) touch "$d/streaming"; sleep 3; apply ;;')],
+        "check": [('*"control.resume"*) cat > "$d/resume" ;;',
+                   ('*"ir-resume-check"*) touch "$d/streaming"; sleep 3; echo "pending failed 1" ;;\n'
+                    '  *"control.resume"*) cat > "$d/resume" ;;'))],
+        "write": [('*"control.resume"*) cat > "$d/resume" ;;',
+                   ('*"ir-resume-check"*) [ -e "$d/sent" ] && echo "pending failed 1" || echo "taken failed 1" ;;\n'
+                    '  *"control.resume"*) touch "$d/sent" "$d/streaming"; sleep 3; cat > "$d/resume" ;;'))],
+        "write-lost": [('*"control.resume"*) cat > "$d/resume" ;;',
+                        ('*"ir-resume-check"*) echo "taken failed 1" ;;\n'
+                         '  *"control.resume"*) touch "$d/streaming"; sleep 3; cat > "$d/resume" ;;'))],
+    }[slow]
+    use_oc(sb.bin / "oc", oc_variant(*pairs))
+    (sb.fake / "state").write_text("failed\n")
+    env = sb.env({"FAKE_DIR": sb.fake, "IR_RESUME_POLL_SECONDS": "1"})
+    return signalled(["zsh", str(sb.repo / RUNNER_TOOL), "resume", "--install", "cpd"], env, sb.repo,
+                     sb.fake / "streaming", signal.SIGINT)
+
+
+BINDING_DELETE = "oc delete clusterrolebinding install-runner-cpd-cpd-op-admin --ignore-not-found"
+
+
+@pytest.mark.parametrize("slow", ["grant", "check"])
+def test_ctrl_c_before_the_request_is_sent_says_so(sb, slow):  # noqa: F811
+    """Nothing goes on, so no "Detached": 130 and a message. The cluster-admin binding the resume granted
+    (or was granting) goes again, since no run will revoke it."""
+    rc, out, err = resume_with_slow(sb, slow)
+    assert rc == 130, out + err
+    assert "Interrupted before the resume was sent: slot cpd-cpd-op still reads failed." in err, err
+    assert "Detached" not in out and "Resuming slot" not in out
+    log = oc_log(sb)
+    assert "cat > /work/current/control.resume" not in log, "no request was sent"
+    assert "follow.sh" not in log, "and no watch"
+    assert BINDING_DELETE in log, log
+    assert "Removed the cluster-admin binding install-runner-cpd-cpd-op-admin" in out
+
+
+def test_ctrl_c_at_the_first_state_read_is_answered_too(sb):  # noqa: F811
+    rc, out, err = resume_with_slow(sb, "state")
+    assert rc == 130, out + err
+    assert "Interrupted before the resume was sent: nothing changed in slot cpd-cpd-op." in err, err
+    log = oc_log(sb)
+    assert "apply -f -" not in log and "clusterrolebinding" not in log and "control.resume" not in log, log
+
+
+def test_a_binding_that_was_there_before_the_resume_stays(sb):  # noqa: F811
+    """A run launched with INSTALL_RUNNER_KEEP_ADMIN=true keeps its binding: not the resume's to remove."""
+    rc, out, err = resume_with_slow(sb, "check", binding_there=True)
+    assert rc == 130, out + err
+    assert "oc get clusterrolebinding install-runner-cpd-cpd-op-admin --ignore-not-found -o name" in oc_log(sb)
+    assert "delete clusterrolebinding" not in oc_log(sb)
+
+
+def test_ctrl_c_while_the_request_is_written_detaches_like_the_wait(sb):  # noqa: F811
+    """The pod side opens control.resume as the call starts: a request cut off on the way can still be there,
+    so the runner looks, and finds it pending here."""
+    rc, out, err = resume_with_slow(sb, "write")
+    assert rc == 0, out + err
+    assert "Detached. The resume is sent: the install goes on in slot cpd-cpd-op once the runner takes it." in out
+    assert "follow.sh" not in oc_log(sb), "no watch after a detach"
+    assert "delete clusterrolebinding" not in oc_log(sb), "the resumed run needs its binding"
+
+
+def test_ctrl_c_while_the_request_is_written_and_it_is_not_there_says_to_check(sb):  # noqa: F811
+    rc, out, err = resume_with_slow(sb, "write-lost")
+    assert rc == 0, out + err
+    assert "Detached while sending the resume: it may not have reached slot cpd-cpd-op." in err, err
+    assert "x_install_runner.sh status --target-cluster itz-a" in err
+    # No request, the same state and no new attempt: nothing reached the pod, so the binding goes again.
+    assert BINDING_DELETE in oc_log(sb)
+
+
+def test_a_failed_request_that_reached_nothing_removes_the_binding(fake):
+    failing = ('*"control.resume"*) cat > "$d/resume" ;;',
+               '*"ir-resume-check"*) echo "taken failed 1" ;;\n'
+               '  *"control.resume"*) cat > /dev/null; exit 1 ;;')
+    use_oc(fake, oc_variant(failing))
+    (fake / "state").write_text("failed\n")
+    result = zsh("ir_resume slot", fake, unit_env(fake))
+    assert result.returncode != 0
+    assert "Could not send the resume to slot slot (oc exec exited 1)" in result.stderr
+    assert "oc delete clusterrolebinding install-runner-slot-admin --ignore-not-found" in (fake / "oc.log").read_text()
+
+
+def test_a_failed_request_that_may_be_there_keeps_the_binding(fake):
+    failing = ('*"control.resume"*) cat > "$d/resume" ;;',
+               '*"ir-resume-check"*) [ -e "$d/resume" ] && echo "pending failed 1" || echo "taken failed 1" ;;\n'
+               '  *"control.resume"*) cat > "$d/resume"; exit 1 ;;')
+    use_oc(fake, oc_variant(failing))
+    (fake / "state").write_text("failed\n")
+    result = zsh("ir_resume slot", fake, unit_env(fake))
+    assert result.returncode != 0
+    assert "delete clusterrolebinding" not in (fake / "oc.log").read_text()
+
+
+# --- C1: no gap between the request and the new attempt (image side) ---------------------------------------------
+# mv as state_set calls it (`mv -f state.new state`): notes what the new state is and whether control.resume is
+# still there at that moment, then moves.
+NOTING_MV = r"""#!/bin/bash
+for last; do :; done
+if [ "${last##*/}" = state ] && [ -f "${last}.new" ]; then
+  if [ -e "${last%/state}/control.resume" ]; then r=yes; else r=no; fi
+  echo "$(cat "${last}.new") $r" >> "$FAKE_DIR/states.log"
+fi
+exec /bin/mv "$@"
+"""
+
+
+def test_the_supervisor_sets_running_before_it_takes_the_request(tmp_path):
+    sup = Supervisor(tmp_path)
+    put(tmp_path / "bin", "mv", NOTING_MV, mode=0o755)
+    (sup.run / "state").write_text("failed\n")
+    (sup.run / "attempts").write_text("1\n")
+    (sup.run / "args-ok").touch()
+    (sup.run / "control.resume").write_text("")
+    try:
+        sup.start("ok")
+        wait_for(lambda: sup.state() == "completed")
+    finally:
+        sup.stop()
+    states = (tmp_path / "states.log").read_text().splitlines()
+    assert states[0] == "running yes", "the new state is set while the request is still there"
+    assert not (sup.run / "control.resume").exists(), "then the request is taken"
+    assert states[-1] == "completed no"
+
+
+FOLLOW = REPO / "src/install_runner/image/bin/follow.sh"
+
+
+def follow_run(tmp_path, state, extra=None, files=()):
+    work = tmp_path / "work"
+    run = work / "runs/r1"
+    run.mkdir(parents=True)
+    (run / "state").write_text(state + "\n")
+    for name, text in files:
+        (run / name).write_text(text)
+    (run / "terminal.log").write_text("old output\n")
+    os.symlink(run, work / "current")
+    env = {"PATH": "/usr/bin:/bin", "IR_WORK": str(work), **(extra or {})}
+    proc = subprocess.Popen(["bash", str(FOLLOW), "terminal", "start"], env=env, stdout=subprocess.PIPE, text=True)
+    return run, proc
+
+
+def ended_within(proc, seconds):
+    try:
+        proc.wait(timeout=seconds)
+        return True
+    except subprocess.TimeoutExpired:
+        return False
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_follow_keeps_a_finished_run_open_while_a_resume_is_pending(tmp_path):
+    run, proc = follow_run(tmp_path, "failed", files=[("control.resume", "")])
+    try:
+        time.sleep(3)
+        assert proc.poll() is None, "a pending resume is still a live run"
+        # The supervisor takes it: running first, then the file goes; the run then ends.
+        (run / "state").write_text("running\n")
+        (run / "control.resume").unlink()
+        time.sleep(3)
+        assert proc.poll() is None
+        (run / "state").write_text("completed\n")
+        assert ended_within(proc, 15), "a finished run with no request ends the stream"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_follow_without_a_request_ends_on_a_finished_run(tmp_path):
+    _, proc = follow_run(tmp_path, "failed")
+    assert ended_within(proc, 10)
+
+
+# --- C2: a stuck supervisor does not hold the watch for ever -----------------------------------------------------
+def test_follow_ends_once_the_supervisor_is_silent_and_the_log_still(tmp_path):
+    _, proc = follow_run(tmp_path, "running", {"IR_HEARTBEAT": "1"},
+                         files=[("../.heartbeat", f"{int(time.time()) - 1000}\n")])
+    assert ended_within(proc, 20), "three missed reports and a still log end the stream"
+
+
+def test_follow_waits_on_a_supervisor_that_reports(tmp_path):
+    _, proc = follow_run(tmp_path, "running", {"IR_HEARTBEAT": "1"},
+                         files=[("../.heartbeat", f"{int(time.time()) + 100000}\n")])
+    assert not ended_within(proc, 7)
+
+
+def stuck_env(fake, beat_age, lost_max="0.02", stale="0"):  # noqa: F811
+    """A heartbeat read back from ir-status (<beat_age> s behind this machine's clock) and a watch that calls a
+    report stale after <stale> s of this watch with no change (IR_ATTACH_STALE_SECONDS, default 180)."""
+    (fake / "status.heartbeat").write_text(str(int(time.time()) - beat_age))
+    return unit_env(fake, {"INSTALL_RUNNER_ATTACH_LOST_MAX": lost_max, "IR_ATTACH_STALE_SECONDS": stale})
+
+
+# The stream ends at once on a running run (as follow.sh does for a silent supervisor), each round a little later.
+QUIET_STREAM = ('*"follow.sh"*) echo "hello from the pod" ;;', '*"follow.sh"*) sleep 0.3 ;;')
+# The same, with new bytes each round, then the run ends after 30 rounds (about 9 s, well past a 6 s cap).
+BUSY_STREAM = ('*"follow.sh"*) echo "hello from the pod" ;;',
+               ('*"follow.sh"*) n=$(cat "$d/rounds" 2>/dev/null || echo 0); echo $((n+1)) > "$d/rounds"\n'
+                '      sleep 0.3; echo "line $n"; [ "$n" -ge 30 ] && echo completed > "$d/state" ;;'))
+# A supervisor that reports: each read of ir-status gets a newer heartbeat (still on the pod's clock), and the
+# run ends after 12 reads.
+REPORTING = ('"get configmap ir-status"*)',
+             ('"get configmap ir-status"*)\n'
+              '      n=$(cat "$d/rounds" 2>/dev/null || echo 0); echo $((n+1)) > "$d/rounds"\n'
+              '      b=$(cat "$d/status.heartbeat"); echo $((b+1)) > "$d/status.heartbeat"\n'
+              '      [ "$n" -ge 12 ] && echo completed > "$d/state"'))
+
+
+def test_a_watch_on_a_stuck_supervisor_stops_with_78(fake):  # noqa: F811
+    use_oc(fake, oc_variant(QUIET_STREAM))
+    (fake / "state").write_text("running\n")
+    # A cap (3 s) longer than the staleness (0 s here), so the notice comes before the stop.
+    result = zsh("ir_attach slot", fake, stuck_env(fake, 1000, lost_max="0.05"))
+    assert result.returncode == 78, result.stdout + result.stderr
+    assert "The runner in slot slot has not reported for " in result.stderr
+    assert "second(s) of this watch, and its log has not moved for" in result.stderr
+    assert "The install may still be running." in result.stderr
+    assert "x_install_runner.sh status" in result.stderr and "oc logs install-runner-0 -n install-runner-slot" in result.stderr
+    assert result.stderr.count("[attach] The runner has not reported for") == 1, result.stderr
+    # Stream ends before the report could be judged stale read as dropped connections; none after the notice.
+    assert result.stderr.rfind("Connection lost") < result.stderr.index("[attach] The runner has not reported for")
+
+
+def test_a_stuck_supervisor_with_a_moving_log_is_still_watched(fake):  # noqa: F811
+    use_oc(fake, oc_variant(BUSY_STREAM))
+    (fake / "state").write_text("running\n")
+    # A cap of a few seconds: SECONDS counts whole seconds, so a 1 s cap could pass between a byte and the check.
+    # The stream outlasts it by half again, so only the log's bytes keep the watch going.
+    result = zsh("ir_attach slot", fake, stuck_env(fake, 1000, lost_max="0.1"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Run finished: completed" in result.stdout
+    assert result.stdout.count("line ") >= 30
+    assert "[attach] The runner has not reported for" in result.stderr, "the runner is stuck, the log is not"
+    assert "stopped watching" not in result.stderr
+
+
+def test_a_reporting_supervisor_is_never_cut_off(fake):  # noqa: F811
+    use_oc(fake, oc_variant(QUIET_STREAM, REPORTING))
+    (fake / "state").write_text("running\n")
+    result = zsh("ir_attach slot", fake, stuck_env(fake, 5))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "has not reported" not in result.stderr
+
+
+def test_a_cluster_clock_far_behind_this_machine_is_no_stuck_runner(fake):  # noqa: F811
+    """B-R2: the heartbeat is the pod's clock. Read against this machine's, a cluster 1000 s behind looked
+    stuck at once; a heartbeat that keeps changing is a runner that reports, whatever its value."""
+    use_oc(fake, oc_variant(QUIET_STREAM, REPORTING))
+    (fake / "state").write_text("running\n")
+    result = zsh("ir_attach slot", fake, stuck_env(fake, 1000, stale="1"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "has not reported" not in result.stderr and "stopped watching" not in result.stderr
+
+
+def test_a_resume_the_stuck_runner_never_takes_stops_the_watch(fake):  # noqa: F811
+    use_oc(fake, oc_variant(handover(10 ** 6, "taken running 1"), QUIET_STREAM))
+    (fake / "state").write_text("failed\n")
+    result = zsh("ir_attach slot --resumed", fake, stuck_env(fake, 1000))
+    assert result.returncode == 78, result.stdout + result.stderr
+    assert "has not reported for " in result.stderr and "of this watch" in result.stderr

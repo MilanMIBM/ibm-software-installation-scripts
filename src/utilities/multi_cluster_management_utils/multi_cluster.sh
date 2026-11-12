@@ -1263,6 +1263,7 @@ _mcm_cli_containers_status() {
 
     if (( ${#rows_container} == 0 )); then
         _mcm_cli_info "No managed containers and no registered clusters."
+        _mcm_cli_runner_slots_table
         return 0
     fi
     local -i i
@@ -1284,6 +1285,29 @@ _mcm_cli_containers_status() {
     if (( MCM_CONTAINER_IDLE_TIMEOUT_MINUTES == 0 )); then
         _mcm_cli_info "Auto-stop is disabled (MCM_CONTAINER_IDLE_TIMEOUT_MINUTES=0)."
     fi
+    _mcm_cli_runner_slots_table
+}
+
+# The installs handed to runner pods from this machine, one line each, from their
+# launch records (install_runner_slots.sh), so it needs no cluster. A pod run uses no
+# local container and no podman VM, so it has no row above, and the idle watcher
+# never counts it. Nothing is printed when there are none.
+_mcm_cli_runner_slots_table() {
+    local line cluster slot state url run install launched
+    local -a rows
+    rows=("${(@f)$(ir_slot_records)}")
+    rows=("${(@)rows:#}")
+    (( ${#rows} )) || return 0
+    print -r -- ""
+    _mcm_cli_info "In-cluster runs launched from this machine (no local container needed; see x_install_runner.sh status --all-clusters):"
+    {
+        print -r -- $'CLUSTER\tSLOT\tINSTALL\tSTATE\tRUN\tLAUNCHED\tURL'
+        for line in "${rows[@]}"; do
+            IFS=$'\t' read -r cluster slot state url run install launched <<< "${line}"
+            [[ "${cluster}" == - ]] && cluster="(flat)"
+            print -r -- "${cluster}"$'\t'"${slot}"$'\t'"${install}"$'\t'"${state}"$'\t'"${run}"$'\t'"${launched}"$'\t'"${url}"
+        done
+    } | column -t -s $'\t'
 }
 
 _mcm_cli_containers_start() {   # NAME

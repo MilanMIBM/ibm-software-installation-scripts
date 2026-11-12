@@ -33,11 +33,46 @@ if [[ "${3:-}" == resolve ]]; then
     exit 0
 fi
 
-active() { case "$(cat "${run}/state" 2>/dev/null)" in staged|running|interrupted) return 0 ;; esac; return 1; }
+# A pending control.resume counts: the supervisor takes it on its next poll, so a
+# viewer that attaches in between keeps following into the new attempt instead of
+# ending on the old state (a false reconnect). supervisor.sh sets the new state
+# before it removes the file, so there is no gap between the two.
+active() {
+    [[ -e "${run}/control.resume" ]] && return 0
+    case "$(cat "${run}/state" 2>/dev/null)" in staged|running|interrupted) return 0 ;; esac
+    return 1
+}
+
+# The supervisor writes runs/.heartbeat each time it reports (at least every
+# IR_HEARTBEAT seconds). Three missed reports, while the log does not move either,
+# mean it is stuck with a state that still reads active: this stream then ends,
+# so the viewer can see why and give up in time (attach's INSTALL_RUNNER_ATTACH_LOST_MAX)
+# instead of waiting for ever. No heartbeat file: an older supervisor, never judged.
+beat="${work}/runs/.heartbeat"
+stale_after=$(( ${IR_HEARTBEAT:-60} * 3 ))
+supervisor_silent() {
+    local b
+    b="$(cat "${beat}" 2>/dev/null)"
+    [[ "${b}" =~ ^[0-9]+$ ]] || return 1
+    (( $(date +%s) - b > stale_after ))
+}
 
 tail -c "+${offset}" -f "${log}" &
 tailer=$!
 trap 'kill "${tailer}" 2>/dev/null' EXIT
 # The tailer dies by itself when the viewer goes (SIGPIPE on its next write).
-while kill -0 "${tailer}" 2>/dev/null && active; do sleep 2; done
+size_seen=-1 quiet_since=${SECONDS}
+while kill -0 "${tailer}" 2>/dev/null && active; do
+    sleep 2
+    if supervisor_silent; then
+        size="$(wc -c < "${log}" 2>/dev/null | tr -d ' ')"
+        if [[ "${size}" != "${size_seen}" ]]; then
+            size_seen="${size}" quiet_since=${SECONDS}
+        elif (( SECONDS - quiet_since >= stale_after )); then
+            break
+        fi
+    else
+        size_seen=-1
+    fi
+done
 sleep 2

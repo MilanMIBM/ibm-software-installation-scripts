@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import tarfile
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -66,10 +67,14 @@ case "$args" in
   "apply -f -"*) apply ;;
   "start-build"*) ;;
   "get builds"*) [ -e "$d/builds_fail" ] && exit 1; cat "$d/builds.json" 2>/dev/null || echo '{"items":[]}' ;;
+  "get buildconfigs"*) [ -e "$d/bcs_fail" ] && exit 1; cat "$d/bcs.json" 2>/dev/null || echo '{"items":[]}' ;;
+  "get clusterrolebinding"*) [ -e "$d/binding_there" ] && echo "clusterrolebinding.rbac.authorization.k8s.io/${3:-x}" ;;
+  "get statefulsets -A"*) [ -e "$d/sets_fail" ] && exit 1; cat "$d/sets.json" 2>/dev/null || echo '{"items":[]}' ;;
   "patch configmap ir-status"*)
       [ -e "$d/patch_fail" ] && exit 1
       v="$(sed -nE 's/.*"collected":"([^"]*)".*/\1/p' <<<"$args")"
       [ -n "$v" ] && printf '%s' "$v" > "$d/status.collected" ;;
+  "delete buildconfig"*) [ -e "$d/delete_bc_fail" ] && exit 1 ;;
   "delete build"*) [ -e "$d/delete_build_fail" ] && exit 1 ;;
   "delete"*) ;;
   *"follow.sh"*"resolve"*) echo 0 ;;
@@ -109,14 +114,25 @@ def fake(tmp_path):
 def zsh(body, fake_dir=None, env=None, cwd=None):
     run_env = {k: v for k, v in os.environ.items() if not k.startswith(("IR_", "INSTALL_RUN"))}
     run_env.update({"_CP4D_REPO_ROOT": str(REPO), "OC_LOGIN": "true", "_CP4D_PREP_DONE": "1"})
-    if fake_dir:
-        run_env["PATH"] = f"{fake_dir}/bin:{run_env['PATH']}"
-        run_env["FAKE_DIR"] = str(fake_dir)
-        # Teardown and collect keep launch records under ~/cpd-cli: never the real one.
-        run_env["HOME"] = str(Path(fake_dir) / "home")
-    run_env.update(env or {})
-    script = f'set -euo pipefail\nsource "{HELPERS}"\n{textwrap.dedent(body)}'
-    return subprocess.run(["zsh", "-c", script], capture_output=True, text=True, env=run_env, cwd=cwd, timeout=120, check=False)
+    with tempfile.TemporaryDirectory(prefix="ir-zsh-") as scratch:
+        # Teardown and collect keep launch records under ~/cpd-cli: never the real one. With no fakes the
+        # helpers get an empty HOME, and an oc, podman or cpd-cli that fails loudly instead of the real one.
+        run_env["HOME"] = str(Path(scratch) / "home")
+        if fake_dir:
+            run_env["PATH"] = f"{fake_dir}/bin:{run_env['PATH']}"
+            run_env["FAKE_DIR"] = str(fake_dir)
+            run_env["HOME"] = str(Path(fake_dir) / "home")
+        else:
+            tripwires = Path(scratch) / "bin"
+            tripwires.mkdir()
+            for tool in ("oc", "kubectl", "podman", "cpd-cli"):
+                (tripwires / tool).write_text(f'#!/bin/sh\necho "{tool} must not run in this test: $*" >&2\nexit 99\n')
+                (tripwires / tool).chmod(0o755)
+            run_env["PATH"] = f"{tripwires}:{run_env['PATH']}"
+        run_env.update(env or {})
+        script = f'set -euo pipefail\nsource "{HELPERS}"\n{textwrap.dedent(body)}'
+        return subprocess.run(["zsh", "-c", script], capture_output=True, text=True, env=run_env, cwd=cwd, timeout=120,
+                              check=False)
 
 
 def out(result):
@@ -385,6 +401,112 @@ def test_nothing_to_prune(fake):
     assert result.returncode == 0, result.stderr
     assert "oc delete" not in (fake / "oc.log").read_text()
     assert "Removed" not in result.stderr + result.stdout
+
+
+# --- C3: BuildConfigs of older image tags ---------------------------------------------------------------------
+def bcs_json(*bcs):
+    """BuildConfigs as `oc get buildconfigs -o json` lists them: (name, tag, created second)."""
+    return json.dumps({"items": [{
+        "metadata": {"name": n, "creationTimestamp": f"2026-11-11T10:00:{t:02d}Z"},
+        "spec": {"output": {"to": {"kind": "ImageStreamTag", "name": f"install-runner:{tag}"}}}} for n, tag, t in bcs]})
+
+
+def all_builds_json(*builds):
+    """Builds of several BuildConfigs: (name, build config, created second, phase)."""
+    return json.dumps({"items": [{
+        "metadata": {"name": n, "creationTimestamp": f"2026-11-11T10:00:{t:02d}Z",
+                     "labels": {"openshift.io/build-config.name": bc},
+                     "annotations": {"openshift.io/build.pod-name": f"{n}-build"}},
+        "status": {"phase": phase}} for n, bc, t, phase in builds]})
+
+
+def sets_json(*sets):
+    """Slot StatefulSets: (namespace, image tag of the runner container)."""
+    reg = "image-registry.openshift-image-registry.svc:5000/install-runner-system/install-runner"
+    return json.dumps({"items": [{
+        "metadata": {"name": "install-runner", "namespace": ns},
+        "spec": {"template": {"spec": {"containers": [{"name": "runner", "image": f"{reg}:{tag}"},
+                                                      {"name": "swhcc", "image": "cp.icr.io/cp/cpd/olm-utils-premium-v4@sha256:x"}]}}}}
+        for ns, tag in sets]})
+
+
+def prune_scene(fake):
+    # e was made first but built last, so it is the newest by use; d is the current one.
+    (fake / "bcs.json").write_text(bcs_json(("bc-a", "a", 1), ("bc-b", "b", 2), ("bc-c", "c", 3), ("bc-d", "d", 4),
+                                            ("bc-e", "e", 0)))
+    (fake / "builds.json").write_text(all_builds_json(("bc-a-1", "bc-a", 1, "Complete"), ("bc-b-1", "bc-b", 2, "Running"),
+                                                      ("bc-c-1", "bc-c", 3, "Complete"), ("bc-c-2", "bc-c", 3, "Failed"),
+                                                      ("bc-e-1", "bc-e", 5, "Complete")))
+    # A slot runs tag a; a StatefulSet outside install-runner-* namespaces protects nothing.
+    (fake / "sets.json").write_text(sets_json(("install-runner-cpd-x", "a"), ("openshift-other", "c")))
+
+
+def deletes(fake):
+    return [c for c in (fake / "oc.log").read_text().splitlines() if c.startswith("oc delete")]
+
+
+def test_older_build_configs_are_pruned_but_never_a_live_or_used_one(fake):
+    prune_scene(fake)
+    result = zsh("_ir_prune_build_configs bc-d", fake)
+    assert result.returncode == 0, result.stderr
+    log = (fake / "oc.log").read_text().splitlines()
+    assert "oc get buildconfigs -n install-runner-system -l app.kubernetes.io/managed-by=install-runner -o json" in log
+    assert "oc get statefulsets -A -l app.kubernetes.io/managed-by=install-runner -o json" in log
+    assert deletes(fake) == ["oc delete build bc-c-1 -n install-runner-system --ignore-not-found",
+                             "oc delete pod bc-c-1-build -n install-runner-system --ignore-not-found",
+                             "oc delete build bc-c-2 -n install-runner-system --ignore-not-found",
+                             "oc delete pod bc-c-2-build -n install-runner-system --ignore-not-found",
+                             "oc delete buildconfig bc-c -n install-runner-system --ignore-not-found"], \
+        "e and d are the newest two, b has a build running, a slot runs a"
+    assert not any("istag" in c or "imagestream" in c for c in log), "image tags stay"
+    assert "Removed 1 older runner BuildConfig(s)" in result.stdout
+
+
+def test_the_current_build_config_is_kept_even_when_it_is_old(fake):
+    prune_scene(fake)
+    result = zsh("IR_KEEP_IMAGE_TAGS=1 _ir_prune_build_configs bc-c", fake)
+    assert result.returncode == 0, result.stderr
+    assert [c.split()[3] for c in deletes(fake) if c.startswith("oc delete buildconfig")] == ["bc-d"]
+
+
+@pytest.mark.parametrize("broken", ["bcs_fail", "builds_fail", "sets_fail"])
+def test_a_list_that_cannot_be_read_prunes_nothing(fake, broken):
+    prune_scene(fake)
+    (fake / broken).touch()
+    result = zsh("_ir_prune_build_configs bc-d", fake)
+    assert result.returncode == 0, result.stderr
+    assert "Could not list the runner's older BuildConfigs" in result.stderr
+    assert deletes(fake) == []
+
+
+def test_a_failed_build_config_delete_only_warns(fake):
+    prune_scene(fake)
+    (fake / "delete_bc_fail").touch()
+    result = zsh("_ir_prune_build_configs bc-d", fake)
+    assert result.returncode == 0, result.stderr
+    assert "Could not delete the old BuildConfig bc-c" in result.stderr
+    assert "Removed" not in result.stdout
+
+
+def test_a_failed_build_delete_keeps_its_build_config(fake):
+    """A BuildConfig whose Builds could not all go stays, so none is left without its config."""
+    prune_scene(fake)
+    (fake / "delete_build_fail").touch()
+    result = zsh("_ir_prune_build_configs bc-d", fake)
+    assert result.returncode == 0, result.stderr
+    assert "Could not delete the old BuildConfig bc-c (or one of its builds)" in result.stderr
+    assert not any(c.startswith("oc delete buildconfig") for c in deletes(fake)), deletes(fake)
+    assert "Removed" not in result.stdout
+
+
+def test_a_build_prunes_older_build_configs_after_its_own_builds(sb):
+    (sb.fake / "state").write_text("completed\n")
+    (sb.fake / "image_missing").touch()
+    result = handoff(sb)
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = (sb.fake / "oc.log").read_text()
+    assert log.index("start-build") < log.index("get builds -n install-runner-system -l") < log.index("get buildconfigs")
+    assert "Could not" not in result.stderr
 
 
 def test_failed_run_returns_failure(sb):

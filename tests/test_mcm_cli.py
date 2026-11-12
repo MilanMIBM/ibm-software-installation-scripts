@@ -62,6 +62,14 @@ def state(sb):
     return mcm.read_state(repo=sb.repo, env={})
 
 
+def record(sb, cluster, slot, **values):
+    """A runner launch record as ir_slot_record_set writes it (src/helpers/install_runner_slots.sh)."""
+    base = sb.home / "cpd-cli" / ("clusters/" + cluster if cluster else "") / ".runner_slots"
+    base.mkdir(parents=True, exist_ok=True)
+    keys = ("url", "run", "install", "launched", "state")
+    (base / slot).write_text("".join(f"{k}={values.get(k, '')}\n" for k in keys))
+
+
 def setup_on(sb, names=("itz-a", "itz-b"), current=None):
     assert run(sb, "on", "--no-migrate").returncode == 0
     for name in names:
@@ -903,6 +911,36 @@ class TestContainersStatus:
         assert re.search(r"\b(9|10)m\b", line) and re.search(r"1h (49|50|51)m", line)
         _, words_b = status_row(result, f"{PLAY}-itz-b")
         assert "exited" in words_b and "no" in words_b and "-" in words_b
+
+    def test_launch_records_are_listed_one_line_each(self, sb):
+        """C4: runs handed to runner pods have no container, so they get lines of their own, from the records."""
+        setup_on(sb, current="itz-a")
+        idle(sb)
+        sb.add_container(f"{PLAY}-itz-a", started_at=LONG_AGO)
+        record(sb, "itz-b", "cpd-cpd-op", url="https://api.itz-b.example.com:6443", run="20261112T100000Z",
+               install="cpd", launched="2026-11-12T10:00:00Z", state="launched")
+        record(sb, None, "smoke", url="https://api.flat.example.com:6443", run="-", install="smoke", state="starting")
+        result = self._table(sb)
+        text = result.stdout
+        assert "In-cluster runs launched from this machine (no local container needed" in text
+        rows = text.split("In-cluster runs launched", 1)[1].splitlines()[1:]
+        assert rows[0].split() == ["CLUSTER", "SLOT", "INSTALL", "STATE", "RUN", "LAUNCHED", "URL"]
+        assert rows[1].split() == ["(flat)", "smoke", "smoke", "starting", "-", "-", "https://api.flat.example.com:6443"]
+        assert rows[2].split() == ["itz-b", "cpd-cpd-op", "cpd", "launched", "20261112T100000Z", "2026-11-12T10:00:00Z",
+                                   "https://api.itz-b.example.com:6443"]
+        # The container table itself is unchanged: itz-b has no row of its own for the pod run.
+        assert status_row(result, f"{PLAY}-itz-b")[1][2:4] == ["not", "created"]
+
+    def test_no_launch_records_print_no_section(self, sb):
+        setup_on(sb, current="itz-a")
+        assert "In-cluster runs" not in self._table(sb).stdout
+
+    def test_launch_records_show_with_no_containers_at_all(self, sb):
+        record(sb, None, "cpd-cpd-op", url="https://api.flat.example.com:6443", install="cpd", state="launched")
+        result = run(sb, "containers", "status")
+        assert result.returncode == 0, result.stderr
+        assert "In-cluster runs launched from this machine" in result.stdout
+        assert "cpd-cpd-op" in result.stdout
 
     def test_times_come_from_last_activity_marker(self, sb):
         setup_on(sb, current="itz-a")

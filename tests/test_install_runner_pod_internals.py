@@ -254,7 +254,8 @@ def test_status_publishes_the_notice(tmp_path):
     put(tmp_path, "bin/oc", FAKE_OC, mode=0o755)
     script = (f"typeset -g SIG_TERM='' LAST_STATUS='' LAST_PUBLISH=0 SUP_KUBECONFIG=''\nIR_HEARTBEAT=60\nsay() {{ :; }}\n"
               f"{status_functions()}\npublish_status {run}\nrm {run}/notice\npublish_status {run}\n")
-    env = {"PATH": f"{tmp_path}/bin:/usr/bin:/bin", "FAKE_DIR": str(tmp_path), "IR_NAMESPACE": "ns", "HOME": str(tmp_path)}
+    env = {"PATH": f"{tmp_path}/bin:/usr/bin:/bin", "FAKE_DIR": str(tmp_path), "IR_NAMESPACE": "ns", "HOME": str(tmp_path),
+           "IR_WORK": str(tmp_path)}
     result = subprocess.run(["zsh", "-c", script], env=env, capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     creates = [l for l in (tmp_path / "oc.log").read_text().splitlines() if l.startswith("create configmap")]
@@ -273,13 +274,33 @@ def test_status_reports_collected_from_the_marker_collect_leaves(tmp_path):
     put(tmp_path, "bin/oc", FAKE_OC, mode=0o755)
     script = (f"typeset -g SIG_TERM='' LAST_STATUS='' LAST_PUBLISH=0 SUP_KUBECONFIG=''\nIR_HEARTBEAT=0\nsay() {{ :; }}\n"
               f"{status_functions()}\npublish_status {run}\ntouch {run}/collected\npublish_status {run}\npublish_status {run}\n")
-    env = {"PATH": f"{tmp_path}/bin:/usr/bin:/bin", "FAKE_DIR": str(tmp_path), "IR_NAMESPACE": "ns", "HOME": str(tmp_path)}
+    env = {"PATH": f"{tmp_path}/bin:/usr/bin:/bin", "FAKE_DIR": str(tmp_path), "IR_NAMESPACE": "ns", "HOME": str(tmp_path),
+           "IR_WORK": str(tmp_path)}
     result = subprocess.run(["zsh", "-c", script], env=env, capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     creates = [l for l in (tmp_path / "oc.log").read_text().splitlines() if l.startswith("create configmap")]
     assert len(creates) == 3
     assert "--from-literal=collected=no " in creates[0]
     assert all("--from-literal=collected=yes " in c for c in creates[1:]), "the heartbeat report keeps yes"
+
+
+def test_status_without_a_work_folder_writes_no_heartbeat(tmp_path):
+    """B-R1: with IR_WORK unset (or no runs folder) the heartbeat for follow.sh is skipped quietly: never a
+    path at the root of the host's filesystem."""
+    run = tmp_path / "runs/r1"
+    put(run, "run.env", "IR_CHAIN='x.sh'\n")
+    put(run, "state", "running\n")
+    put(tmp_path, "bin/oc", FAKE_OC, mode=0o755)
+    script = (f"typeset -g SIG_TERM='' LAST_STATUS='' LAST_PUBLISH=0 SUP_KUBECONFIG=''\nIR_HEARTBEAT=60\nsay() {{ :; }}\n"
+              f"{status_functions()}\nunset IR_WORK\npublish_status {run}\nIR_WORK={tmp_path}/none\n"
+              f"LAST_STATUS=''\npublish_status {run}\n")
+    env = {"PATH": f"{tmp_path}/bin:/usr/bin:/bin", "FAKE_DIR": str(tmp_path), "IR_NAMESPACE": "ns", "HOME": str(tmp_path)}
+    result = subprocess.run(["zsh", "-c", script], env=env, capture_output=True, text=True, timeout=60, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == "", result.stderr
+    assert not (tmp_path / "none").exists() and not (tmp_path / "runs/.heartbeat").exists()
+    creates = [l for l in (tmp_path / "oc.log").read_text().splitlines() if l.startswith("create configmap")]
+    assert len(creates) == 2, "the status itself is still published"
 
 
 # --- 5. kubeconfig separation through run-attempt.sh ---------------------------------------------------------

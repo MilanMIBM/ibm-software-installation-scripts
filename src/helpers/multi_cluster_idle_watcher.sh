@@ -15,6 +15,10 @@ if [ ! -x "$0" ]; then chmod +x "$0" && exec "$0" "$@"; fi
 #   4. the process scan inside the container
 #   5. the lease again, under the .stopping marker, then podman stop -t 3
 #
+# Installs handed to runner pods (in-cluster runs) are never activity here: they
+# need no local container or VM (see _w_work_pending). The log counts them per
+# cluster, from their launch records, so an idle stop of such a cluster reads right.
+#
 # When it has stopped the last managed container and podman ps shows nothing
 # running at all, it also stops the podman VM, if MCM_STOP_IDLE_PODMAN_VM is true and
 # the mode is on. A run that has no container yet keeps the VM up: a live lease on any
@@ -45,7 +49,7 @@ set -uo pipefail
 
 case "${1:-}" in
     -h|--help)
-        sed -n '4,40p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '4,44p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     --once|"")
@@ -62,6 +66,8 @@ zmodload zsh/datetime || { print -r -- "[ERROR] zsh/datetime is not available" >
 zmodload -F zsh/stat b:zstat || { print -r -- "[ERROR] zsh/stat is not available" >&2; exit 1; }
 
 source "${0:A:h}/multi_cluster_helpers.sh"
+# Launch records of in-cluster runs, read for the log only (_w_report_runner_slots).
+source "${0:A:h}/install_runner_slots.sh"
 
 # The watcher serves every cluster, whatever the shell that launched it was pinned to.
 unset MCM_CLUSTER MCM_RUN_TARGETS
@@ -227,6 +233,11 @@ _w_check_container() {
 # 0 when something is on its way that needs podman: a live run on any cluster (it may
 # have no container yet), or a cpd-cli manage within the timeout (it may still be
 # pulling the image). REPLY says what.
+# A run handed to a runner pod (INSTALL_RUN_MODE=cluster) never counts: it takes no
+# lease, touches no .last_activity and needs no local container or VM, so a cluster
+# whose only runs are in pods (launch records in <cluster>/.runner_slots/) is idle
+# here. Only a local image build for one (build-local-push) holds a lease, while
+# podman works. Keep it that way: never read .runner_slots/ as activity.
 _w_work_pending() {   # SINCE
     local since="$1" folder
     local -i mtime=0
@@ -300,6 +311,31 @@ _w_managed() {
     return 0
 }
 
+# The installs handed to runner pods from this machine (their launch records), one
+# line per cluster, so the log says why such a cluster counts as idle. For the log
+# only: never activity (see _w_work_pending). Logged when the counts change, and on
+# every --once pass.
+_w_runner_slots_seen=""
+_w_report_runner_slots() {
+    local line cluster summary=""
+    local -A count
+    for line in "${(@f)$(ir_slot_records 2>/dev/null)}"; do
+        [[ -n "${line}" ]] || continue
+        cluster="${line%%$'\t'*}"
+        [[ "${cluster}" == - ]] && cluster="(flat config)"
+        count[${cluster}]=$(( ${count[${cluster}]:-0} + 1 ))
+    done
+    for cluster in ${(ok)count}; do
+        summary+="${cluster}=${count[${cluster}]} "
+    done
+    [[ "${summary}" == "${_w_runner_slots_seen}" ]] && return 0
+    _w_runner_slots_seen="${summary}"
+    for cluster in ${(ok)count}; do
+        _w_log "${cluster}: ${count[${cluster}]} in-cluster run(s) in runner pods (no local container needed), not counted as activity"
+    done
+    return 0
+}
+
 # 1 when the watcher should exit.
 _w_pass() {
     local running="" remaining="" name
@@ -321,6 +357,7 @@ _w_pass() {
         return 0
     fi
     _w_invalid=0
+    _w_report_runner_slots
     timeout=$(( MCM_CONTAINER_IDLE_TIMEOUT_MINUTES * 60 ))
     if (( timeout <= 0 )); then
         _w_log "the idle timeout is 0, nothing to watch, exiting"

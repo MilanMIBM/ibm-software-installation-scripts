@@ -139,6 +139,12 @@ publish_status() {
     local now="${EPOCHSECONDS:-$(date +%s)}" sig="${state}|${step}|${attempts}|${id}|${warned}|${collected}|${notice}"
     [[ "${sig}" == "${LAST_STATUS}" ]] && (( now - LAST_PUBLISH < IR_HEARTBEAT )) && return 0
     LAST_STATUS="${sig}" LAST_PUBLISH="${now}"
+    # For follow.sh: a supervisor that stops reporting is stuck (attach gives up on it).
+    # Only into an existing runs folder: never a path at / when IR_WORK is unset.
+    if [[ -n "${IR_WORK:-}" && -d "${IR_WORK}/runs" ]]; then
+        { print -r -- "${now}" > "${IR_WORK}/runs/.heartbeat.new" \
+            && mv -f "${IR_WORK}/runs/.heartbeat.new" "${IR_WORK}/runs/.heartbeat"; } 2>/dev/null
+    fi
     [[ -n "${IR_NAMESPACE:-}" ]] || return 0
     soc create configmap ir-status -n "${IR_NAMESPACE}" \
         --from-literal=slot="${IR_SLOT:-}" --from-literal=state="${state}" --from-literal=step="${step}" \
@@ -200,6 +206,9 @@ run_attempt() {
     # A result from an earlier attempt must not stand for this one.
     rm -f "${run}/rc"
     state_set "${run}" running
+    # A resume request is taken once its attempt is running, never before: a viewer
+    # (follow.sh) counts the request as active, then the new state, with no gap.
+    rm -f "${run}/control.resume"
     publish_status "${run}"
     say "Run ${run:t}: attempt ${attempt}"
     (( attempt > 1 )) && print -r -- $'\r\n[runner] Attempt '"${attempt}"$' of this run: finished steps are skipped.\r' >> "${run}/terminal.log"
@@ -314,8 +323,8 @@ while [[ -z "${SIG_TERM}" ]]; do
             *)
                 if [[ -e "${run}/control.resume" ]]; then
                     # Its content picks which steps run again: "retry-warned" or nothing.
+                    # The file stays until run_attempt has set the state to running.
                     cat "${run}/control.resume" > "${run}/retry-warned"
-                    rm -f "${run}/control.resume"
                     print 0 > "${run}/attempts"
                     run_attempt "${run}"
                 fi

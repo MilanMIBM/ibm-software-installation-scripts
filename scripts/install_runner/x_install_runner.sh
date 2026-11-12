@@ -128,12 +128,17 @@ if [[ "${verb}" == status && -z "${IR_STATUS_ROWS:-}" ]] \
     exit "${status_rc}"
 fi
 
+# Where install modules live: src/install_runner/installs (and, for tests only, the
+# folders in IR_MODULE_DIRS).
+source "${REPO_DIR}/src/helpers/install_runner_mode.sh"
 # The install decides which config, and so which cluster, this talks to.
 ir_module_target() {   # <install id> -> stdout
-    awk -F= '$1=="INSTALL_ENV_TARGET"{gsub(/"/,"",$2);print $2}' "${REPO_DIR}/src/install_runner/installs/$1.conf"
+    local REPLY
+    ir_module_file "${REPO_DIR}" "$1" conf || return 0
+    awk -F= '$1=="INSTALL_ENV_TARGET"{gsub(/"/,"",$2);print $2}' "${REPLY}"
 }
 if [[ -n "${INSTALL}" ]]; then
-    [[ -f "${REPO_DIR}/src/install_runner/installs/${INSTALL}.conf" ]] \
+    ir_module_file "${REPO_DIR}" "${INSTALL}" conf \
         || { echo "[ERROR] No install module: ${INSTALL} (src/install_runner/installs/)" >&2; exit 2; }
     export ENV_TARGET="$(ir_module_target "${INSTALL}")"
 else
@@ -144,10 +149,10 @@ fi
 # The installs with a config in this configs folder -> reply.
 ir_installs_here() {   # <configs root>
     local f target
-    local -a found
+    local -a found confs
+    ir_module_confs "${REPO_DIR}"; confs=("${reply[@]}")
     reply=()
-    for f in "${REPO_DIR}"/src/install_runner/installs/*.conf(N); do
-        [[ "${f:t:r}" == _template ]] && continue
+    for f in "${confs[@]}"; do
         target="$(ir_module_target "${f:t:r}")"
         [[ -n "${target}" ]] || continue
         found=("$1"/*/${target}_vars.sh(N))
@@ -249,7 +254,8 @@ case "${verb}" in
     status)    ir_status ;;
     attach)    ir_watch "${SLOT}" "${rest[@]}" ;;
     stop)      ir_stop "${SLOT}" ;;
-    # A Ctrl-C while the runner has yet to take the resume detaches, as in the watch.
+    # A Ctrl-C once the request is on its way detaches, as in the watch (0); one before
+    # anything was sent says so and ends with 130.
     resume)    ir_resume "${SLOT}" "${rest[@]}"; [[ "${REPLY}" == detached ]] || ir_watch "${SLOT}" --resumed ;;
     collect)   ir_collect "${INSTALL}" "${SLOT}" "${rest[@]}" ;;
     teardown)  ir_teardown "${SLOT}" "${rest[@]}" ;;

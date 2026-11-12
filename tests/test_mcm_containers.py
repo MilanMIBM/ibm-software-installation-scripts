@@ -775,6 +775,39 @@ class TestT12Watcher:
         assert ["machine", "stop"] in sb.calls("podman")
         assert (sb.home / "cpd-cli/clusters/.idle-watcher.log").exists()
 
+    def test_a_cluster_with_only_runner_pod_runs_is_idle(self, sb):
+        """C4: a run in a runner pod needs no local container or VM: its launch record is no activity."""
+        set_up(sb)
+        old_container(sb)
+        old_activity(sb)
+        for cluster in ("itz-a", "itz-b"):
+            slots = sb.home / "cpd-cli" / "clusters" / cluster / ".runner_slots"
+            slots.mkdir(parents=True)
+            (slots / "cpd-cpd-op").write_text("url=x\nrun=r1\ninstall=cpd\nlaunched=now\nstate=launched\n")
+        result = watcher_once(sb)
+        assert result.returncode == 0, result.stderr
+        assert sb.container(f"{PLAY}-itz-a")["running"] is False
+        assert ["machine", "stop"] in sb.calls("podman")
+        assert "VM stays up for now" not in result.stdout
+        for cluster in ("itz-a", "itz-b"):
+            assert (f"{cluster}: 1 in-cluster run(s) in runner pods (no local container needed), not counted as activity"
+                    in result.stdout), result.stdout
+
+    def test_only_runner_pod_runs_and_no_container_lets_the_watcher_exit(self, sb):
+        set_up(sb)
+        slots = sb.home / "cpd-cli" / "clusters" / "itz-b" / ".runner_slots"
+        slots.mkdir(parents=True)
+        (slots / "cpd-cpd-op").write_text("state=launched\n")
+        (slots / "confluent-confluent").write_text("state=launched\n")
+        flat = sb.home / "cpd-cli" / ".runner_slots"
+        flat.mkdir(parents=True)
+        (flat / "cpd-cpd-op").write_text("state=collected\n")
+        result = watcher_once(sb)
+        assert "no managed container is running, exiting" in result.stdout
+        assert "waiting" not in result.stdout
+        assert "itz-b: 2 in-cluster run(s) in runner pods" in result.stdout, result.stdout
+        assert "(flat config): 1 in-cluster run(s) in runner pods" in result.stdout
+
     def test_recent_last_activity_is_enough_and_costs_no_podman_call(self, sb):
         set_up(sb)
         old_container(sb)

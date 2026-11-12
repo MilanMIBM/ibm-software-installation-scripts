@@ -15,7 +15,6 @@ import os
 import pty
 import re
 import select
-import shutil
 import subprocess
 import time
 
@@ -575,13 +574,13 @@ def test_chain_help_names_the_cluster_and_mode_flags():
 
 # --- C10: the same-type lock, launch side (preflight) --------------------------------------------------------------
 def modules_with_confluent(tmp_path):
-    """A copy of the install modules plus a second install type, for IR_SRC."""
-    src = tmp_path / "install_runner"
-    shutil.copytree(REPO / "src/install_runner/installs", src / "installs")
-    (src / "installs/confluent.conf").write_text(
+    """A second install type next to the real modules -> the env that adds it (the test-only IR_MODULE_DIRS)."""
+    extra = tmp_path / "more_installs"
+    extra.mkdir()
+    (extra / "confluent.conf").write_text(
         'INSTALL_ID="confluent"\nINSTALL_LABEL="Confluent Platform"\nINSTALL_ENV_TARGET="confluent"\n'
         'RUNNER_ENTRYPOINTS="scripts/install_confluent_platform/x_full.sh"\n')
-    return src
+    return {**PREFLIGHT_BASE, "IR_MODULE_DIRS": str(extra)}
 
 
 def status_items(fake_dir, *items):
@@ -592,18 +591,18 @@ def status_items(fake_dir, *items):
 
 def test_another_install_type_on_the_cluster_is_allowed(fake, tmp_path):
     """The chain decides the type before the slot name does: cpd-x runs the Confluent chain."""
-    src = modules_with_confluent(tmp_path)
+    env = modules_with_confluent(tmp_path)
     status_items(fake, ("confluent-cp", "running", "-"), ("cpd-x", "staged", "scripts/install_confluent_platform/x_full.sh"))
-    result = zsh(f'IR_SRC="{src}"\nir_preflight cpd', fake, PREFLIGHT_BASE)
+    result = zsh("ir_preflight cpd", fake, env)
     assert result.returncode == 0, result.stderr
     assert "Also running on this cluster, other install types (allowed): confluent-cp (confluent), cpd-x (confluent)." in result.stdout
     assert "already runs" not in result.stderr
 
 
 def test_the_same_type_is_refused_by_its_chain_too(fake, tmp_path):
-    src = modules_with_confluent(tmp_path)
+    env = modules_with_confluent(tmp_path)
     status_items(fake, ("odd-name", "interrupted", CPD_CHAIN), ("confluent-cp", "running", "-"))
-    result = zsh(f'IR_SRC="{src}"\nir_preflight cpd', fake, PREFLIGHT_BASE)
+    result = zsh("ir_preflight cpd", fake, env)
     assert result.returncode != 0
     assert f"{LABEL} already runs on this cluster." in result.stderr
     assert "in the cluster: slot odd-name (interrupted)." in result.stderr

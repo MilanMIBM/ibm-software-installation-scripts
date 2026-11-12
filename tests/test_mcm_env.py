@@ -723,6 +723,10 @@ def test_t5_restore_target_kubeconfig_survives_the_env_load(script, args):
         two_clusters(sb, current="itz-a")
         sb.write_config("cpd", cluster="itz-a", ocp_url=URL_A)
         target_dir = write_oadp_target(sb)
+        # The uninstall looks for other restores to the same target with pgrep over this machine's
+        # process table: an empty fake keeps the test off whatever the host runs right now.
+        (sb.bin / "pgrep").write_text("#!/bin/zsh\nexit 1\n")
+        (sb.bin / "pgrep").chmod(0o755)
         sb.run_script(f"{OADP}/{script}", env={"MCM_CLUSTER": None}, args=args, timeout=120)
         target_kubeconfig = target_dir / "tgt1.kubeconfig"
         current_kubeconfig = sb.repo / "configs" / "clusters" / "itz-a" / ".home" / ".kube" / "config"

@@ -59,10 +59,12 @@ def table_row(result, name):
 # --- helpers that run with a signal on the way -----------------------------------------------------------------
 def unit_env(fake_dir, env=None):
     run_env = {k: v for k, v in os.environ.items() if not k.startswith(("IR_", "INSTALL_RUN"))}
+    # HOME too: launch records and the multi-cluster helpers read ~/cpd-cli, never the real one.
     run_env.update({"_CP4D_REPO_ROOT": str(REPO), "OC_LOGIN": "true", "_CP4D_PREP_DONE": "1",
                     "PATH": f"{fake_dir}/bin:{run_env['PATH']}", "FAKE_DIR": str(fake_dir),
-                    "TMPDIR": str(fake_dir / "tmp"), "IR_ATTACH_RETRY_SECONDS": "0"})
+                    "TMPDIR": str(fake_dir / "tmp"), "IR_ATTACH_RETRY_SECONDS": "0", "HOME": str(fake_dir / "home")})
     (fake_dir / "tmp").mkdir(exist_ok=True)
+    (fake_dir / "home").mkdir(exist_ok=True)
     run_env.update(env or {})
     return run_env
 
@@ -543,6 +545,7 @@ def test_supervisor_marks_a_run_that_never_reached_a_step_rejected(tmp_path, cha
     (run_dir / "state").write_text("staged\n")
     env = {**{k: v for k, v in os.environ.items() if not k.startswith("IR_")},
            "PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_DIR": str(tmp_path), "IR_WORK": str(work),
+           "HOME": str(tmp_path / "home"),
            "IR_BIN": str(REPO / "src/install_runner/image/bin"), "IR_POLL": "0.2", "IR_HEARTBEAT": "1",
            "IR_SLOT": "t", "IR_NAMESPACE": "ns", "IR_ADMIN_BINDING": "b"}
     sup = subprocess.Popen(["zsh", str(REPO / "src/install_runner/image/bin/supervisor.sh")], env=env,

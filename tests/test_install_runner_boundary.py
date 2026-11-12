@@ -813,7 +813,7 @@ def test_status_carries_the_run_record(tmp_path):
     put(run, "path_map", "configs/cp4d_config=CONFIG_DIR:configs/clusters/itz-a/cp4d_config\n")
     put(tmp_path, "bin/oc", '#!/bin/bash\necho "$*" >> "$LOG"\n[ "$1" = create ] && echo "yaml"\nexit 0\n', mode=0o755)
     script = f"typeset -g SIG_TERM='' LAST_STATUS='' LAST_PUBLISH=0\nIR_HEARTBEAT=60\nsay() {{ :; }}\n{functions}\npublish_status {run}\n"
-    env = {"PATH": f"{tmp_path}/bin:/usr/bin:/bin", "LOG": str(tmp_path / "oc.log"), "IR_NAMESPACE": "ns",
+    env = {"PATH": f"{tmp_path}/bin:/usr/bin:/bin", "LOG": str(tmp_path / "oc.log"), "IR_NAMESPACE": "ns", "IR_WORK": str(tmp_path),
            "IR_SOURCE_CLUSTER": "itz-a", "IR_OCP_URL": SANDBOX_URL, "HOME": str(tmp_path)}
     result = subprocess.run(["zsh", "-c", script], env=env, capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
@@ -822,3 +822,5 @@ def test_status_carries_the_run_record(tmp_path):
                  "--from-literal=env_target=configs/cp4d_config/cpd_vars.sh",
                  "--from-literal=path_map=configs/cp4d_config=CONFIG_DIR:configs/clusters/itz-a/cp4d_config"):
         assert part in create, create
+    beat = (tmp_path / "runs/.heartbeat").read_text().strip()
+    assert f"--from-literal=heartbeat={beat}" in create, "follow.sh's heartbeat file carries the reported time"
