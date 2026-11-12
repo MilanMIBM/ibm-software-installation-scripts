@@ -23,7 +23,8 @@ CPD_PROFILE_NAME="${CPD_USERNAME}-profile"
 eval "${CPDM_OC_LOGIN}"
 
 # oc get routes --namespace=cpd-operands
-echo "Preparing user ${CPD_USERNAME} with ${CPD_APIKEY} in ${CPD_URL} as profile - ${CPD_PROFILE_NAME}"
+# In a runner pod (IR_IN_RUNNER) this line lands in the run log on the slot's volume, so the key is masked there.
+echo "Preparing user ${CPD_USERNAME} with ${${IR_IN_RUNNER:+****}:-${CPD_APIKEY}} in ${CPD_URL} as profile - ${CPD_PROFILE_NAME}"
 cpd-cli config users set "${CPD_USERNAME}" \
     --apikey="${CPD_APIKEY}"  \
     --username="${CPD_USERNAME}" 
