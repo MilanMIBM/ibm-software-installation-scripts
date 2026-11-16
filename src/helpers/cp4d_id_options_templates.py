@@ -358,7 +358,8 @@ cp4d_component_id_records = [
 ]
 
 # Service pages from IBM's "Services" page (Software Hub 5.4.x), keyed by component ID.
-# Instance and operator components link to the service they belong to.
+# Only the main component of a service gets the link, not its instance, operator or
+# dependency-bundle rows (datagate_instance, openpages_instance, informix, ...).
 _cp4d_service_docs_base = "https://www.ibm.com/docs/en/SSNFH6_5.4.x/svc-welcome/"
 cp4d_component_doc_urls = {
     _id: f"{_cp4d_service_docs_base}{_page}.html"
@@ -368,7 +369,6 @@ cp4d_component_doc_urls = {
         "cognos_analytics": "ca",
         "dashboard": "idash",
         "datagate": "dg",
-        "datagate_instance": "dg",
         "datalineage": "manta-data-lineage",
         "dataproduct": "dph",
         "datarefinery": "dr",
@@ -385,16 +385,13 @@ cp4d_component_doc_urls = {
         "hee": "hadoopaddon",
         "ikc_premium": "wkc",
         "ikc_standard": "wkc",
-        "informix": "ifx",
         "informix_cp4d": "ifx",
         "mantaflow": "manta",
         "match360": "mdc",
         "openpages": "openpages",
-        "openpages_instance": "openpages",
         "openscale": "aiopenscale",
         "planning_analytics": "pa",
         "productmaster": "pm",
-        "productmaster_instance": "pm",
         "replication": "data-replication",
         "rstudio": "rstudio",
         "spss": "spssmodeler",
@@ -409,7 +406,6 @@ cp4d_component_doc_urls = {
         "watsonx_bi_assistant": "wxbia",
         "watsonx_data": "watsonxdata",
         "watsonx_data_premium": "wxd-premium",
-        "watsonx_data_premium_dependencies": "wxd-premium",
         "watsonx_dataintegration": "wxd-integ",
         "watsonx_dataintelligence": "wxd-intell",
         "watsonx_governance": "watsonxgov",
