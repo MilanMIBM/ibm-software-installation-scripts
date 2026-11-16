@@ -1,3 +1,7 @@
+import secrets
+import string
+
+
 def get_iam_token(api_key, only_token=True):
     """Get IBM Cloud IAM token using an HTTP request.
 
@@ -69,3 +73,22 @@ def generate_zen_auth_header(username, api_key):
     encoded = base64.b64encode(credentials.encode()).decode()
 
     return f"ZenApiKey {encoded}"
+
+
+def generate_password(length=20):
+    # Alphanumeric only: safe in params.ini, URLs and Keycloak
+    alphabet = string.ascii_letters + string.digits
+    while True:
+        pw = "".join(secrets.choice(alphabet) for _ in range(length))
+        if any(c.isdigit() for c in pw) and any(c.isupper() for c in pw):
+            return pw
+
+
+def generate_turbonomic_password(length=20):
+    # Upper, lower, digit and one of - _ . : meets the usual complexity rules
+    # and stays safe in form posts and the single-quoted export
+    while True:
+        pw = list(generate_password(length - 1))
+        if any(c.islower() for c in pw):
+            pw.insert(secrets.randbelow(length), secrets.choice("-_."))
+            return "".join(pw)

@@ -8,14 +8,24 @@ app = marimo.App(
 
 with app.setup:
     import marimo as mo
-    import json
     import os
-    import secrets
     import shutil
-    import string
-    import urllib.request
     import uuid
     from src.helpers import multi_cluster_notebook as mcm_nb
+    from src.helpers.auth_helper_functions import (
+        generate_password,
+        generate_turbonomic_password,
+    )
+    from src.helpers.vars_handling_helpers import (
+        bool_str,
+        dict_to_records,
+        fetch_live_releases,
+        ordered_values,
+        quantity_cpu,
+        quantity_gi,
+        records_to_dict,
+        without_keys,
+    )
 
 
 @app.cell
@@ -119,145 +129,6 @@ def _():
         render_template_from_environment,
         sortable_kv,
     )
-
-
-@app.function
-def records_to_dict(records):
-    return {r["key"]: r["value"] for r in records}
-
-
-@app.function
-def without_keys(records, keys):
-    # Keys set by a dedicated widget are dropped from the editable key/value lists
-    return [r for r in records if r["key"] not in keys]
-
-
-@app.function
-def dict_to_records(values):
-    return [{"key": k, "value": v} for k, v in values.items()]
-
-
-@app.function
-def kv_value(kv_widget):
-    return records_to_dict(kv_widget.value.get("value"))
-
-
-@app.function
-def ordered_values(default_records, kv_widget=None, overrides=None):
-    # Keeps the defaults' order: widget overrides win, then the edited key/value list
-    edited = kv_value(kv_widget) if kv_widget is not None else {}
-    overrides = overrides or {}
-    return {
-        r["key"]: overrides.get(r["key"], edited.get(r["key"], r["value"]))
-        for r in default_records
-    }
-
-
-@app.function
-def bool_str(value):
-    return "true" if value else "false"
-
-
-@app.function
-def quantity_cpu(value):
-    # Kubernetes CPU quantity ("4", "250m") -> cores; unparsable -> 0
-    v = str(value or "").strip()
-    try:
-        return float(v[:-1]) / 1000 if v.endswith("m") else float(v)
-    except ValueError:
-        return 0.0
-
-
-@app.function
-def quantity_gi(value):
-    # Kubernetes memory/storage quantity ("12Gi", "512Mi", "1Ti") -> Gi; unparsable -> 0
-    v = str(value or "").strip()
-    for suffix, factor in (
-        ("Ti", 1024),
-        ("Gi", 1),
-        ("Mi", 1 / 1024),
-        ("Ki", 1 / 1024**2),
-    ):
-        if v.endswith(suffix):
-            try:
-                return float(v[: -len(suffix)]) * factor
-            except ValueError:
-                return 0.0
-    try:
-        return float(v) / 1024**3
-    except ValueError:
-        return 0.0
-
-
-@app.function
-def generate_password(length=20):
-    # Alphanumeric only: safe in params.ini, URLs and Keycloak
-    alphabet = string.ascii_letters + string.digits
-    while True:
-        pw = "".join(secrets.choice(alphabet) for _ in range(length))
-        if any(c.isdigit() for c in pw) and any(c.isupper() for c in pw):
-            return pw
-
-
-@app.function
-def generate_turbonomic_password(length=20):
-    # Upper, lower, digit and one of - _ . : meets the usual complexity rules
-    # and stays safe in form posts and the single-quoted export
-    while True:
-        pw = list(generate_password(length - 1))
-        if any(c.islower() for c in pw):
-            pw.insert(secrets.randbelow(length), secrets.choice("-_."))
-            return "".join(pw)
-
-
-@app.function
-def existing_config_value(key, path):
-    # Value of a single-quoted export in an already saved concert_vars.sh (path: the
-    # selected cluster's file or None), so a re-save keeps credentials that a live
-    # install depends on.
-    import re
-
-    if not path:
-        return None
-    try:
-        with open(path) as f:
-            text = f.read()
-    except OSError:
-        return None
-    m = re.search(rf"^export {re.escape(key)}='(.*)'$", text, re.M)
-    return m.group(1).replace("'\\''", "'") if m else None
-
-
-@app.function
-def fetch_live_releases(fallback, excludes):
-    # On-prem releases with an x86 archive, newest first; offline -> fallback
-    try:
-        req = urllib.request.Request(
-            "https://api.github.com/repos/IBM/Concert/releases?per_page=30",
-            headers={"Accept": "application/vnd.github+json"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            releases = json.load(resp)
-    except Exception:
-        return fallback
-    live = []
-    for rel in releases:
-        name = rel.get("name") or rel.get("tag_name", "")
-        if rel.get("draft") or any(x.lower() in name.lower() for x in excludes):
-            continue
-        assets = {a.get("name") for a in rel.get("assets", [])}
-        if "ibm-concert-x86.tar.gz" not in assets:
-            continue
-        tag = rel["tag_name"]
-        live.append(
-            {
-                "release_name": f"{name} ({rel.get('published_at', '')[:10]})",
-                "CONCERT_VERSION": tag.lstrip("v"),
-                "CONCERT_RELEASE_TAG": tag,
-                "CONCERT_ARCHIVE": "ibm-concert-x86.tar.gz",
-            }
-        )
-    return live or fallback
 
 
 @app.cell(hide_code=True)
@@ -971,7 +842,7 @@ def _(widget_labels):
 def _(default_concert_admin, widget_labels):
     admin_username_input = mo.ui.text(
         label=widget_labels.get("admin_username"),
-        value=records_to_dict(default_concert_admin).get("CONCERT_ADMIN_USERNAME"),
+        value=records_to_dict(default_concert_admin).get("CONCERT_ADMIN_USERNAME", ""),
         full_width=False,
     )
     return (admin_username_input,)
@@ -991,7 +862,7 @@ def _(default_concert_optimize, mcm_vars_file, sortable_kv, widget_controlled_ke
             [
                 dict(
                     r,
-                    value=existing_config_value(r["key"], mcm_vars_file())
+                    value=mcm_nb.saved_single_quoted_export_value(r["key"], mcm_vars_file())
                     or generate_turbonomic_password(),
                 )
                 if r["key"] == "CONCERT_OPTIMIZE_ADMIN_PASSWORD"
@@ -1013,7 +884,7 @@ def _(mcm_vars_file, widget_labels):
     # Keep the saved password: IBM's installer receives it again on every 3.2 run
     admin_password_input = mo.ui.text(
         label=widget_labels.get("admin_password"),
-        value=existing_config_value("CONCERT_ADMIN_PASSWORD", mcm_vars_file())
+        value=mcm_nb.saved_single_quoted_export_value("CONCERT_ADMIN_PASSWORD", mcm_vars_file())
         or generate_password(),
         kind="password",
         full_width=False,

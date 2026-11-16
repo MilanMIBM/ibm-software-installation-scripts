@@ -11,6 +11,7 @@ with app.setup:
     import uuid
     import os
     from src.helpers import multi_cluster_notebook as mcm_nb
+    from src.helpers.vars_handling_helpers import records_to_dict
 
 
 @app.cell
@@ -33,6 +34,7 @@ def _():
         default_project_naming_conventions,
         default_private_registry_setup,
         default_local_registry_setup,
+        default_install_runner_settings,
         default_swhub_control_center_separate_cluster,
         default_swhub_control_center_setup,
         image_group_id_records,
@@ -49,6 +51,7 @@ def _():
     return (
         cp4d_component_id_records,
         cp4d_license_entitlement_id_records,
+        default_install_runner_settings,
         default_local_registry_setup,
         default_private_registry_setup,
         default_project_naming_conventions,
@@ -60,37 +63,6 @@ def _():
         sortable_kv,
         write_vars_file,
     )
-
-
-@app.function
-def records_to_dict(records):
-    return {r["key"]: r["value"] for r in records}
-
-
-@app.function
-def existing_config_value(key, path):
-    # Value of an uncommented export in an already saved cpd_vars.sh (path: the selected
-    # cluster's file or None), so a re-save keeps the run mode and runner settings set for
-    # that cluster, by hand or by an earlier save. The last export wins, as in the shell.
-    import re
-
-    if not path:
-        return None
-    try:
-        with open(path) as f:
-            text = f.read()
-    except OSError:
-        return None
-    found = list(
-        re.finditer(
-            rf"^[ \t]*export[ \t]+{re.escape(key)}=(?:\"([^\"]*)\"|'([^']*)'|([^\s#'\"]*))[ \t]*(?:#.*)?$",
-            text,
-            re.M,
-        )
-    )
-    if not found:
-        return None
-    return next(g for g in found[-1].groups() if g is not None)
 
 
 @app.cell(hide_code=True)
@@ -415,6 +387,21 @@ def _(
 
 @app.cell
 def _(
+    install_run_mode_select,
+    install_runner_records,
+    install_runner_storage_records,
+):
+    # The runner settings only matter when the chains run in the cluster.
+    (
+        mo.vstack([install_runner_storage_records, install_runner_records], gap=1)
+        if install_run_mode_select.value == "cluster"
+        else None
+    )
+    return
+
+
+@app.cell
+def _(
     component_selection_tables,
     license_entitlement_table,
     licenses_are_prod_checkbox,
@@ -464,7 +451,7 @@ def _(mcm_vars_file, widget_labels):
         "local - on this machine": "local",
         "cluster - in a pod on the cluster": "cluster",
     }
-    _saved = existing_config_value("INSTALL_RUN_MODE", mcm_vars_file())
+    _saved = mcm_nb.saved_export_value("INSTALL_RUN_MODE", mcm_vars_file())
     install_run_mode_select = mo.ui.dropdown(
         label=widget_labels.get("install_run_mode"),
         options=_options,
@@ -483,36 +470,52 @@ def _(install_run_mode_select):
 
 
 @app.cell
-def _(mcm_vars_file, sortable_kv):
-    # Blank means the built-in default, which the generated file shows as a commented line.
-    # Values come from the selected cluster's saved file: a storage class or image names
-    # one cluster, so it is kept per cluster.
-    _keys = (
-        "INSTALL_RUNNER_STORAGE_CLASS",
-        "INSTALL_RUNNER_IMAGE_SOURCE",
-        "INSTALL_RUNNER_IMAGE",
-        "INSTALL_RUNNER_PVC_SIZE",
-        "INSTALL_RUNNER_AUTO_RESUME",
-        "INSTALL_RUNNER_MAX_RESUMES",
-        "INSTALL_RUNNER_KEEP_ADMIN",
-        "INSTALL_RUNNER_NODE_SELECTOR",
-        "INSTALL_RUNNER_TTY_SIZE",
-        "INSTALL_RUNNER_ROLLOUT_TIMEOUT",
-        "INSTALL_RUNNER_SWHCC_IMAGE",
-        "INSTALL_RUNNER_SWHCC_PULL_SECRET",
-        "INSTALL_RUNNER_SWHCC_MEMORY_LIMIT",
-    )
-    install_runner_records = sortable_kv(
-        label=(
-            "In-cluster runner settings (blank = default: block storage class, image built in the cluster, "
-            "20Gi volume, auto-resume true, 3 resumes, cluster-admin removed after the run, any node, "
-            "120x50 terminal, 900 s for the runner pod to come up, IBM's Control Center image pulled from "
-            "cp.icr.io and pinned by digest, with a pull secret made from IBM_ENTITLEMENT_KEY, "
-            "4Gi Control Center memory):"
-        ),
+def _(
+    block_storage_class_select,
+    default_install_runner_settings,
+    mcm_vars_file,
+    sortable_kv,
+):
+    # The runner's storage class in a table of its own: it follows the block storage class
+    # dropdown, and a widget is rebuilt when an input changes, so keeping it apart means a
+    # new block class never wipes edits in the other runner settings.
+    # It starts as the selected cluster's saved value, else the block class picked above
+    # (what a blank storage class falls back to).
+    install_runner_storage_records = sortable_kv(
+        label="In-cluster runner storage class:",
         value=[
-            {"key": _k, "value": existing_config_value(_k, mcm_vars_file()) or ""}
-            for _k in _keys
+            {
+                **_row,
+                "value": mcm_nb.saved_export_value(_row["key"], mcm_vars_file())
+                or _row["value"]
+                or block_storage_class_select.value
+                or "",
+            }
+            for _row in default_install_runner_settings
+            if _row["key"] == "INSTALL_RUNNER_STORAGE_CLASS"
+        ],
+        addable=False,
+        removable=False,
+        editable=True,
+        movable=False,
+    )
+    return (install_runner_storage_records,)
+
+
+@app.cell
+def _(default_install_runner_settings, mcm_vars_file, sortable_kv):
+    # Each field starts with the value in the selected cluster's saved file (an image or
+    # node selector names one cluster, so it is kept per cluster), else its default.
+    install_runner_records = sortable_kv(
+        label="In-cluster runner settings:",
+        value=[
+            {
+                **_row,
+                "value": mcm_nb.saved_export_value(_row["key"], mcm_vars_file())
+                or _row["value"],
+            }
+            for _row in default_install_runner_settings
+            if _row["key"] != "INSTALL_RUNNER_STORAGE_CLASS"
         ],
         addable=False,
         removable=False,
@@ -523,9 +526,11 @@ def _(mcm_vars_file, sortable_kv):
 
 
 @app.cell
-def _(install_runner_records):
+def _(install_runner_records, install_runner_storage_records):
+    # Storage class first, then the rest: the order of default_install_runner_settings.
     install_runner_settings = records_to_dict(
-        install_runner_records.value.get("value")
+        install_runner_storage_records.value.get("value")
+        + install_runner_records.value.get("value")
     )
     return (install_runner_settings,)
 
@@ -537,10 +542,9 @@ def _(install_run_mode_select, install_runner_records, widget_width):
             mo.md(
                 "With **cluster**, the install chains run in a pod on the cluster, so this machine "
                 "can go off during the install. See *Running an install in the cluster* in the README. "
-                "The settings below are used only then."
+                "Its runner settings show up below once **cluster** is picked."
             ),
             install_run_mode_select.style({"width": widget_width}),
-            install_runner_records,
         ],
         gap=1,
     )

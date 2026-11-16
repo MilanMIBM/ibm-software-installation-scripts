@@ -14,3 +14,4 @@ kubernetes
 pyyaml
 pytest
 pytest-asyncio
+pytest-xdist

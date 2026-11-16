@@ -744,13 +744,17 @@ class TestRunnerNotebook:
         assert list(settings) == list(RUNNER_KNOBS)
         assert settings["INSTALL_RUNNER_STORAGE_CLASS"] == "ocs-alpha"
         assert settings["INSTALL_RUNNER_PVC_SIZE"] == "40Gi"
-        assert settings["INSTALL_RUNNER_IMAGE_SOURCE"] == ""  # commented out: the default
+        assert settings["INSTALL_RUNNER_IMAGE_SOURCE"] == "build-in-cluster"  # commented out: starts at the default
 
-    def test_no_saved_file_starts_local_and_blank(self, nb_sb):
+    def test_no_saved_file_starts_local_with_the_defaults(self, nb_sb):
+        """The fields hold the defaults; the storage class starts as the block storage class picked in the notebook."""
         shutil.rmtree(nb_sb.repo / "configs", ignore_errors=True)
         result = run_notebook(nb_sb, "softwarehub_cp4d_vars_generation.py", self._values(save_to_config_dir_button=False))
         assert result["values"]["install_run_mode_select"] == "local"
-        assert set(result["values"]["install_runner_settings"].values()) == {""}
+        settings = result["values"]["install_runner_settings"]
+        assert list(settings) == list(RUNNER_KNOBS)
+        assert settings.pop("INSTALL_RUNNER_STORAGE_CLASS")
+        assert settings == {k: v for k, v in RUNNER_KNOBS.items() if k != "INSTALL_RUNNER_STORAGE_CLASS"}
 
     def test_a_save_keeps_the_cluster_values_and_only_that_clusters_own(self, nb_sb):
         """A save of alpha's file from a blank editor renders the template: alpha's values come back, beta's never.
@@ -765,12 +769,13 @@ class TestRunnerNotebook:
                               self._values(save_to_config_dir_button=True, cpd_vars_template_editor="", file_getter=str(saved)))
         assert result["saved"]
         text = (nb_sb.repo / "configs/clusters/alpha/cp4d_config/cpd_vars.sh").read_text()
-        assert lines_of(text, "export INSTALL_RUN") == [
-            'export INSTALL_RUN_MODE="cluster"',
-            'export INSTALL_RUNNER_STORAGE_CLASS="ocs-alpha"',
-            'export INSTALL_RUNNER_PVC_SIZE="40Gi"',
+        # Alpha's own values, then every other field at its default; the ones with no default stay commented.
+        saved_values = {"INSTALL_RUNNER_STORAGE_CLASS": "ocs-alpha", "INSTALL_RUNNER_PVC_SIZE": "40Gi"}
+        expected = {**RUNNER_KNOBS, **saved_values}
+        assert lines_of(text, "export INSTALL_RUN") == ['export INSTALL_RUN_MODE="cluster"'] + [
+            f'export {k}="{v}"' for k, v in expected.items() if v
         ]
-        assert '# export INSTALL_RUNNER_IMAGE_SOURCE="build-in-cluster"' in text
+        assert lines_of(text, "# export INSTALL_RUNNER_") == [f'# export {k}=""' for k, v in expected.items() if not v]
         assert "ocs-beta" not in text
 
     def test_the_template_reads_the_widget_names(self):
@@ -778,8 +783,29 @@ class TestRunnerNotebook:
         assert "install_run_mode = install_run_mode_select.value" in text
         assert "install_runner_settings = records_to_dict(" in text
         assert 'mcm_nb.existing_vars_file(mcm_target, cpd_vars_filename)' in text
-        for key in RUNNER_KNOBS:
-            assert f'"{key}"' in text, key
+        assert "for _row in default_install_runner_settings" in text
+
+    def test_only_the_storage_class_table_follows_the_block_storage_dropdown(self):
+        """A widget is rebuilt when an input changes: the main runner table must not read the block storage
+        dropdown, or picking a new block class would wipe edits in every runner field."""
+        import importlib.util
+
+        from marimo._ast.app import InternalApp
+
+        spec = importlib.util.spec_from_file_location("cpd_nb", REPO / "softwarehub_cp4d_vars_generation.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        graph = InternalApp(module.app).graph
+        refs_of = {defined: cell.refs for cell in graph.cells.values() for defined in cell.defs}
+        assert "block_storage_class_select" in refs_of["install_runner_storage_records"]
+        assert "block_storage_class_select" not in refs_of["install_runner_records"]
+
+    def test_the_notebook_defaults_match_the_template(self):
+        """The notebook's runner defaults live in cp4d_id_options_templates.py; they must match cpd_vars.sh's."""
+        from helpers.cp4d_id_options_templates import default_install_runner_settings
+
+        assert {r["key"]: r["value"] for r in default_install_runner_settings} == RUNNER_KNOBS
+        assert [r["key"] for r in default_install_runner_settings] == list(RUNNER_KNOBS)
 
 
 GENERATOR_EXTRAS = [

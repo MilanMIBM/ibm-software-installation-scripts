@@ -523,3 +523,51 @@ def run_migration(repo=None, env=None) -> tuple:
     except (OSError, subprocess.SubprocessError) as exc:
         return False, f"[ERROR] Could not run the migration: {exc}"
     return done.returncode == 0, (done.stdout + done.stderr).strip()
+
+
+# ------------------------------------------------------------------------------
+# Values already saved in the selected cluster's vars file (the file
+# existing_vars_file picks), so a re-save keeps them.
+# ------------------------------------------------------------------------------
+
+
+def saved_export_value(key, path):
+    # Value of an uncommented export in an already saved cpd_vars.sh (path: the selected
+    # cluster's file or None), so a re-save keeps the run mode and runner settings set for
+    # that cluster, by hand or by an earlier save. The last export wins, as in the shell.
+    import re
+
+    if not path:
+        return None
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return None
+    found = list(
+        re.finditer(
+            rf"^[ \t]*export[ \t]+{re.escape(key)}=(?:\"([^\"]*)\"|'([^']*)'|([^\s#'\"]*))[ \t]*(?:#.*)?$",
+            text,
+            re.M,
+        )
+    )
+    if not found:
+        return None
+    return next(g for g in found[-1].groups() if g is not None)
+
+
+def saved_single_quoted_export_value(key, path):
+    # Value of a single-quoted export in an already saved concert_vars.sh (path: the
+    # selected cluster's file or None), so a re-save keeps credentials that a live
+    # install depends on.
+    import re
+
+    if not path:
+        return None
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(rf"^export {re.escape(key)}='(.*)'$", text, re.M)
+    return m.group(1).replace("'\\''", "'") if m else None

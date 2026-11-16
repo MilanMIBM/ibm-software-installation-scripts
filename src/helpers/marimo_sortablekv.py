@@ -73,7 +73,7 @@ function render({ model, el }) {
       valueField.type = "text";
       valueField.className = "kv-value" + (model.get("editable") ? "" : " readonly");
       valueField.value = item.value ?? "";
-      valueField.placeholder = model.get("value_placeholder");
+      valueField.placeholder = item.placeholder || model.get("value_placeholder");
       valueField.readOnly = !model.get("editable");
       valueField.addEventListener("mousedown", e => e.stopPropagation());
       valueField.addEventListener("change", () => {
@@ -358,7 +358,9 @@ class SortableKV(anywidget.AnyWidget):
     as a single unit via the grip handle on the left.
 
     Args:
-        value: Initial list of ``{"key": str, "value": str}`` dicts.
+        value: Initial list of ``{"key": str, "value": str}`` dicts. A row may also
+            carry ``"placeholder"``, shown in its empty value field instead of
+            ``value_placeholder``.
         addable: Allow inserting new rows (default: False).
         removable: Allow deleting rows (default: False).
         editable: Allow inline editing of key/value fields (default: True).
@@ -394,12 +396,15 @@ class SortableKV(anywidget.AnyWidget):
         value_placeholder: str = "value",
         **kwargs,
     ) -> None:
-        rows = [
-            {"key": str(r), "value": ""}
-            if isinstance(r, str)
-            else {"key": str(r.get("key", "")), "value": str(r.get("value", ""))}
-            for r in value
-        ]
+        rows = []
+        for r in value:
+            if isinstance(r, str):
+                rows.append({"key": str(r), "value": ""})
+                continue
+            row = {"key": str(r.get("key", "")), "value": str(r.get("value", ""))}
+            if r.get("placeholder"):
+                row["placeholder"] = str(r["placeholder"])
+            rows.append(row)
         super().__init__(
             value=rows,
             addable=addable,

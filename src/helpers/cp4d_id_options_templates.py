@@ -1156,6 +1156,27 @@ default_local_registry_setup = [
     },
 ]
 
+# In-cluster runner (INSTALL_RUN_MODE=cluster): the same defaults as
+# cpd_variable_template.sh.j2 and src/helpers/install_runner_helpers.sh. A setting
+# with no default value starts blank; "placeholder" says what blank does. A blank
+# INSTALL_RUNNER_STORAGE_CLASS falls back to the chain's block storage class, so the
+# notebook fills it from its block storage class pick.
+default_install_runner_settings = [
+    {"key": "INSTALL_RUNNER_STORAGE_CLASS", "value": "", "placeholder": "the cluster's block storage class"},
+    {"key": "INSTALL_RUNNER_IMAGE_SOURCE", "value": "build-in-cluster"},
+    {"key": "INSTALL_RUNNER_IMAGE", "value": "", "placeholder": "the image built in the cluster"},
+    {"key": "INSTALL_RUNNER_PVC_SIZE", "value": "20Gi"},
+    {"key": "INSTALL_RUNNER_AUTO_RESUME", "value": "true"},
+    {"key": "INSTALL_RUNNER_MAX_RESUMES", "value": "3"},
+    {"key": "INSTALL_RUNNER_KEEP_ADMIN", "value": "false"},
+    {"key": "INSTALL_RUNNER_NODE_SELECTOR", "value": "", "placeholder": "any node"},
+    {"key": "INSTALL_RUNNER_TTY_SIZE", "value": "120x50"},
+    {"key": "INSTALL_RUNNER_ROLLOUT_TIMEOUT", "value": "900"},
+    {"key": "INSTALL_RUNNER_SWHCC_IMAGE", "value": "", "placeholder": "IBM's image from cp.icr.io, pinned by digest"},
+    {"key": "INSTALL_RUNNER_SWHCC_PULL_SECRET", "value": "", "placeholder": "made from IBM_ENTITLEMENT_KEY"},
+    {"key": "INSTALL_RUNNER_SWHCC_MEMORY_LIMIT", "value": "4Gi"},
+]
+
 ibm_container_registry_domains = [
     "icr.io/<namespace>",  # global with user's endspace
     "icr.io",  # global

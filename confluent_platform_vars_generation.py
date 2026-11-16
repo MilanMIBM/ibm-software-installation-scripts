@@ -8,11 +8,18 @@ app = marimo.App(
 
 with app.setup:
     import marimo as mo
-    import base64
     import shutil
     import uuid
     import os
     from src.helpers import multi_cluster_notebook as mcm_nb
+    from src.helpers.vars_handling_helpers import (
+        bool_str,
+        dict_to_records,
+        generate_cluster_id,
+        ordered_values,
+        records_to_dict,
+        without_keys,
+    )
 
 
 @app.cell
@@ -106,49 +113,6 @@ def _():
         render_template_from_environment,
         sortable_kv,
     )
-
-
-@app.function
-def records_to_dict(records):
-    return {r["key"]: r["value"] for r in records}
-
-
-@app.function
-def without_keys(records, keys):
-    # Keys set by a dedicated widget are dropped from the editable key/value lists
-    return [r for r in records if r["key"] not in keys]
-
-
-@app.function
-def dict_to_records(values):
-    return [{"key": k, "value": v} for k, v in values.items()]
-
-
-@app.function
-def kv_value(kv_widget):
-    return records_to_dict(kv_widget.value.get("value"))
-
-
-@app.function
-def ordered_values(default_records, kv_widget=None, overrides=None):
-    # Keeps the defaults' order: widget overrides win, then the edited key/value list
-    edited = kv_value(kv_widget) if kv_widget is not None else {}
-    overrides = overrides or {}
-    return {
-        r["key"]: overrides.get(r["key"], edited.get(r["key"], r["value"]))
-        for r in default_records
-    }
-
-
-@app.function
-def bool_str(value):
-    return "true" if value else "false"
-
-
-@app.function
-def generate_cluster_id():
-    # KRaft cluster id: base64url-encoded 16-byte UUID, 22 chars of [A-Za-z0-9_-]
-    return base64.urlsafe_b64encode(uuid.uuid4().bytes).decode().rstrip("=")
 
 
 @app.cell(hide_code=True)
@@ -903,7 +867,7 @@ def _(widget_labels):
 def _(default_confluent_images, widget_labels):
     confluent_version_input = mo.ui.text(
         label=widget_labels.get("confluent_version"),
-        value=records_to_dict(default_confluent_images).get("CONFLUENT_VERSION"),
+        value=records_to_dict(default_confluent_images).get("CONFLUENT_VERSION", ""),
         full_width=True,
     )
     return (confluent_version_input,)
@@ -913,7 +877,7 @@ def _(default_confluent_images, widget_labels):
 def _(default_confluent_images, widget_labels):
     confluent_c3_version_input = mo.ui.text(
         label=widget_labels.get("confluent_c3_version"),
-        value=records_to_dict(default_confluent_images).get("CONFLUENT_C3_VERSION"),
+        value=records_to_dict(default_confluent_images).get("CONFLUENT_C3_VERSION", ""),
         full_width=True,
     )
     return (confluent_c3_version_input,)
