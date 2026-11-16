@@ -31,6 +31,11 @@ h_steps_parse --strict "$@"
 #   DO_PREFLIGHT=false DO_SETUP=false ./full_concert_installprocess.sh
 # Or pick steps by name: --from <step> resumes there, --skip <step>[,...] leaves
 # steps out, --list-steps shows the plan.
+# Admin password that fails IBM's rules (checked in 3.0/3.2 before IBM's
+# installer runs): asked about at a terminal, generated with a warning without
+# one. Set CONCERT_WEAK_ADMIN_PASSWORD=ask|generate|fail to choose, or
+# CONCERT_ADMIN_PASSWORD_REPLACEMENT=<password> to pass one in (saved to
+# concert_vars.sh) - see src/helpers/concert_helpers.sh.
 # Offline (mirrored/airgap) mirroring is not chained here: run 1.1-1.3 first,
 # on the right side of the air gap.
 # ---------------------------------------------------------------------------

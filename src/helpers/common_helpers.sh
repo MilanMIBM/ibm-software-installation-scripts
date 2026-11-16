@@ -60,6 +60,19 @@ a = string.ascii_letters + string.digits
 print("".join(secrets.choice(a) for _ in range(int(sys.argv[1]))), end="")' "${1:-24}"
 }
 
+# For password rules that want every character class: at least one uppercase,
+# lowercase, digit and one of - _ . (shell-, URL- and quote-safe), no trailing
+# newline.
+h_complex_password() {   # [length, default 20, minimum 4]
+    python3 -c 'import secrets, string, sys
+n = max(4, int(sys.argv[1]))
+classes = [string.ascii_uppercase, string.ascii_lowercase, string.digits, "-_."]
+pw = [secrets.choice(c) for c in classes]
+pw += [secrets.choice(string.ascii_letters + string.digits) for _ in range(n - len(pw))]
+secrets.SystemRandom().shuffle(pw)
+print("".join(pw), end="")' "${1:-20}"
+}
+
 # A new 0700 directory under <base>/.run. Callers pass their (gitignored)
 # workspace rather than $TMPDIR: on macOS podman can only bind-mount paths
 # below $HOME.
@@ -301,6 +314,12 @@ h_steps_parse() {   # [--strict] [--no-from] [--no-help] <args...>
     typeset -g H_STEPS_FROM="" H_STEPS_UNTIL="" H_STEPS_LIST=false H_STEPS_HELP=false
     typeset -g H_STEPS_FROM_OPT=--from H_STEPS_STRICT=${strict}
     ${take_from} || H_STEPS_FROM_OPT=--from-step
+    # A chain run as a step of another chain (H_STEPS_OUTER inherited) names its
+    # failed step but no --from: only the outermost chain's step names work on
+    # the command the user typed, and it prints that hint itself.
+    typeset -g H_STEPS_NESTED_RUN=false
+    [[ -n "${H_STEPS_OUTER:-}" ]] && H_STEPS_NESTED_RUN=true
+    export H_STEPS_OUTER="${H_STEPS_OUTER:-${ZSH_ARGZERO:t}}"
     local opt
     while (( $# )); do
         # Match on the option name with '_' read as '-'; pass the original on.
@@ -485,7 +504,11 @@ h_step_run() {
         h_warn "Step '${name}' exited ${rc}; continuing with the rest."
         return 0
     fi
-    h_error "Step '${name}' exited ${rc}. Fix the cause, then re-run the same command with ${H_STEPS_FROM_OPT} ${name} added."
+    if ${H_STEPS_NESTED_RUN}; then
+        h_error "Step '${name}' of ${ZSH_ARGZERO:t} exited ${rc} (${H_STEPS_OUTER} names the step to resume from)."
+    else
+        h_error "Step '${name}' exited ${rc}. Fix the cause, then re-run the same command with ${H_STEPS_FROM_OPT} ${name} added."
+    fi
     [[ -n "${H_STEP_HINT[$name]:-}" ]] && h_error "${H_STEP_HINT[$name]}"
     exit "${rc}"
 }

@@ -71,6 +71,181 @@ concert_require_config() {
 }
 
 concert_random_password() { h_random_password "$@"; }
+
+# =============================================================================
+# Concert admin password: IBM's rules, checked before IBM's installer sees it
+# -----------------------------------------------------------------------------
+# IBM's Hub installer (concert-hub/bin/kc-utils validate_password_strength)
+# rejects a password without 12+ characters, an uppercase letter, a lowercase
+# letter, a digit and a special character - after the runner is already up.
+# It also passes the password through an unquoted eval
+# (ibm-concert/bin/common-utils.sh execute_product_install), so a space, quote,
+# $, ;, &, * and the like would break or change it: only the characters in
+# CONCERT_ADMIN_PASSWORD_SPECIALS count as special here.
+#
+# When the password fails, concert_ensure_admin_password fixes it, saves the new
+# value to concert_vars.sh (the old file is kept as concert_vars.sh.<ts>.bak) and
+# exports it for the rest of the run. How (set in the environment, e.g.
+# CONCERT_WEAK_ADMIN_PASSWORD=generate ./full_concert_installprocess.sh):
+#   <VAR>_REPLACEMENT              use this value instead (must pass the rules),
+#                                  e.g. CONCERT_ADMIN_PASSWORD_REPLACEMENT
+#   CONCERT_WEAK_ADMIN_PASSWORD    ask       ask: generate one or type one
+#                                            (default at a terminal)
+#                                  generate  generate one and warn
+#                                            (default without a terminal)
+#                                  fail      stop and list what is wrong
+# =============================================================================
+CONCERT_ADMIN_PASSWORD_SPECIALS='!#%+,-./:=@^_'
+
+concert_admin_password_rules() {
+    print -r -- "At least 12 characters, with at least one uppercase letter (A-Z), one lowercase letter (a-z),"
+    print -r -- "one digit (0-9) and one special character from: ${CONCERT_ADMIN_PASSWORD_SPECIALS}"
+    print -r -- "(no spaces, quotes, \$, ;, &, * or other shell characters - IBM's installer passes it unquoted)."
+}
+
+# What is wrong with <password>, one line each; fails when anything is.
+concert_admin_password_problems() {   # <password>
+    local pw="$1" specials="${CONCERT_ADMIN_PASSWORD_SPECIALS}"
+    local -a problems=()
+    if [[ -z "${pw}" ]]; then
+        print -r -- "it is not set"
+        return 1
+    fi
+    [[ "${pw}" == (password|ibmconcert) ]] && problems+=("it is IBM's default")
+    (( ${#pw} >= 12 ))      || problems+=("it has ${#pw} characters, at least 12 are needed")
+    [[ "${pw}" == *[A-Z]* ]] || problems+=("it has no uppercase letter (A-Z)")
+    [[ "${pw}" == *[a-z]* ]] || problems+=("it has no lowercase letter (a-z)")
+    [[ "${pw}" == *[0-9]* ]] || problems+=("it has no digit (0-9)")
+    local c i has_special=false
+    local -a bad=()
+    for (( i = 1; i <= ${#pw}; i++ )); do
+        c="${pw[i]}"
+        [[ "${c}" == [A-Za-z0-9] ]] && continue
+        if [[ "${specials}" == *"${c}"* ]]; then has_special=true
+        else (( ${bad[(Ie)${c}]} )) || bad+=("${c}"); fi
+    done
+    ${has_special} || problems+=("it has no special character from ${specials}")
+    (( ${#bad} )) && problems+=("it contains characters IBM's installer cannot pass on: ${(j:, :)${(@)bad/#%\ /space}}")
+    (( ${#problems} )) || return 0
+    print -rl -- "${problems[@]}"
+    return 1
+}
+
+# Replace (or append) the top-level `export <var>=...` line in concert_vars.sh
+# with a single-quoted value - the form the vars notebook reads back.
+concert_save_var() {   # <var> <value>
+    local var="$1" value="$2" file="${CONCERT_CONFIG_DIR}/concert_vars.sh" l found=false
+    [[ -f "${file}" ]] || concert_die "Cannot save ${var}: ${file} not found."
+    local line="export ${var}='${value//\'/\'\\\'\'}'"
+    local -a out=()
+    while IFS= read -r l || [[ -n "${l}" ]]; do
+        if [[ "${l}" == "export ${var}="* ]]; then
+            ${found} || out+=("${line}")
+            found=true
+        else
+            out+=("${l}")
+        fi
+    done < "${file}"
+    ${found} || out+=("" "${line}")
+    local bak="${file}.$(date +%Y%m%d-%H%M%S).bak" tmp="${file}.tmp.$$"
+    cp -p "${file}" "${bak}"
+    (umask 077; print -rl -- "${out[@]}" > "${tmp}")
+    cat "${tmp}" > "${file}"   # keeps the file's mode
+    rm -f "${tmp}"
+    REPLY="${bak}"
+}
+
+# Typed twice, hidden; must pass the rules. Fails (empty REPLY) when left empty.
+_concert_read_admin_password() {   # <var>
+    local first second problems
+    while true; do
+        printf "New %s (empty to go back): " "$1"
+        read -rs first || first=""
+        print
+        [[ -n "${first}" ]] || { REPLY=""; return 1; }
+        if ! problems="$(concert_admin_password_problems "${first}")"; then
+            print -r -- "  Not accepted:"
+            print -rl -- "${(@f)problems}" | sed 's/^/    - /'
+            continue
+        fi
+        printf "Again: "
+        read -rs second || second=""
+        print
+        [[ "${first}" == "${second}" ]] || { print -r -- "  They do not match."; continue; }
+        REPLY="${first}"
+        return 0
+    done
+}
+
+# Makes sure <var> (default CONCERT_ADMIN_PASSWORD) passes the rules, fixing it
+# as described above. REPLY: "unchanged" or "changed".
+concert_ensure_admin_password() {   # [var]
+    local var="${1:-CONCERT_ADMIN_PASSWORD}" problems new="" how=""
+    if problems="$(concert_admin_password_problems "${(P)var:-}")"; then
+        REPLY=unchanged
+        return 0
+    fi
+    local -a why=("${(@f)problems}")
+    local replacement_var="${var}_REPLACEMENT"
+    local replacement="${(P)replacement_var:-}"
+    local mode="${CONCERT_WEAK_ADMIN_PASSWORD:-}"
+    [[ -n "${mode}" ]] || { [[ -t 0 ]] && mode=ask || mode=generate; }
+    [[ "${mode}" == (ask|generate|fail) ]] \
+        || concert_die "CONCERT_WEAK_ADMIN_PASSWORD=${mode}: use ask, generate or fail."
+
+    concert_warn "${var} does not meet IBM's password rules - IBM's installer would reject it:"
+    print -rl -- "${why[@]}" | sed 's/^/           - /' >&2
+    print -r -- "         Rules:" >&2
+    concert_admin_password_rules | sed 's/^/           /' >&2
+
+    if [[ -n "${replacement}" ]]; then
+        if ! problems="$(concert_admin_password_problems "${replacement}")"; then
+            concert_error "${replacement_var} does not meet the rules either:"
+            print -rl -- "${(@f)problems}" | sed 's/^/           - /' >&2
+            concert_die "Fix ${replacement_var} (or unset it) and re-run."
+        fi
+        new="${replacement}"; how="from ${replacement_var}"
+    elif [[ "${mode}" == ask && ! -t 0 ]]; then
+        concert_warn "CONCERT_WEAK_ADMIN_PASSWORD=ask, but there is no terminal to ask on - generating one."
+        mode=generate
+    fi
+
+    if [[ -z "${new}" && "${mode}" == ask ]]; then
+        local choice
+        while [[ -z "${new}" ]]; do
+            print -r -- ""
+            print -r -- "  1) Generate a password (saved to concert_vars.sh)"
+            print -r -- "  2) Type a password"
+            print -r -- "  3) Stop"
+            printf "Choice [1]: "
+            read -r choice || choice=3
+            case "${choice:-1}" in
+                1) new="$(h_complex_password 20)"; how="generated" ;;
+                2) _concert_read_admin_password "${var}" && { new="${REPLY}"; how="typed in"; } ;;
+                3) mode=fail; break ;;
+                *) print -r -- "  Type 1, 2 or 3." ;;
+            esac
+        done
+    elif [[ -z "${new}" && "${mode}" == generate ]]; then
+        new="$(h_complex_password 20)"; how="generated"
+    fi
+
+    if [[ -z "${new}" ]]; then
+        concert_error "Stopped: set ${var} in ${CONCERT_CONFIG_DIR}/concert_vars.sh to a password that meets the rules,"
+        concert_error "or re-run with ${replacement_var}=<password> or CONCERT_WEAK_ADMIN_PASSWORD=generate."
+        concert_die "${var} does not meet IBM's password rules."
+    fi
+
+    concert_save_var "${var}" "${new}"
+    export "${var}=${new}"
+    if [[ "${how}" == generated ]]; then
+        concert_warn "Generated a new ${var} and saved it to ${CONCERT_CONFIG_DIR}/concert_vars.sh (previous file: ${REPLY})."
+        concert_warn "It is not printed here: read it from concert_vars.sh, or from concert_instance_details.sh after 3.4."
+    else
+        concert_info "Saved ${var} (${how}) to ${CONCERT_CONFIG_DIR}/concert_vars.sh (previous file: ${REPLY})."
+    fi
+    REPLY=changed
+}
 # Private scratch dir under the (gitignored) workspace.
 concert_private_tmpdir() { h_private_tmpdir "${CONCERT_WORKSPACE}"; }
 concert_b64d() { base64 --decode 2>/dev/null; }

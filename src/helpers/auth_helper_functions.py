@@ -84,6 +84,54 @@ def generate_password(length=20):
             return pw
 
 
+# IBM Concert's Hub installer (concert-hub/bin/kc-utils validate_password_strength)
+# wants 12+ characters with upper, lower, digit and a special character, and
+# passes the password through an unquoted eval - so only these count as special.
+# Keep in sync with CONCERT_ADMIN_PASSWORD_SPECIALS in src/helpers/concert_helpers.sh.
+CONCERT_ADMIN_PASSWORD_SPECIALS = "!#%+,-./:=@^_"
+CONCERT_ADMIN_PASSWORD_RULES = (
+    "at least 12 characters, with an uppercase letter (A-Z), a lowercase letter (a-z), "
+    f"a digit (0-9) and a special character from {CONCERT_ADMIN_PASSWORD_SPECIALS} "
+    "(no spaces, quotes or other shell characters)"
+)
+
+
+def concert_admin_password_problems(pw):
+    # What IBM's installer (or its unquoted eval) would reject; [] when fine
+    if not pw:
+        return ["it is not set"]
+    problems = []
+    if pw in ("password", "ibmconcert"):
+        problems.append("it is IBM's default")
+    if len(pw) < 12:
+        problems.append(f"it has {len(pw)} characters, at least 12 are needed")
+    if not any(c.isascii() and c.isupper() for c in pw):
+        problems.append("it has no uppercase letter (A-Z)")
+    if not any(c.isascii() and c.islower() for c in pw):
+        problems.append("it has no lowercase letter (a-z)")
+    if not any(c.isascii() and c.isdigit() for c in pw):
+        problems.append("it has no digit (0-9)")
+    others = [c for c in pw if not (c.isascii() and c.isalnum())]
+    if not any(c in CONCERT_ADMIN_PASSWORD_SPECIALS for c in others):
+        problems.append(
+            f"it has no special character from {CONCERT_ADMIN_PASSWORD_SPECIALS}"
+        )
+    bad = list(
+        dict.fromkeys(c for c in others if c not in CONCERT_ADMIN_PASSWORD_SPECIALS)
+    )
+    if bad:
+        problems.append(
+            "it contains characters IBM's installer cannot pass on: "
+            + ", ".join("space" if c == " " else c for c in bad)
+        )
+    return problems
+
+
+def generate_concert_admin_password(length=20):
+    # Meets concert_admin_password_problems (one of - _ . as the special)
+    return generate_turbonomic_password(length)
+
+
 def generate_turbonomic_password(length=20):
     # Upper, lower, digit and one of - _ . : meets the usual complexity rules
     # and stays safe in form posts and the single-quoted export

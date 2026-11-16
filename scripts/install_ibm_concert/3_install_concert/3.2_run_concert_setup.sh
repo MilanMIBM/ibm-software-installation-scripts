@@ -37,6 +37,11 @@ OVR="${CONCERT_CONFIG_DIR}/workflows-override-values.yaml"
 [[ -f "${PARAMS}" ]] || concert_die "Run 3.0_render_params_ini.sh first."
 [[ "${PARAMS}" -nt "${CONCERT_CONFIG_DIR}/concert_vars.sh" ]] \
     || concert_die "params.ini is older than concert_vars.sh - re-run 3.0_render_params_ini.sh."
+# IBM's password rules, also here for runs resumed with --from setup. The
+# password is not in params.ini, so after a fix saved to concert_vars.sh the
+# (already current) params.ini is touched to stay newer.
+concert_ensure_admin_password CONCERT_ADMIN_PASSWORD
+[[ "${REPLY}" == changed ]] && touch "${PARAMS}"
 
 eval "${OC_LOGIN}"
 
@@ -101,6 +106,14 @@ if (( rc == 0 )) && grep -q 'DEPLOYMENT SUCCESSFUL' "${LOG}"; then
     concert_info "IBM Concert installer finished: DEPLOYMENT SUCCESSFUL."
     concert_info "Next: 3.3_concert_status.sh and 3.4_get_instance_details.sh"
 else
+    # IBM's input checks print "[ERROR]   - <problem>" far above the end of the output
+    ibm_checks="$(grep -E '\[ERROR\][[:space:]]+- ' "${LOG}" 2>/dev/null | sed -E 's/.*\[ERROR\][[:space:]]+- /  - /' || true)"
+    if [[ -n "${ibm_checks}" ]]; then
+        concert_error "IBM's installer rejected its input:"
+        print -r -- "${ibm_checks}" >&2
+        [[ "${ibm_checks}" == *[Pp]assword* ]] && concert_error \
+            "Password rules: re-run with CONCERT_WEAK_ADMIN_PASSWORD=ask|generate or CONCERT_ADMIN_PASSWORD_REPLACEMENT=<password> (see src/helpers/concert_helpers.sh)."
+    fi
     concert_error "IBM's installer failed (exit ${rc}). IBM's detailed log: logs/product_install_logs_<timestamp>.log in the installer dir"
     concert_error "(cluster runner: x_clean_or_debug_concert/x_fetch_installer_logs.sh copies it here)."
     exit 1

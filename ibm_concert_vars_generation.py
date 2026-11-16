@@ -13,7 +13,9 @@ with app.setup:
     import uuid
     from src.helpers import multi_cluster_notebook as mcm_nb
     from src.helpers.auth_helper_functions import (
-        generate_password,
+        CONCERT_ADMIN_PASSWORD_RULES,
+        concert_admin_password_problems,
+        generate_concert_admin_password,
         generate_turbonomic_password,
     )
     from src.helpers.vars_handling_helpers import (
@@ -885,7 +887,7 @@ def _(mcm_vars_file, widget_labels):
     admin_password_input = mo.ui.text(
         label=widget_labels.get("admin_password"),
         value=mcm_nb.saved_single_quoted_export_value("CONCERT_ADMIN_PASSWORD", mcm_vars_file())
-        or generate_password(),
+        or generate_concert_admin_password(),
         kind="password",
         full_width=False,
     )
@@ -1522,13 +1524,13 @@ def _(
     _admin_pw = concert_admin["CONCERT_ADMIN_PASSWORD"]
     if not _admin_user or not _admin_pw:
         _errors.append("Set the initial Concert admin username and password.")
-    elif (_admin_user, _admin_pw) == (
-        "ibmconcert",
-        "password",
-    ) or _admin_pw == "password":
-        _errors.append("Do not use IBM's default admin password 'password'.")
-    elif len(_admin_pw) < 12:
-        _warnings.append("The admin password is shorter than 12 characters.")
+    elif _pw_problems := concert_admin_password_problems(_admin_pw):
+        # IBM's installer rejects it; 3.0/3.2 would also catch it (ask/generate/fail)
+        _errors.append(
+            "The initial Concert admin password does not meet IBM's rules ("
+            + "; ".join(_pw_problems)
+            + f"). IBM requires {CONCERT_ADMIN_PASSWORD_RULES}."
+        )
 
     # Products and hub
     _optimize = _p["CONCERT_INSTALL_OPTIMIZE"]

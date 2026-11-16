@@ -32,7 +32,8 @@ concert_require_config
 
 concert_product_enabled hub || concert_die "The Hub is remote - change the password on the Hub cluster."
 concert_require_vars CONCERT_ADMIN_USERNAME CONCERT_ADMIN_NEW_PASSWORD
-(( ${#CONCERT_ADMIN_NEW_PASSWORD} >= 12 )) || concert_die "CONCERT_ADMIN_NEW_PASSWORD must be at least 12 characters."
+# Same rules as the initial password (asks, generates or stops - concert_helpers.sh)
+concert_ensure_admin_password CONCERT_ADMIN_NEW_PASSWORD
 
 eval "${OC_LOGIN}"
 

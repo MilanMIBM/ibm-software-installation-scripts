@@ -36,8 +36,9 @@ concert_is_true "${CONCERT_ACCEPT_LICENSE:-false}" \
     || concert_die "CONCERT_ACCEPT_LICENSE is not true - accept the IBM Concert license in the notebook first."
 [[ "${CONCERT_IMAGE_REGISTRY_PREFIX}" != "icr.io/cp" ]] \
     || concert_die "IMAGE_REGISTRY_PREFIX=icr.io/cp is IBM's sample-file bug; it must be cp.icr.io/cp."
-concert_require_vars CONCERT_ADMIN_USERNAME CONCERT_ADMIN_PASSWORD CONCERT_REG_USER CONCERT_IMAGE_REGISTRY_PREFIX
-[[ "${CONCERT_ADMIN_PASSWORD}" != password ]] || concert_die "Do not use IBM's default admin password."
+concert_require_vars CONCERT_ADMIN_USERNAME CONCERT_REG_USER CONCERT_IMAGE_REGISTRY_PREFIX
+# IBM's password rules - asks, generates or stops when they fail (see concert_helpers.sh)
+concert_ensure_admin_password CONCERT_ADMIN_PASSWORD
 if concert_product_enabled istio && concert_product_enabled faas; then
     concert_die "Workflows Istio and FaaS are both on - IBM does not support that combination."
 fi

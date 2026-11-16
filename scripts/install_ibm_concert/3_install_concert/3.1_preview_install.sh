@@ -29,6 +29,7 @@ concert_require_config
 
 PARAMS="${CONCERT_CONFIG_DIR}/params.ini"
 [[ -f "${PARAMS}" ]] || concert_die "Run 3.0_render_params_ini.sh first."
+concert_ensure_admin_password CONCERT_ADMIN_PASSWORD   # IBM's password rules
 
 eval "${OC_LOGIN}"
 
