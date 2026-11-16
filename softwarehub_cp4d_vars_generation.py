@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.1"
+__generated_with = "0.25.2"
 app = marimo.App(
     width="full",
     app_title="Cloud Pak For Data - Setup Config Generator",
@@ -30,6 +30,7 @@ def _():
 
     from src.helpers.cp4d_id_options_templates import (
         cp4d_component_id_records,
+        cp4d_component_name_doc_urls,
         cp4d_license_entitlement_id_records,
         default_project_naming_conventions,
         default_private_registry_setup,
@@ -50,6 +51,7 @@ def _():
 
     return (
         cp4d_component_id_records,
+        cp4d_component_name_doc_urls,
         cp4d_license_entitlement_id_records,
         default_install_runner_settings,
         default_local_registry_setup,
@@ -106,14 +108,18 @@ def _(
 ):
     # The defaults follow the image source: an ICR-style cloud registry for
     # private, the registry inside the disconnected network for local.
-    _local = image_pull_creds_select.selected_key == "Local Private Registry (air-gapped)"
+    _local = (
+        image_pull_creds_select.selected_key == "Local Private Registry (air-gapped)"
+    )
     cp4d_private_registry_naming_records = sortable_kv(
         label=(
             "Local private registry (inside the disconnected network):"
             if _local
             else "If you are using a private registry:"
         ),
-        value=default_local_registry_setup if _local else default_private_registry_setup,
+        value=default_local_registry_setup
+        if _local
+        else default_private_registry_setup,
         addable=False,
         removable=False,
         editable=True,
@@ -290,7 +296,7 @@ def _():
         "cpd_admin_username": "**Preselect your cp4d admin username:**",
         "review_and_save": "**Review or alter your config and save it and you're good to go!**",
         "include_install_options": "**Do you want to include customized install options?**",
-        "swhcc_enable": "Set up **IBM Software Hub Control Center**? *Optional, needs IBM Software Hub Premium.*",
+        "swhcc_enable": "Set up **[IBM Software Hub Control Center](https://www.ibm.com/docs/en/software-hub/5.4.x?topic=installing-software-hub-control-center)**? *Optional, needs IBM Software Hub Premium*.",
         "swhcc_chain": "Install it at the **end of the main install**? *Otherwise run its own full install script.*",
         "swhcc_autodetect": "**Auto-detect** the Software Hub instances on the cluster and add them? *A token-only cluster login needs one browser approval.*",
         "swhcc_cluster_admins": "Make all OpenShift **cluster-admins** Control Center admins? *Or list specific users in CONTROL_ADMIN_USERS below.*",
@@ -368,20 +374,34 @@ def _(cluster_specs_stack):
 def _(
     cluster_credentials_stack,
     cp4d_install_project_naming_records,
-    cp4d_private_registry_naming_records,
     install_runner_stack,
 ):
     install_specs_accordion = mo.accordion(
         items={
             "**Cluster Credentials**": cluster_credentials_stack,
             "**Cluster Project Setup**": cp4d_install_project_naming_records,
-            "*Private Registry Credentials* ***(optional)***": cp4d_private_registry_naming_records,
             "*In-cluster runs* ***(optional)***": install_runner_stack,
         },
         multiple=True,
     )
 
     install_specs_accordion
+    return
+
+
+@app.cell
+def _(cp4d_private_registry_naming_records, image_pull_creds_select):
+    # Own accordion so switching the image source rebuilds only this one, not
+    # the sections above. Only a private or local (air-gapped) source needs it.
+    (
+        None
+        if image_pull_creds_select.selected_key == "IBM Entitled Registry"
+        else mo.accordion(
+            items={
+                "**Private Registry Credentials**": cp4d_private_registry_naming_records
+            }
+        )
+    )
     return
 
 
@@ -425,6 +445,9 @@ def _(
             ).center(),
             "**Components to Install**": mo.vstack(
                 [
+                    mo.md(
+                        "Components with **main_component** `true` are the products IBM lists as installable services. The others are add-ons or dependencies (often installed automatically with a main component) and are listed for convenience."
+                    ),
                     component_selection_tables,
                     updating_components_checkbox,
                 ],
@@ -455,7 +478,9 @@ def _(mcm_vars_file, widget_labels):
     install_run_mode_select = mo.ui.dropdown(
         label=widget_labels.get("install_run_mode"),
         options=_options,
-        value=next((k for k, v in _options.items() if v == _saved), "local - on this machine"),
+        value=next(
+            (k for k, v in _options.items() if v == _saved), "local - on this machine"
+        ),
         allow_select_none=False,
         full_width=True,
     )
@@ -466,7 +491,7 @@ def _(mcm_vars_file, widget_labels):
 def _(install_run_mode_select):
     # The name the cpd_vars.sh template reads.
     install_run_mode = install_run_mode_select.value
-    return (install_run_mode,)
+    return
 
 
 @app.cell
@@ -532,17 +557,15 @@ def _(install_runner_records, install_runner_storage_records):
         install_runner_storage_records.value.get("value")
         + install_runner_records.value.get("value")
     )
-    return (install_runner_settings,)
+    return
 
 
 @app.cell
-def _(install_run_mode_select, install_runner_records, widget_width):
+def _(install_run_mode_select, widget_width):
     install_runner_stack = mo.vstack(
         [
             mo.md(
-                "With **cluster**, the install chains run in a pod on the cluster, so this machine "
-                "can go off during the install. See *Running an install in the cluster* in the README. "
-                "Its runner settings show up below once **cluster** is picked."
+                "With **cluster**, the install chains run in a pod on the cluster, so this machine can go off during the install. See *Running an install in the cluster* in the README. Its runner settings show up below once **cluster** is picked."
             ),
             install_run_mode_select.style({"width": widget_width}),
         ],
@@ -932,12 +955,34 @@ def _():
 
 
 @app.cell
-def _(cp4d_component_id_records, widget_labels):
+def _(cp4d_component_name_doc_urls):
+    # Shows a name as a link to its IBM service page; the data itself stays plain text.
+    # A bare <a> (not mo.md, whose prose wrapper enlarges the text) keeps the cell's font.
+    import html as _html
+
+    component_name_format_mapping = {
+        "component_name": lambda _name: (
+            mo.Html(
+                f'<a href="{_html.escape(cp4d_component_name_doc_urls[_name])}" '
+                'target="_blank" rel="noopener noreferrer" '
+                'style="font: inherit; color: var(--blue-11, #2563eb); text-decoration: none;">'
+                f"{_html.escape(_name)}</a>"
+            )
+            if _name in cp4d_component_name_doc_urls
+            else _name
+        )
+    }
+    return (component_name_format_mapping,)
+
+
+@app.cell
+def _(component_name_format_mapping, cp4d_component_id_records, widget_labels):
     install_component_table_1 = mo.ui.table(
         label=widget_labels.get("components_multiselect"),
         data=cp4d_component_id_records[: (len(cp4d_component_id_records) // 2)],
         selection="multi",
         page_size=60,
+        format_mapping=component_name_format_mapping,
         # initial_selection=[0, 1, 2, 3],
     )
 
@@ -946,12 +991,13 @@ def _(cp4d_component_id_records, widget_labels):
 
 
 @app.cell
-def _(cp4d_component_id_records):
+def _(component_name_format_mapping, cp4d_component_id_records):
     install_component_table_2 = mo.ui.table(
         label="Apply the appropriate license entitlements in the license table.",
         data=cp4d_component_id_records[(len(cp4d_component_id_records) // 2) :],
         selection="multi",
         page_size=60,
+        format_mapping=component_name_format_mapping,
         # initial_selection=[0, 1, 2, 3],
     )
     return (install_component_table_2,)
@@ -1349,7 +1395,12 @@ def _(mcm_migrate_button):
 
 
 @app.cell
-def _(cluster_url_input, mcm_enable_checkbox, mcm_migrate_result, mcm_name_input):
+def _(
+    cluster_url_input,
+    mcm_enable_checkbox,
+    mcm_migrate_result,
+    mcm_name_input,
+):
     _after_migration = mcm_migrate_result  # a migration moves the folders resolved here
     mcm_target = mcm_nb.resolve_target(
         "cp4d_config",
@@ -1447,7 +1498,11 @@ def _(mcm_flat_configs, mcm_migrate_button, mcm_migrate_result, mcm_target):
             mo.callout(
                 mo.vstack(
                     [
-                        mo.md("**Migration finished.**" if _ok else "**Migration failed.**"),
+                        mo.md(
+                            "**Migration finished.**"
+                            if _ok
+                            else "**Migration failed.**"
+                        ),
                         mo.plain_text(_output[-4000:]),
                     ]
                 ),

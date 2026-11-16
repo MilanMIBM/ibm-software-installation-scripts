@@ -288,6 +288,151 @@ cp4d_component_id_records = [
     # {"component_name": "Zen Service", "component_id": "zen"},
 ]
 
+# The component IDs in the services table of IBM's "Determining which components to
+# install" page (Software Hub 5.4). The rest of the list are add-ons or dependencies.
+# Left out although that table lists them, as they are not picked on their own:
+# datarefinery, ws_runtimes, postgresql and informix.
+cp4d_main_component_ids = frozenset(
+    {
+        "analyticsengine",
+        "bigsql",
+        "cognos_analytics",
+        "dashboard",
+        "datagate",
+        "datalineage",
+        "dataproduct",
+        "datastage_ent",
+        "datastage_ent_plus",
+        "db2oltp",
+        "db2wh",
+        "dmc",
+        "dods",
+        "dp",
+        "dv",
+        "edb_cp4d",
+        "factsheet",
+        "hee",
+        "ibm-streamsets-sdi",
+        "ikc_premium",
+        "ikc_standard",
+        "informix_cp4d",
+        "mantaflow",
+        "match360",
+        "model_gateway",
+        "openpages",
+        "openscale",
+        "planning_analytics",
+        "productmaster",
+        "replication",
+        "rstudio",
+        "spss",
+        "streamsets",
+        "syntheticdata",
+        "udp",
+        "voice_gateway",
+        "watson_assistant",
+        "watson_discovery",
+        "watson_speech",
+        "watsonx_ai",
+        "watsonx_bi_assistant",
+        "watsonx_data",
+        "watsonx_data_premium",
+        "watsonx_dataintegration",
+        "watsonx_dataintelligence",
+        "watsonx_governance",
+        "watsonx_orchestrate",
+        "wca",
+        "wca_ansible",
+        "wca_z_agentic",
+        "wca_z_understand",
+        "wkc",
+        "wml",
+        "ws",
+        "ws_pipelines",
+    }
+)
+
+cp4d_component_id_records = [
+    {**_r, "main_component": _r["component_id"] in cp4d_main_component_ids}
+    for _r in cp4d_component_id_records
+]
+
+# Service pages from IBM's "Services" page (Software Hub 5.4.x), keyed by component ID.
+# Instance and operator components link to the service they belong to.
+_cp4d_service_docs_base = "https://www.ibm.com/docs/en/SSNFH6_5.4.x/svc-welcome/"
+cp4d_component_doc_urls = {
+    _id: f"{_cp4d_service_docs_base}{_page}.html"
+    for _id, _page in {
+        "analyticsengine": "spark",
+        "bigsql": "bigsql",
+        "cognos_analytics": "ca",
+        "dashboard": "idash",
+        "datagate": "dg",
+        "datagate_instance": "dg",
+        "datalineage": "manta-data-lineage",
+        "dataproduct": "dph",
+        "datarefinery": "dr",
+        "datastage_ent": "ds",
+        "datastage_ent_plus": "ds",
+        "db2oltp": "db2oltp",
+        "db2wh": "db2wh",
+        "dmc": "dmc",
+        "dods": "do",
+        "dp": "dp",
+        "dv": "dv",
+        "edb_cp4d": "edbp",
+        "factsheet": "aifact",
+        "hee": "hadoopaddon",
+        "ikc_premium": "wkc",
+        "ikc_standard": "wkc",
+        "informix": "ifx",
+        "informix_cp4d": "ifx",
+        "mantaflow": "manta",
+        "match360": "mdc",
+        "openpages": "openpages",
+        "openpages_instance": "openpages",
+        "openscale": "aiopenscale",
+        "planning_analytics": "pa",
+        "productmaster": "pm",
+        "productmaster_instance": "pm",
+        "replication": "data-replication",
+        "rstudio": "rstudio",
+        "spss": "spssmodeler",
+        "streamsets": "streamsets",
+        "syntheticdata": "sdg",
+        "udp": "undata",
+        "voice_gateway": "voice",
+        "watson_assistant": "watsonassist",
+        "watson_discovery": "watsondisc",
+        "watson_speech": "wstt",
+        "watsonx_ai": "watsonxai",
+        "watsonx_bi_assistant": "wxbia",
+        "watsonx_data": "watsonxdata",
+        "watsonx_data_premium": "wxd-premium",
+        "watsonx_data_premium_dependencies": "wxd-premium",
+        "watsonx_dataintegration": "wxd-integ",
+        "watsonx_dataintelligence": "wxd-intell",
+        "watsonx_governance": "watsonxgov",
+        "watsonx_orchestrate": "orchestrate",
+        "wca": "wxca",
+        "wca_ansible": "wxca-ansible",
+        "wca_z_agentic": "wxca-zagentic",
+        "wca_z_understand": "wxca-zu",
+        "wkc": "wkc",
+        "wml": "wml",
+        "ws": "wsl",
+        "ws_pipelines": "wsp",
+        "ws_runtimes": "jupyter",
+    }.items()
+}
+
+# The tables show names, so the notebook looks the link up by name.
+cp4d_component_name_doc_urls = {
+    _r["component_name"]: cp4d_component_doc_urls[_r["component_id"]]
+    for _r in cp4d_component_id_records
+    if _r["component_id"] in cp4d_component_doc_urls
+}
+
 cp4d_license_entitlement_id_options = [
     "cpd-enterprise",
     "cpd-standard",
