@@ -765,7 +765,6 @@ def _(run_button):
     mo.hstack(
         [run_button],
         justify="center",
-        gap=20,
     )
     return
 
@@ -1535,6 +1534,31 @@ def _(config_stack_cpd):
 
 
 @app.cell
+def _(
+    cpd_vars_filename,
+    inst_options_filename,
+    install_options_addon,
+    mcm_target,
+    swhcc_enable_checkbox,
+):
+    # In its own cell, under the save button: rebuilding the accordion on every keystroke
+    # in the cluster URL would collapse it.
+    mo.md(
+        mcm_nb.save_paths_markdown(
+            mcm_target,
+            [cpd_vars_filename]
+            + ([inst_options_filename] if install_options_addon.value else [])
+            + (
+                ["swhub_control_center/swhub_control_center_vars.sh"]
+                if swhcc_enable_checkbox.value
+                else []
+            ),
+        )
+    )
+    return
+
+
+@app.cell
 def _():
     name_variable_file_cpd = mo.ui.text(
         label="**Name your variable file:**",
@@ -1593,9 +1617,11 @@ def _(
             save_config_swhcc,
             save_to_config_dir_button,
         ],
-        justify="space-around",
+        # marimo's gap is in rem: keep it small and wrap, so no button is squeezed out.
+        justify="center",
         align="center",
-        gap=15,
+        gap=1.5,
+        wrap=True,
     )
     return (save_file_stack,)
 
@@ -1605,7 +1631,9 @@ def _(install_options_addon, name_variable_file_inst_options):
     prepare_inst_options_stack = mo.hstack(
         [name_variable_file_inst_options, install_options_addon],
         justify="space-around",
-        gap=15,
+        align="center",
+        gap=1.5,
+        wrap=True,
     )
     return (prepare_inst_options_stack,)
 

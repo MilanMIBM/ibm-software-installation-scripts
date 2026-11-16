@@ -295,6 +295,23 @@ def save_to_markdown(target) -> str:
     return "\n\n".join(lines)
 
 
+def save_paths_markdown(target, filenames, backup=False) -> str:
+    """The files the "Save to the folder" button writes, shown under it.
+
+    filenames are relative to the target folder (a subfolder such as "swhub_control_center/x.sh" is
+    fine). backup says whether the save keeps an existing file as <name>.bak, which the note reflects.
+    """
+    if target.error or not target.directory:
+        return f"**Saving writes:** not decided yet. {target.error or 'No folder resolved.'}"
+    lines = ["**Saving writes:**"]
+    for name in filenames:
+        note = ""
+        if os.path.isfile(os.path.join(target.directory, name)):
+            note = " (the current file is kept as `.bak`)" if backup else " (replaces the existing file)"
+        lines.append(f"- `{target.display}{name}`{note}")
+    return "\n".join(lines)
+
+
 def one_way_markdown(target) -> str:
     """Warning for a save that creates a cluster folder; "" when the save creates none."""
     if target.error or not target.new_cluster:

@@ -585,7 +585,6 @@ def _(run_button):
     mo.hstack(
         [run_button],
         justify="center",
-        gap=20,
     )
     return
 
@@ -1506,9 +1505,11 @@ def _(
             save_config_confluent,
             save_to_config_dir_button,
         ],
-        justify="space-around",
+        # marimo's gap is in rem: keep it small and wrap, so no button is squeezed out.
+        justify="center",
         align="center",
-        gap=15,
+        gap=1.5,
+        wrap=True,
     )
     return (save_file_stack,)
 
@@ -1664,6 +1665,14 @@ def _(confluent_vars_template_editor, save_file_stack):
         }
     )
     config_file_accordion_confluent
+    return
+
+
+@app.cell
+def _(confluent_vars_filename, mcm_target):
+    # In its own cell, under the save button: rebuilding the accordion on every keystroke
+    # in the cluster URL would collapse it.
+    mo.md(mcm_nb.save_paths_markdown(mcm_target, [confluent_vars_filename], backup=True))
     return
 
 

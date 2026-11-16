@@ -121,6 +121,32 @@ class TestResolveTarget:
         assert target.hint == "" and target.error
 
 
+class TestSavePathsMarkdown:
+    def test_flat_lists_each_file_in_the_folder(self, sb):
+        target = nb.resolve_target("cp4d_config", False, "", URL_A, **ctx(sb))
+        text = nb.save_paths_markdown(target, ["cpd_vars.sh", "swhub_control_center/swhub_control_center_vars.sh"])
+        assert "- `./configs/cp4d_config/cpd_vars.sh`" in text
+        assert "- `./configs/cp4d_config/swhub_control_center/swhub_control_center_vars.sh`" in text
+        assert "existing" not in text
+
+    def test_cluster_folder(self, sb):
+        target = nb.resolve_target("concert_config", True, "", URL_A, **ctx(sb))
+        assert "`./configs/clusters/alpha/concert_config/concert_vars.sh`" in nb.save_paths_markdown(
+            target, ["concert_vars.sh"]
+        )
+
+    def test_an_existing_file_says_replaced_or_backed_up(self, sb):
+        target = nb.resolve_target("cp4d_config", False, "", URL_A, **ctx(sb))
+        Path(target.directory).mkdir(parents=True)
+        (Path(target.directory) / "cpd_vars.sh").write_text("x")
+        assert "(replaces the existing file)" in nb.save_paths_markdown(target, ["cpd_vars.sh"])
+        assert "kept as `.bak`" in nb.save_paths_markdown(target, ["cpd_vars.sh"], backup=True)
+
+    def test_unresolved_target_shows_the_reason(self, sb):
+        target = nb.resolve_target("cp4d_config", True, "", "", **ctx(sb))
+        assert target.error and target.error in nb.save_paths_markdown(target, ["cpd_vars.sh"])
+
+
 class TestOverwriteGuard:
     def seed(self, sandbox):
         sandbox.write_config("cpd", ocp_url=URL_A, cluster="alpha", login=False)
