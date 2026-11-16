@@ -407,7 +407,7 @@ After the base install is up:
 - Optional data lineage: see [products and integration support](docs/data-lineage.md) for `datalineage` and `mantaflow`.
 - `scripts/install_cloud_pak_for_data/5_component_specific_scripts/` holds per-service follow-ups:
   - `cp4d_databases/`, `cp4d_informix/` - Db2 SCC prep, EDB Postgres and Informix prep; [Cognos Db2 content-store setup](docs/cognos-analytics.md), including a preparation helper with read-only checks by default
-  - `cp4d_general/` - Software Hub admins on a project, CPD projects, service routes, watsonx.data premium UI features
+  - `cp4d_general/` - Software Hub admins on a project, CPD projects, [Data Product Hub community membership](docs/data-product-hub.md) for users and groups, service routes, watsonx.data premium UI features
   - `cp4d_streamsets/` - StreamSets project, environment and engine setup end to end
   - `wxd_opensearch/`, `wxd_datastax_hcd/` - watsonx.data OpenSearch and DataStax HCD prep and fixes
   - `wxd_presto_engines/` - create or re-size a custom-sized watsonx.data Presto engine (registered through the lakehouse API so the console and catalogs know it, sized on its `WxdEngine` CR)
