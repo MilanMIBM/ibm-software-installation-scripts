@@ -1,0 +1,31 @@
+{
+  "set": "connect-plugins",
+  "namespace": "confluent",
+  "files": [
+    {
+      "order": 10,
+      "stage": 1,
+      "path": "connect-plugins/10-persistentvolumeclaim-connect-plugins.yaml",
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "name": "connect-plugins",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 20,
+      "stage": 1,
+      "path": "connect-plugins/20-pod-connect-plugins-loader.yaml",
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "name": "connect-plugins-loader",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    }
+  ],
+  "disabled": [],
+  "info": [],
+  "warnings": []
+}

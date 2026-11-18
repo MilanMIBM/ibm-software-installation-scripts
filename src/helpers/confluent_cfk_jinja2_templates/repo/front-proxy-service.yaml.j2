@@ -1,0 +1,12 @@
+{#- Service control-center-auth (set repo, order 22). Its own name: CFK owns Service control-center (D25). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: v1
+kind: Service
+{{ mac.metadata(c.name, m.ns, c.labels) }}
+spec:
+  selector:
+    app: {{ c.name | q }}
+  ports:
+    - name: "http"
+      port: {{ c.port }}
+      targetPort: {{ c.port }}

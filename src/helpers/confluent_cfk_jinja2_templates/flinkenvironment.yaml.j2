@@ -1,0 +1,18 @@
+{#- FlinkEnvironment (set flink, order 20). flinkApplicationDefaults = the object Flink 1.1 builds today
+    (environment-defaults.json); never metadata (CMF rejects labels there, V8). No computePoolDefaults and no
+    statementDefaults. secrets = the live CR's mapping, preserved on re-render. -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkEnvironment
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  kubernetesNamespace: {{ m.flink_project | q }}
+{% if c.defaults %}
+  flinkApplicationDefaults: {{ c.defaults | j }}
+{% endif %}
+  cmfRestClassRef:
+    name: {{ m.restclass | q }}
+    namespace: {{ m.ns | q }}
+{% if c.secrets %}
+  secrets: {{ c.secrets | j }}
+{% endif %}

@@ -8,7 +8,11 @@
 #                   - always: Flink charts from oci://<push root>/confluent/charts
 #                     (FLINK_CHART_SOURCE=oci + chart refs), the cert-manager
 #                     manifest from the workspace, helm registry login (push host)
+#                   - operator mode: CONFLUENT_OPERATOR_INIT_IMAGE (CFK init
+#                     container), when component cfk-operator mapped it
 #   verify-cluster  every pod image in the Confluent namespace comes from the registry
+#                   (operator mode: images an OLM CSV in the namespace names are
+#                   left to the shared operators track's IDMS)
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
@@ -51,6 +55,10 @@ tap)
         img CONFLUENT_KEYCLOAK_IMAGE "${CONFLUENT_KEYCLOAK_IMAGE:-$(vr_catalog confluent/keycloak_image)}"
         img FLINK_APPLICATION_IMAGE "${FLINK_APPLICATION_IMAGE:-}"
         img FLINK_SQL_IMAGE "${FLINK_SQL_IMAGE:-}"
+        # Operator mode: every CFK CR names the init container. The vars expanded it with
+        # the original CONFLUENT_REGISTRY, so it needs its own override. Written only when
+        # mapped (component cfk-operator), so nothing changes for a scripts-mode install.
+        img CONFLUENT_OPERATOR_INIT_IMAGE "${CONFLUENT_OPERATOR_INIT_IMAGE:-${REG}/confluent-init-container:$(vr_catalog confluent/operator/cfk_init_tag 2>/dev/null || print -r -- 3.4.0)}"
         # The Flink charts take a repository prefix for their own images.
         for src in $(cut -f1 "${MIRROR_INSTALL_WORKDIR}/targets.tsv" 2>/dev/null | grep -E '/cp-flink-kubernetes-operator[:@]' || true); do
             if ref="$(preg_lookup_pull "${src}")"; then emit "export FLINK_IMAGE_REGISTRY=$(preg_q "${${ref%:*}:h}")"; fi
@@ -86,6 +94,17 @@ verify-cluster)
     [[ -n "${ns}" ]] && oc get ns "${ns}" >/dev/null 2>&1 || { preg_info "confluent: not installed - nothing to check"; exit 0; }
     bad="$(oc get pods -n "${ns}" -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
         | sort -u | grep -v -E "^(${PULL_PREFIX}|$(preg_pull_root)/$(preg_install_path shared)|image-registry\.openshift-image-registry\.svc)" || true)"
+    source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
+    if [[ -n "${bad}" ]] && cf_is_operator_mode; then
+        # Operator mode: OLM runs the CFK / cp-fko operator pods from their CSV, by digest. The
+        # shared operators track's IDMS redirects those pulls, so the pod spec keeps the original
+        # name: leave every image a CSV in the namespace names to that track.
+        csv_imgs=(${(f)"$(oc get clusterserviceversions.operators.coreos.com -n "${ns}" -o jsonpath='{range .items[*]}{range .spec.relatedImages[*]}{.image}{"\n"}{end}{range .spec.install.spec.deployments[*].spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}' 2>/dev/null || true)"})
+        bad_imgs=(${(f)bad})
+        kept=(${bad_imgs:|csv_imgs})
+        (( ${#kept} < ${#bad_imgs} )) && preg_info "confluent: $(( ${#bad_imgs} - ${#kept} )) operator image(s) named by an OLM CSV - redirected by the shared operators track (IDMS), not checked here"
+        bad="${(F)kept}"
+    fi
     if [[ -n "${bad}" ]]; then
         print -r -- "${bad}" | sed 's/^/  NOT FROM THE REGISTRY  /'
         preg_die "confluent: pods use images outside the registry (re-run 3.5, then the Confluent install scripts)"

@@ -25,6 +25,12 @@ source "${SCRIPT_DIR}/../../../src/helpers/version_resolver.sh"
 # Deliberately does NOT source the config or contact the cluster: it is a pure
 # file-rewriting step that runs before 1.0_flink_prep.sh.
 #
+# Operator mode (plan .claude/plans/confluent-operator-install-mode/): the Flink
+# operator source follows the platform's CONFLUENT_DEPLOY_MODE (missing = operator)
+# unless --operator-source names one. A source other than helm (cp-fko through
+# OLM) adds the Flink operator settings once and, for a first run, pins CMF 2.5.0
+# with its cp-fko channel. The helm source writes exactly what it always did.
+#
 # Why the variables land in confluent_vars.sh rather than a file of their own:
 # source_env_setup.sh sources every configs/*/*.sh, and the Flink scripts need
 # the Kafka values (bootstrap, SASL secret, namespace) from that same file to
@@ -71,6 +77,13 @@ Overrides (any of these beat the size preset):
   --dry-run                 print the resulting block without writing
   --target-cluster NAME     Use configs/clusters/NAME (mode on, or a cluster with its folder)
   -h, --help                this message
+
+Flink operator mode:
+  --operator-source SRC     helm | olm | existing (FLINK_OPERATOR_SOURCE). Without
+                            it the Flink scripts follow the platform mode: olm when
+                            CONFLUENT_DEPLOY_MODE is operator (or missing), else helm.
+  --cmf-resource-mode MODE  cli | cfk (FLINK_CMF_RESOURCE_MODE). Without it: cfk
+                            when the operator source is not helm, else cli.
 
 Namespace note: by default Flink installs into its OWN project
 (<confluent project>-flink) so it can be added and removed without touching the
@@ -125,6 +138,8 @@ DRY_RUN=false
 STORAGE_CLASS_OVERRIDE=""
 NAMESPACE_OVERRIDE=""
 typeset -A OVERRIDE
+OPERATOR_SOURCE_FLAG=""
+CMF_RESOURCE_MODE_FLAG=""
 
 while (( $# > 0 )); do
     case "$1" in
@@ -142,10 +157,21 @@ while (( $# > 0 )); do
         --storage-class)      h_need_value "$1" "${2:-}"; STORAGE_CLASS_OVERRIDE="$2"; shift 2 ;;
         --namespace)          h_need_value "$1" "${2:-}"; NAMESPACE_OVERRIDE="$2"; shift 2 ;;
         --dry-run)            DRY_RUN=true; shift ;;
+        --operator-source)    h_need_value "$1" "${2:-}"; OPERATOR_SOURCE_FLAG="${(L)2}"; shift 2 ;;
+        --cmf-resource-mode)  h_need_value "$1" "${2:-}"; CMF_RESOURCE_MODE_FLAG="${(L)2}"; shift 2 ;;
         -h|--help)            usage; exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Use --help." >&2; exit 1 ;;
     esac
 done
+
+if [[ -n "${OPERATOR_SOURCE_FLAG}" && "${OPERATOR_SOURCE_FLAG}" != (helm|olm|existing) ]]; then
+    echo "[ERROR] --operator-source expects helm, olm or existing, got '${OPERATOR_SOURCE_FLAG}'." >&2
+    exit 1
+fi
+if [[ -n "${CMF_RESOURCE_MODE_FLAG}" && "${CMF_RESOURCE_MODE_FLAG}" != (cli|cfk) ]]; then
+    echo "[ERROR] --cmf-resource-mode expects cli or cfk, got '${CMF_RESOURCE_MODE_FLAG}'." >&2
+    exit 1
+fi
 
 apply_size "${SIZE}"
 for _k in "${(@k)OVERRIDE}"; do
@@ -157,6 +183,55 @@ if [[ ! -f "${VARS_FILE}" ]]; then
     echo "[ERROR] 0_confluent_prepare_template_config.sh first." >&2
     exit 1
 fi
+
+# ------------------------------------------------------------------------------
+# Flink operator source (contract §2.1 / §5.2): --operator-source, else the
+# file's FLINK_OPERATOR_SOURCE, else the platform mode (olm in operator mode).
+# The platform mode is read from the file by grep; a missing line means operator.
+# ------------------------------------------------------------------------------
+# Value of `export NAME=...` as the shell reads it when sourced: "double" or
+# 'single' quoted, or bare up to the first blank; the last line wins. Empty when absent.
+_file_value() {
+    local line
+    line="$(grep -E "^export $1=" "${VARS_FILE}" 2>/dev/null | tail -1)" || true
+    line="${line#export $1=}"
+    case "${line}" in
+        \"*) line="${line#\"}"; line="${line%%\"*}" ;;
+        \'*) line="${line#\'}"; line="${line%%\'*}" ;;
+        *)   line="${line%%[[:space:]]*}" ;;
+    esac
+    print -r -- "${line}"
+}
+_file_has()   { grep -qE "^export $1=" "${VARS_FILE}" 2>/dev/null; }
+
+_PLATFORM_MODE_MISSING=false
+if _file_has CONFLUENT_DEPLOY_MODE; then
+    _pm="$(_file_value CONFLUENT_DEPLOY_MODE)"
+    _pm="${(L)_pm//[[:space:]]/}"
+    [[ "${_pm}" == scripts ]] && PLATFORM_MODE=scripts || PLATFORM_MODE=operator
+else
+    PLATFORM_MODE=operator
+    _PLATFORM_MODE_MISSING=true
+fi
+_fs="${OPERATOR_SOURCE_FLAG:-$(_file_value FLINK_OPERATOR_SOURCE)}"
+_fs="${(L)_fs//[[:space:]]/}"
+case "${_fs}" in
+    helm|olm|existing) FLINK_SOURCE="${_fs}" ;;
+    "")                [[ "${PLATFORM_MODE}" == operator ]] && FLINK_SOURCE=olm || FLINK_SOURCE=helm ;;
+    *)                 FLINK_SOURCE=olm
+                       echo "[WARN] FLINK_OPERATOR_SOURCE='${_fs}' is not helm|olm|existing - using olm" >&2 ;;
+esac
+_cm="${CMF_RESOURCE_MODE_FLAG:-$(_file_value FLINK_CMF_RESOURCE_MODE)}"
+_cm="${(L)_cm//[[:space:]]/}"
+case "${_cm}" in
+    cli|cfk) CMF_RESOURCE_MODE="${_cm}" ;;
+    *)       [[ "${FLINK_SOURCE}" != helm ]] && CMF_RESOURCE_MODE=cfk || CMF_RESOURCE_MODE=cli ;;
+esac
+unset _pm _fs _cm
+if [[ "${FLINK_SOURCE}" != helm ]] && $_PLATFORM_MODE_MISSING && [[ -z "${OPERATOR_SOURCE_FLAG}" ]]; then
+    echo "[WARN] ${VARS_FILE##*/} has no CONFLUENT_DEPLOY_MODE - treating the platform as operator mode, so Flink uses cp-fko through OLM. Pass --operator-source helm (or set CONFLUENT_DEPLOY_MODE=\"scripts\") to keep the Helm operator." >&2
+fi
+_cat_or() { vr_catalog "$1" 2>/dev/null || print -r -- "$2"; }
 
 # The storage class is written as a reference to STG_CLASS_BLOCK unless the
 # caller names one, so it keeps tracking the cluster's block storage the way
@@ -216,6 +291,15 @@ ${END_MARKER}
 EOF
 )"
 
+if [[ "${DRY_RUN}" == "true" ]] && [[ "${FLINK_SOURCE}" != helm || -n "${OPERATOR_SOURCE_FLAG}${CMF_RESOURCE_MODE_FLAG}" ]]; then
+    echo "[INFO] --dry-run: Flink operator source ${FLINK_SOURCE}, CMF resource mode ${CMF_RESOURCE_MODE}."
+    if [[ "${FLINK_SOURCE}" != helm ]] && ! _file_has FLINK_OLM_PACKAGE; then
+        echo "[INFO] --dry-run: would add the Flink operator settings (FLINK_OLM_*, FLINK_CFK_NAMESPACE, ...) to ${VARS_FILE##*/}."
+    fi
+    if [[ "${FLINK_SOURCE}" != helm ]] && ! _file_has FLINK_CMF_CHART_VERSION; then
+        echo "[INFO] --dry-run: the static Flink settings would pin CMF $(_cat_or confluent/operator/cmf_chart 2.5.0) (operator mode)."
+    fi
+fi
 if [[ "${DRY_RUN}" == "true" ]]; then
     echo "[INFO] --dry-run: the following block would be written to ${VARS_FILE##*/}"
     echo ""
@@ -261,7 +345,9 @@ rm -f "${BLOCK_FILE}"
 # managed block so later edits survive. Same treatment the Confluent component
 # toggles get - the block above owns only what --size controls.
 # ------------------------------------------------------------------------------
+_STATIC_EXISTED=true
 if ! grep -q '^export FLINK_CMF_CHART_VERSION=' "${VARS_FILE}"; then
+    _STATIC_EXISTED=false
     # @@<path>@@ marks a value from src/helpers/version_catalog.json, filled in below.
     _static="$(cat <<'STATIC'
 
@@ -376,6 +462,13 @@ export FLINK_LICENSE_SECRET="flink-license"
 export FLINK_ROLLOUT_TIMEOUT="600s"
 STATIC
 )"
+    # Operator source (not helm): CMF 2.5.0 and its SQL image (contract §2.5).
+    if [[ "${FLINK_SOURCE}" != helm ]]; then
+        _key=flink/cmf_chart_version
+        _static="${_static//@@${_key}@@/$(_cat_or confluent/operator/cmf_chart 2.5.0)}"
+        _key=flink/sql_image
+        _static="${_static//@@${_key}@@/$(_cat_or confluent/operator/flink_sql_image confluentinc/cp-flink-sql:1.19-cmf2.5-cp1)}"
+    fi
     for _key in flink/cmf_chart_version flink/operator_chart_version flink/application_image \
                 flink/sql_image flink/cert_manager_version; do
         _static="${_static//@@${_key}@@/$(vr_catalog "${_key}")}"
@@ -383,6 +476,94 @@ STATIC
     print -r -- "${_static}" >> "${VARS_FILE}"
     unset _static _key
     echo "[INFO] Wrote the static Flink settings (versions, names, storage backend)."
+fi
+
+# ------------------------------------------------------------------------------
+# Flink operator settings (contract §2.5): written once when the operator source
+# is not helm, outside the managed block, so edits survive. FLINK_OPERATOR_SOURCE
+# and FLINK_CMF_RESOURCE_MODE are written only when given as flags: without them
+# the Flink scripts follow the platform mode (plan 15.1 item 4).
+# ------------------------------------------------------------------------------
+# CONTRACT-DEVIATION: the guard is FLINK_OLM_PACKAGE, not FLINK_OPERATOR_SOURCE -
+# FLINK_OPERATOR_SOURCE stays unwritten when it follows the platform mode, so a
+# guard on it would append the block again on every run.
+# Written in place, so the file keeps its mode (it holds OCP_PASSWORD) and a
+# symlinked config stays a symlink.
+_file_set() {   # <name> <value>: rewrite every export NAME=... line in place
+    python3 - "${VARS_FILE}" "$1" "$2" <<'PYSET'
+import re, sys
+path, name, value = sys.argv[1:4]
+text = open(path).read()
+text = re.compile(r"^export " + re.escape(name) + r"=.*$", re.M).sub(lambda _: f'export {name}="{value}"', text)
+with open(path, "w") as fh:
+    fh.write(text)
+PYSET
+}
+typeset -A _FLINK_MODE_SET
+[[ -n "${OPERATOR_SOURCE_FLAG}" ]] && _FLINK_MODE_SET[FLINK_OPERATOR_SOURCE]="${OPERATOR_SOURCE_FLAG}"
+[[ -n "${CMF_RESOURCE_MODE_FLAG}" ]] && _FLINK_MODE_SET[FLINK_CMF_RESOURCE_MODE]="${CMF_RESOURCE_MODE_FLAG}"
+
+if [[ "${FLINK_SOURCE}" != helm ]] && ! _file_has FLINK_OLM_PACKAGE; then
+    _cmf_version="$(_file_value FLINK_CMF_CHART_VERSION)"
+    _fko_channel="" _fko_csv=""
+    if _fko="$(_vr_python "${REPO_ROOT}/src/helpers/confluent_operator_config.py" fko-for-cmf "${_cmf_version}" 2>/dev/null)" \
+            && [[ -n "${_fko}" ]]; then
+        read -r _fko_channel _fko_csv <<< "${_fko}"
+    else
+        echo "[WARN] FLINK_CMF_CHART_VERSION=${_cmf_version} has no cp-fko pairing in the version catalog - FLINK_OLM_CHANNEL and FLINK_OLM_STARTING_CSV are written empty; set them by hand." >&2
+    fi
+    _olm_block="$(cat <<EOF
+
+# ------------------------------------------------------------------------------
+# Confluent Flink operator mode - added by install_confluent_platform_flink_addon/$(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+# ------------------------------------------------------------------------------
+# Read when the Flink operator source is not helm: cp-fko (Confluent's Flink
+# Kubernetes Operator) through OLM in PROJECT_CONFLUENT_FLINK. NOT managed on
+# re-runs - edit freely.
+EOF
+)"
+    for _k in FLINK_OPERATOR_SOURCE FLINK_CMF_RESOURCE_MODE; do
+        [[ -n "${_FLINK_MODE_SET[$_k]:-}" ]] && _olm_block+=$'\n'"export ${_k}=\"${_FLINK_MODE_SET[$_k]}\""
+    done
+    _olm_block+=$'\n'"$(cat <<EOF
+# CMF/FKO lock: the channel must be the cp-fko line FLINK_CMF_CHART_VERSION needs.
+export FLINK_OLM_PACKAGE="cp-fko"
+export FLINK_OLM_SUBSCRIPTION_NAME="cp-fko"
+export FLINK_OLM_CHANNEL="${_fko_channel}"
+export FLINK_OLM_STARTING_CSV="${_fko_csv}"
+export FLINK_OLM_CATALOG_SOURCE="certified-operators"
+export FLINK_OLM_CATALOG_SOURCE_NAMESPACE="openshift-marketplace"
+# Manual = the scripts approve only the InstallPlan they asked for.
+export FLINK_OLM_INSTALL_PLAN_APPROVAL="Manual"
+# CMF resources as CFK custom resources (CMFRestClass, FlinkEnvironment) live here.
+export FLINK_CFK_NAMESPACE="\${PROJECT_CONFLUENT_FLINK}"
+export FLINK_CMF_RESTCLASS_NAME="default"
+# Seconds to wait for a FlinkEnvironment to go after CMF deleted it.
+export FLINK_ENVIRONMENT_DELETE_WAIT="60"
+EOF
+)"
+    print -r -- "${_olm_block}" >> "${VARS_FILE}"
+    echo "[INFO] Wrote the Flink operator settings (cp-fko ${_fko_channel:-<channel unset>} through OLM)."
+    _FLINK_MODE_SET=()
+    unset _olm_block _fko _cmf_version
+fi
+
+# Flags for settings outside a fresh block: rewrite the line, else append it.
+for _k in FLINK_OPERATOR_SOURCE FLINK_CMF_RESOURCE_MODE; do
+    [[ -n "${_FLINK_MODE_SET[$_k]:-}" ]] || continue
+    if _file_has "${_k}"; then
+        _old="$(_file_value "${_k}")"
+        [[ "${_old}" == "${_FLINK_MODE_SET[$_k]}" ]] && continue
+        _file_set "${_k}" "${_FLINK_MODE_SET[$_k]}"
+        echo "[INFO] ${_k}: ${_old} -> ${_FLINK_MODE_SET[$_k]}"
+    else
+        printf '\nexport %s="%s"\n' "${_k}" "${_FLINK_MODE_SET[$_k]}" >> "${VARS_FILE}"
+        echo "[INFO] ${_k}=${_FLINK_MODE_SET[$_k]} saved to ${VARS_FILE##*/}."
+    fi
+done
+
+if [[ "${FLINK_SOURCE}" != helm ]] && $_STATIC_EXISTED && [[ "$(_file_value FLINK_CMF_CHART_VERSION)" == 2.4.* ]]; then
+    echo "[WARN] CMF 2.4.x pairs with cp-fko stable-v1.15; a cluster whose cp-fko is 1.16 refuses it (plan C10) - consider FLINK_CMF_CHART_VERSION=2.5.0" >&2
 fi
 
 # ------------------------------------------------------------------------------

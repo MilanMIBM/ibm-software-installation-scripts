@@ -1,0 +1,82 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Kafka
+metadata:
+  name: kafka
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  replicas: 3
+  image:
+    application: docker.io/confluentinc/cp-server:8.4.0
+    init: docker.io/confluentinc/confluent-init-container:3.4.0
+    pullSecretRef:
+    - confluent-registry
+  dataVolumeCapacity: 100Gi
+  storageClass:
+    name: ocs-storagecluster-ceph-rbd
+  podTemplate:
+    podSecurityContext: {}
+    resources:
+      requests:
+        cpu: '1'
+        memory: 4Gi
+      limits:
+        cpu: '2'
+        memory: 8Gi
+  injectLabels:
+    app.kubernetes.io/part-of: confluent
+  license:
+    secretRef: confluent-license
+  listeners:
+    internal:
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-server
+    replication:
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-server
+    external:
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-server
+      externalAccess:
+        type: route
+        route:
+          domain: apps.example.com
+          bootstrapPrefix: kafka-confluent
+          brokerPrefix: kafka-confluent-b
+          labels:
+            app.kubernetes.io/part-of: confluent
+            confluent.ibm-scripts/installed-by: local.confluent
+      tls:
+        enabled: true
+        secretRef: confluent-kafka-tls
+  dependencies:
+    kRaftController:
+      clusterRef:
+        name: kraftcontroller
+    metricsClient:
+      url: http://control-center.confluent.svc.cluster.local:9090
+  configOverrides:
+    server:
+    - default.replication.factor=3
+    - min.insync.replicas=2
+    - num.partitions=3
+    - offsets.topic.replication.factor=3
+    - transaction.state.log.replication.factor=3
+    - transaction.state.log.min.isr=2
+    - transaction.max.timeout.ms=3600000
+    - group.initial.rebalance.delay.ms=0
+    - confluent.license.topic.replication.factor=3
+    - confluent.balancer.topic.replication.factor=3
+    - confluent.metadata.topic.replication.factor=3
+    - confluent.consumer.lag.emitter.enabled=true
+    - confluent.schema.registry.url=http://schema-registry.confluent.svc.cluster.local:8081
+    - auto.create.topics.enable=true

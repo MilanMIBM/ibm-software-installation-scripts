@@ -211,6 +211,21 @@ if [[ -z "${CONFLUENT_PLATFORM_MDS_URL}" ]]; then
     echo "[INFO] Until MDS is enabled, use the REST endpoints directly instead:"
     echo "[INFO]   curl -s \"\${CONFLUENT_SCHEMA_REGISTRY_URL}/subjects\""
     echo "[INFO]   curl -s \"\${CONFLUENT_CONNECT_URL}/connectors\""
+    # CONTRACT-DEVIATION: keyed off the details file (CONFLUENT_DEPLOY_MODE_DEPLOYED, written by
+    # 1.3 in operator mode only), not cf_is_operator_mode: this script is sourced into the
+    # user's shell and reads only the instance-details contract.
+    if [[ "${CONFLUENT_DEPLOY_MODE_DEPLOYED:-}" == operator ]]; then
+        # Operator mode: CFK names the broker pods kafka-N; the internal listener is 9071.
+        echo "[INFO] or run kafka-* tools inside a Kafka pod (CFK names them kafka-N; the"
+        echo "[INFO] internal listener is localhost:9071):"
+        echo "[INFO]   oc exec kafka-0 -c kafka -n \${CONFLUENT_NAMESPACE} -- kafka-topics \\"
+        if [[ "${CONFLUENT_SASL_ENABLED:-false}" == "true" ]]; then
+            echo "[INFO]     --bootstrap-server localhost:9071 --command-config <client properties with the SASL login> --list"
+        else
+            echo "[INFO]     --bootstrap-server localhost:9071 --list"
+        fi
+        return 0 2>/dev/null || exit 0
+    fi
     echo "[INFO] or run kafka-* tools inside a broker pod (with SASL on, the brokers"
     echo "[INFO] write a matching admin client config to /etc/kafka/client.properties):"
     echo "[INFO]   oc exec broker-0 -n \${CONFLUENT_NAMESPACE} -- kafka-topics \\"
@@ -264,5 +279,9 @@ else
     echo "[WARN]   - the brokers are still restarting after x.4_confluent_add_mds.sh"
     echo "[WARN]   - the MDS 30-day trial expired (set CONFLUENT_LICENSE_KEY)"
     echo "[WARN]   - the user store has no '${CONFLUENT_PLATFORM_USERNAME}' account"
-    echo "[WARN] Check MDS:  oc logs broker-0 -n ${CONFLUENT_NAMESPACE:-?} | grep -i metadata"
+    if [[ "${CONFLUENT_DEPLOY_MODE_DEPLOYED:-}" == operator ]]; then
+        echo "[WARN] Check MDS:  oc logs kafka-0 -c kafka -n ${CONFLUENT_NAMESPACE:-?} | grep -i metadata"
+    else
+        echo "[WARN] Check MDS:  oc logs broker-0 -n ${CONFLUENT_NAMESPACE:-?} | grep -i metadata"
+    fi
 fi

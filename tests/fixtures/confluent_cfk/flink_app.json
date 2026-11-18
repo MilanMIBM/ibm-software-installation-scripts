@@ -1,0 +1,35 @@
+{
+  "_about": "FlinkApplication sample job (cpu as strings)",
+  "input": {
+    "schema_version": 1,
+    "namespace": "confluent",
+    "flink_namespace": "confluent-flink",
+    "owner_id": "local.confluent",
+    "vars": {
+      "FLINK_APPLICATION_IMAGE": "confluentinc/cp-flink:2.0.2-cp3",
+      "FLINK_APPLICATION_VERSION": "v2_0",
+      "FLINK_CFK_NAMESPACE": "confluent-flink",
+      "FLINK_CMF_PORT": "80",
+      "FLINK_CMF_RESOURCE_MODE": "cfk",
+      "FLINK_CMF_RESTCLASS_NAME": "default",
+      "FLINK_CMF_SERVICE": "cmf-service",
+      "FLINK_ENVIRONMENT": "cp-env",
+      "FLINK_JOBMANAGER_CPU": "0.5",
+      "FLINK_JOBMANAGER_MEMORY": "1024m",
+      "FLINK_OPERATOR_SOURCE": "olm",
+      "FLINK_TASKMANAGER_CPU": "1.0",
+      "FLINK_TASKMANAGER_MEMORY": "2048m",
+      "FLINK_TASK_SLOTS": "2",
+      "PROJECT_CONFLUENT_FLINK": "confluent-flink"
+    },
+    "live": {}
+  },
+  "renders": [
+    {
+      "set": "flink-app",
+      "args": {
+        "name": "state-machine"
+      }
+    }
+  ]
+}

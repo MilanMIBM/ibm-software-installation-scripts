@@ -28,6 +28,7 @@ source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 # ==============================================================================
 
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 
@@ -52,15 +53,33 @@ svc_url() {
 }
 
 echo "[INFO] Collecting Confluent endpoints from project '${NS}'..."
+# Operator mode (CFK): the endpoints come from the CRs through the resolvers of
+# confluent_operator_helpers.sh; scripts mode reads the broker StatefulSet as before.
+if cf_is_operator_mode; then
+    (( ${+functions[cf_bootstrap_internal]} )) || source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+fi
 
 # In-cluster bootstrap: what applications running on the cluster should use.
-CONFLUENT_BOOTSTRAP_INTERNAL="broker.${NS}.svc.cluster.local:${CONFLUENT_BROKER_INTERNAL_PORT}"
+if cf_is_operator_mode; then
+    CONFLUENT_BOOTSTRAP_INTERNAL="$(cf_bootstrap_internal "${NS}")"
+else
+    CONFLUENT_BOOTSTRAP_INTERNAL="broker.${NS}.svc.cluster.local:${CONFLUENT_BROKER_INTERNAL_PORT}"
+fi
 
-CONFLUENT_SCHEMA_REGISTRY_INTERNAL_URL="$(svc_url schema-registry "${CONFLUENT_SCHEMA_REGISTRY_PORT}")"
-CONFLUENT_CONNECT_INTERNAL_URL="$(svc_url connect "${CONFLUENT_CONNECT_PORT}")"
-CONFLUENT_KSQLDB_INTERNAL_URL="$(svc_url ksqldb-server "${CONFLUENT_KSQLDB_PORT}")"
-CONFLUENT_REST_PROXY_INTERNAL_URL="$(svc_url rest-proxy "${CONFLUENT_REST_PROXY_PORT}")"
-CONFLUENT_CONTROL_CENTER_INTERNAL_URL="$(svc_url control-center "${CONFLUENT_CONTROL_CENTER_PORT}")"
+if cf_is_operator_mode; then
+    # CFK names each component's Service after its CR; the URL is the CR's own status (empty when absent).
+    CONFLUENT_SCHEMA_REGISTRY_INTERNAL_URL="$(cf_component_url "${NS}" "${CF_SR_CR}")"
+    CONFLUENT_CONNECT_INTERNAL_URL="$(cf_component_url "${NS}" "${CF_CONNECT_CR}")"
+    CONFLUENT_KSQLDB_INTERNAL_URL="$(cf_component_url "${NS}" "${CF_KSQLDB_CR}")"
+    CONFLUENT_REST_PROXY_INTERNAL_URL="$(cf_component_url "${NS}" "${CF_KRP_CR}")"
+    CONFLUENT_CONTROL_CENTER_INTERNAL_URL="$(cf_component_url "${NS}" "${CF_C3_CR}")"
+else
+    CONFLUENT_SCHEMA_REGISTRY_INTERNAL_URL="$(svc_url schema-registry "${CONFLUENT_SCHEMA_REGISTRY_PORT}")"
+    CONFLUENT_CONNECT_INTERNAL_URL="$(svc_url connect "${CONFLUENT_CONNECT_PORT}")"
+    CONFLUENT_KSQLDB_INTERNAL_URL="$(svc_url ksqldb-server "${CONFLUENT_KSQLDB_PORT}")"
+    CONFLUENT_REST_PROXY_INTERNAL_URL="$(svc_url rest-proxy "${CONFLUENT_REST_PROXY_PORT}")"
+    CONFLUENT_CONTROL_CENTER_INTERNAL_URL="$(svc_url control-center "${CONFLUENT_CONTROL_CENTER_PORT}")"
+fi
 
 CONFLUENT_SCHEMA_REGISTRY_URL="$(cf_route_url "${NS}" schema-registry)"
 CONFLUENT_CONNECT_URL="$(cf_route_url "${NS}" connect)"
@@ -71,24 +90,34 @@ CONFLUENT_MDS_URL="$(cf_route_url "${NS}" mds)"
 
 # External Kafka bootstrap: the per-broker passthrough routes created by
 # x.4_confluent_add_external_access.sh, joined into one bootstrap string.
-CONFLUENT_BOOTSTRAP_EXTERNAL=""
-for _r in $(oc get routes -n "${NS}" -o name 2>/dev/null | grep -E 'route.*/broker-[0-9]+-kafka$' || true); do
-    _h="$(oc get "${_r}" -n "${NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-    [[ -n "${_h}" ]] && CONFLUENT_BOOTSTRAP_EXTERNAL+="${_h}:443,"
-done
-CONFLUENT_BOOTSTRAP_EXTERNAL="${CONFLUENT_BOOTSTRAP_EXTERNAL%,}"
+if cf_is_operator_mode; then
+    # CFK's bootstrap route (externalAccess); CFK advertises the per-broker routes itself.
+    CONFLUENT_BOOTSTRAP_EXTERNAL="$(cf_external_bootstrap "${NS}")"
+else
+    CONFLUENT_BOOTSTRAP_EXTERNAL=""
+    for _r in $(oc get routes -n "${NS}" -o name 2>/dev/null | grep -E 'route.*/broker-[0-9]+-kafka$' || true); do
+        _h="$(oc get "${_r}" -n "${NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+        [[ -n "${_h}" ]] && CONFLUENT_BOOTSTRAP_EXTERNAL+="${_h}:443,"
+    done
+    CONFLUENT_BOOTSTRAP_EXTERNAL="${CONFLUENT_BOOTSTRAP_EXTERNAL%,}"
+fi
 
 # Cluster id as the running broker reports it, falling back to the configured
 # value when the broker is not up yet.
-CONFLUENT_RUNNING_CLUSTER_ID="$(oc get statefulset broker -n "${NS}" \
-    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CLUSTER_ID")].value}' 2>/dev/null || true)"
-CONFLUENT_RUNNING_CLUSTER_ID="${CONFLUENT_RUNNING_CLUSTER_ID:-${CONFLUENT_CLUSTER_ID}}"
+if cf_is_operator_mode; then
+    CONFLUENT_RUNNING_CLUSTER_ID="$(cf_running_cluster_id "${NS}")"
+    CONFLUENT_DEPLOYED_VERSION="$(cf_deployed_version "${NS}")"
+else
+    CONFLUENT_RUNNING_CLUSTER_ID="$(oc get statefulset broker -n "${NS}" \
+        -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CLUSTER_ID")].value}' 2>/dev/null || true)"
+    CONFLUENT_RUNNING_CLUSTER_ID="${CONFLUENT_RUNNING_CLUSTER_ID:-${CONFLUENT_CLUSTER_ID}}"
 
-# Resolve the deployed version from the broker image tag, so the file records
-# what is actually running rather than what "latest" meant at install time.
-_broker_image="$(oc get statefulset broker -n "${NS}" \
-    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
-CONFLUENT_DEPLOYED_VERSION="${_broker_image##*:}"
+    # Resolve the deployed version from the broker image tag, so the file records
+    # what is actually running rather than what "latest" meant at install time.
+    _broker_image="$(oc get statefulset broker -n "${NS}" \
+        -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+    CONFLUENT_DEPLOYED_VERSION="${_broker_image##*:}"
+fi
 
 # Web UI auth mode and basic-auth credentials, read from the live secrets
 # created by 1.0_confluent_prep.sh. The -oauth secret is checked first: basic
@@ -151,7 +180,18 @@ CONFLUENT_KAFKA_INTERNAL_PROTOCOL=""
 CONFLUENT_KAFKA_INTERNAL_MECHANISM=""
 CONFLUENT_KAFKA_INTERNAL_MECHANISMS=""
 CONFLUENT_KAFKA_EXTERNAL_MECHANISMS=""
-if oc get pod broker-0 -n "${NS}" &>/dev/null; then
+if cf_is_operator_mode; then
+    # Read from the Kafka CR (what CFK runs), not from confluent_vars.sh.
+    _live_security=""
+    if oc get kafkas.platform.confluent.io "${CF_KAFKA_CR}" -n "${NS}" &>/dev/null; then
+        _live_security="$(cf_live_security "${NS}")"
+        read -r CONFLUENT_KAFKA_INTERNAL_PROTOCOL CONFLUENT_KAFKA_INTERNAL_MECHANISM \
+            CONFLUENT_KAFKA_INTERNAL_MECHANISMS CONFLUENT_KAFKA_EXTERNAL_MECHANISMS <<< "${_live_security}"
+        [[ "${CONFLUENT_KAFKA_INTERNAL_MECHANISM}" == "-" ]] && CONFLUENT_KAFKA_INTERNAL_MECHANISM=""
+        [[ "${CONFLUENT_KAFKA_INTERNAL_MECHANISMS}" == "-" ]] && CONFLUENT_KAFKA_INTERNAL_MECHANISMS=""
+        [[ "${CONFLUENT_KAFKA_EXTERNAL_MECHANISMS}" == "-" ]] && CONFLUENT_KAFKA_EXTERNAL_MECHANISMS=""
+    fi
+elif oc get pod broker-0 -n "${NS}" &>/dev/null; then
     read -r CONFLUENT_KAFKA_INTERNAL_PROTOCOL CONFLUENT_KAFKA_INTERNAL_MECHANISM \
         <<< "$(kafka_pod_internal_security "${NS}" broker-0)"
     [[ "${CONFLUENT_KAFKA_INTERNAL_MECHANISM}" == "-" ]] && CONFLUENT_KAFKA_INTERNAL_MECHANISM=""
@@ -173,7 +213,19 @@ echo "[INFO] Probing routes without credentials to record what is protected..."
 _exposure=""
 for _r in $(oc get routes -n "${NS}" -l app.kubernetes.io/part-of=confluent \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true); do
-    if [[ "$(oc get route "${_r}" -n "${NS}" -o jsonpath='{.spec.tls.termination}' 2>/dev/null)" == "passthrough" ]]; then
+    if cf_is_operator_mode \
+       && [[ "$(oc get route "${_r}" -n "${NS}" -o jsonpath='{.spec.tls.termination}' 2>/dev/null)" == "passthrough" ]]; then
+        # CFK's Kafka routes (kafka-bootstrap, kafka-<N>): the Kafka CR's external listener protects them.
+        # It always has TLS (listener tls.secretRef) and authenticates whenever SASL is on.
+        _route_mechs="${${(z)_live_security}[4]:--}"
+        if [[ -n "${_live_security}" && "${_route_mechs}" != "-" ]]; then
+            _label="protected - Kafka SASL_SSL (${_route_mechs})"
+        elif [[ -n "${_live_security}" ]]; then
+            _label="OPEN - Kafka SSL, no SASL client auth"
+        else
+            _label="unknown - Kafka CR ${CF_KAFKA_CR} not found"
+        fi
+    elif [[ "$(oc get route "${_r}" -n "${NS}" -o jsonpath='{.spec.tls.termination}' 2>/dev/null)" == "passthrough" ]]; then
         # Kafka wire protocol, not HTTP: protection is the EXTERNAL listener of
         # the broker this route fronts (broker-N-kafka -> pod broker-N).
         _bpod="${_r%-kafka}"
@@ -247,6 +299,9 @@ esac
 REPO_ROOT="$(cd "${SCRIPT_DIR}" && while [[ ! -f pyproject.toml ]]; do cd ..; done && pwd)"
 VARS_FILE="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_instance_details.sh"
 mkdir -p "$(dirname "${VARS_FILE}")"
+# The file holds plain-text passwords (SASL admin, MDS, UI login): owner-only, like the client
+# properties files below. Set before the first write - 'cat >' keeps an existing file's mode.
+( umask 077; : > "${VARS_FILE}" ) && chmod 600 "${VARS_FILE}"
 
 cat > "${VARS_FILE}" <<EOF
 # Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -317,8 +372,43 @@ export CONFLUENT_KAFKA_EXTERNAL_MECHANISMS="${CONFLUENT_KAFKA_EXTERNAL_MECHANISM
 export CONFLUENT_SASL_CLIENT_CREDS="${CONFLUENT_SASL_CLIENT_CREDS}"
 EOF
 
+if cf_is_operator_mode; then
+    # Which operator runs the platform (new keys, *_DEPLOYED*, so sourcing never overrides a config var).
+    _rc=0
+    cfo_detect "${CFO_PKG_CFK}" "${NS}" >/dev/null || _rc=$?
+    if (( _rc != 0 )) || [[ "${CFO_RESULT:-}" != reuse ]]; then
+        echo "[WARN] Could not tell which CFK operator runs ${NS}; CONFLUENT_OPERATOR_DEPLOYED_* stay empty." >&2
+        CFO_CSV="" CFO_NS=""
+    fi
+    cat >> "${VARS_FILE}" <<EOF
+
+# --- Operator mode -----------------------------------------------------------
+# The platform runs on Confluent for Kubernetes (CFK) through OLM.
+export CONFLUENT_DEPLOY_MODE_DEPLOYED="operator"
+export CONFLUENT_OPERATOR_DEPLOYED_CSV="${CFO_CSV}"
+export CONFLUENT_OPERATOR_DEPLOYED_NAMESPACE="${CFO_NS}"
+EOF
+    unset _rc
+fi
+
 echo ""
-cat "${VARS_FILE}"
+if cf_is_operator_mode; then
+    # Password values masked on the terminal (O21); the file itself keeps them.
+    # CONTRACT-DEVIATION: not cfo_print_masked - it masks only the first line of a multi-line value, and
+    # CONFLUENT_SASL_CLIENT_CREDS holds one line per user, so every other user's password would print.
+    # Same awk, plus it skips the continuation lines of a masked value (requested as a WP-A fix).
+    awk '
+        skip { if ($0 ~ /"[[:space:]]*$/) skip = 0; next }
+        match($0, /^(export[ \t]+)?[A-Za-z0-9_]*(_PASS|_PASSWORD|CONFLUENT_SASL_CLIENT_CREDS)=/) {
+            rest = substr($0, RLENGTH + 1)
+            print substr($0, 1, RLENGTH) "\"********\""
+            if (rest ~ /^"/ && rest !~ /^".*"[[:space:]]*$/) skip = 1
+            next
+        }
+        { print }' "${VARS_FILE}"
+else
+    cat "${VARS_FILE}"
+fi
 echo ""
 echo "[INFO] Confluent instance details written to ${VARS_FILE##*/}"
 
@@ -366,8 +456,13 @@ else
     _truststore=""
     if [[ "${_proto}" == "SASL_SSL" ]]; then
         _truststore="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_kafka_internal_ca.crt"
-        oc get secret "${CONFLUENT_INTERNAL_TLS_SECRET}" -n "${NS}" \
-            -o jsonpath='{.data.ca\.crt}' | base64 --decode > "${_truststore}"
+        if cf_is_operator_mode; then
+            # repo TLS source: ca.crt of the internal secret; cfk: tls.crt of ca-pair-sslcerts (V27).
+            cf_ca_pem "${NS}" internal > "${_truststore}"
+        else
+            oc get secret "${CONFLUENT_INTERNAL_TLS_SECRET}" -n "${NS}" \
+                -o jsonpath='{.data.ca\.crt}' | base64 --decode > "${_truststore}"
+        fi
         chmod 644 "${_truststore}"
     fi
     _ext_mechs="${CONFLUENT_KAFKA_EXTERNAL_MECHANISMS:-${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS}}"
@@ -424,12 +519,19 @@ else
             echo "# Run x.4_confluent_add_external_access.sh, then regenerate this file."
         else
             echo "#"
-            echo "# Hostname / Port  - one row per broker, all on port 443 (the router's"
-            echo "#                    port, not the container's). Add rows with '+' so"
-            echo "#                    partition-leader redirects resolve."
-            for _hp in ${(s:,:)CONFLUENT_BOOTSTRAP_EXTERNAL}; do
-                echo "#                    ${_hp%:*}    ${_hp##*:}"
-            done
+            if cf_is_operator_mode; then
+                # CFK advertises the per-broker routes, so the bootstrap row is all a client needs (D18).
+                echo "# Hostname / Port  - the bootstrap route on port 443 (the router's port,"
+                echo "#                    not the container's); CFK advertises the brokers."
+                echo "#                    ${CONFLUENT_BOOTSTRAP_EXTERNAL%:*}    ${CONFLUENT_BOOTSTRAP_EXTERNAL##*:}"
+            else
+                echo "# Hostname / Port  - one row per broker, all on port 443 (the router's"
+                echo "#                    port, not the container's). Add rows with '+' so"
+                echo "#                    partition-leader redirects resolve."
+                for _hp in ${(s:,:)CONFLUENT_BOOTSTRAP_EXTERNAL}; do
+                    echo "#                    ${_hp%:*}    ${_hp##*:}"
+                done
+            fi
             echo "#"
             echo "# SASL connection  - ON"
             echo "# SASL mechanism   - ${_ext_mech}${${_ext_mechs#${_ext_mech}}:+  (also accepted: ${${_ext_mechs#${_ext_mech}}#,})}"

@@ -1,0 +1,97 @@
+{
+  "set": "platform",
+  "namespace": "confluent",
+  "files": [
+    {
+      "order": 10,
+      "stage": 1,
+      "path": "platform/10-kraftcontroller-kraftcontroller.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "KRaftController",
+      "name": "kraftcontroller",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 20,
+      "stage": 1,
+      "path": "platform/20-kafka-kafka.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "Kafka",
+      "name": "kafka",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 40,
+      "stage": 3,
+      "path": "platform/40-schemaregistry-schema-registry.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "SchemaRegistry",
+      "name": "schema-registry",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 50,
+      "stage": 3,
+      "path": "platform/50-connect-connect.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "Connect",
+      "name": "connect",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 60,
+      "stage": 3,
+      "path": "platform/60-ksqldb-ksqldb-server.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "KsqlDB",
+      "name": "ksqldb-server",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 70,
+      "stage": 3,
+      "path": "platform/70-kafkarestproxy-rest-proxy.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "KafkaRestProxy",
+      "name": "rest-proxy",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 80,
+      "stage": 4,
+      "path": "platform/80-controlcenter-control-center.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "ControlCenter",
+      "name": "control-center",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    }
+  ],
+  "disabled": [
+    {
+      "kind": "KafkaRestClass",
+      "name": "default"
+    },
+    {
+      "kind": "ConfluentRolebinding",
+      "name": "mds-super-systemadmin"
+    }
+  ],
+  "info": [
+    "Connect CPU raised to the operator-mode minimum (1 request / 2 limit)"
+  ],
+  "warnings": []
+}

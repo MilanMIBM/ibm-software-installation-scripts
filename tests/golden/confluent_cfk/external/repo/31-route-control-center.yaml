@@ -1,0 +1,19 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: control-center
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  host: control-center-confluent.apps.example.com
+  to:
+    kind: Service
+    name: control-center-auth
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

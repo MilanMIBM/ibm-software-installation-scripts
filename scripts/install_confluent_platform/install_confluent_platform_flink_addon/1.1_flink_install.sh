@@ -49,6 +49,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 #   --dry-run          render the charts and print the commands, change nothing
 # ==============================================================================
 
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 SKIP_OPERATOR=false
 SKIP_CMF=false
 SKIP_RESOURCES=false
@@ -62,14 +63,23 @@ while (( $# > 0 )); do
         --skip-resources) SKIP_RESOURCES=true; shift ;;
         --no-status)      NO_STATUS=true; shift ;;
         --dry-run)        DRY_RUN=true; shift ;;
+        --autoselect-latest)
+            # Operator mode only (contract 1.6): the Helm Flink operator rejects it as before.
+            if cf_flink_is_olm; then _f11_autoselect=1; shift
+            else echo "[ERROR] Unknown argument '$1'. Use --help." >&2; exit 1; fi ;;
         -h|--help)
             sed -n '19,47p' "$0" | sed 's/^# \{0,1\}//'
+            if cf_flink_is_olm; then
+                echo "  --autoselect-latest  operator mode: report the newest compatible cp-fko line +"
+                echo "                     CMF chart (applies only while cp-fko is not installed yet)"
+            fi
             exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Use --help." >&2; exit 1 ;;
     esac
 done
 
 eval "${OC_LOGIN}"
+cf_operator_guard flink || exit $?
 
 NS="${PROJECT_CONFLUENT_FLINK}"
 
@@ -84,10 +94,81 @@ oc project "${NS}" >/dev/null
 MANIFEST_DIR="${MCM_CLUSTER_ROOT:-${SCRIPT_DIR}}/flink_vars/rendered"
 mkdir -p "${MANIFEST_DIR}"
 
+# ------------------------------------------------------------------------------
+# Operator mode (FLINK_OPERATOR_SOURCE olm|existing): the Flink operator is cp-fko
+# through OLM, installed by operator/1.0o_flink_operator_olm.sh, so the Helm
+# operator release is skipped. Its CSV must exist and pair with the CMF chart
+# (the CMF/FKO lock, plan O7). The cp-fko Subscription is copied to
+# flink_vars/rendered/flink-operator-olm.yaml for inspection.
+# ------------------------------------------------------------------------------
+if cf_flink_is_olm; then
+    source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    export CFO_OWNER_ID="${CFO_OWNER_ID:-$(cfo_owner_id)}"
+    SKIP_OPERATOR=true
+    _F11_SOURCE="$(cf_flink_operator_source)"
+    if [[ -n "${_f11_autoselect:-}" ]]; then
+        cfo_autoselect_latest || { echo "[ERROR] --autoselect-latest failed." >&2; exit 1; }
+    fi
+    _f11_rc=0
+    cfo_detect "${FLINK_OLM_PACKAGE:-${CFO_PKG_FKO}}" "${NS}" || _f11_rc=$?
+    if (( _f11_rc != 0 )); then
+        echo "[ERROR] Cannot tell which Flink operator watches '${NS}' (see above)." >&2
+        exit 1
+    fi
+    _F11_FKO_CSV="${CFO_CSV}"
+    _F11_FKO_CHANNEL="${CFO_CHANNEL}"
+    if [[ "${CFO_RESULT}" != reuse ]]; then
+        if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "[WARN] No cp-fko watches '${NS}' (${CFO_RESULT}${CFO_REASON:+: ${CFO_REASON}}) - the real run stops here." >&2
+        else
+            echo "[ERROR] No cp-fko watches '${NS}' (${CFO_RESULT}${CFO_REASON:+: ${CFO_REASON}})." >&2
+            echo "[ERROR] Run the Flink operator step (operator/1.0o_flink_operator_olm.sh) first." >&2
+            exit 1
+        fi
+    fi
+    _f11_pair="$(_cfo_config_py fko-for-cmf "${FLINK_CMF_CHART_VERSION}")" || {
+        echo "[ERROR] FLINK_CMF_CHART_VERSION=${FLINK_CMF_CHART_VERSION} has no cp-fko pairing in the version catalog." >&2
+        exit 1
+    }
+    if [[ -n "${_F11_FKO_CHANNEL}" && "${_F11_FKO_CHANNEL}" != "${_f11_pair%% *}" ]]; then
+        echo "[ERROR] cp-fko ${_F11_FKO_CSV} follows channel ${_F11_FKO_CHANNEL}, but CMF ${FLINK_CMF_CHART_VERSION} needs ${_f11_pair%% *}" >&2
+        echo "[ERROR] (CMF/FKO lock, plan O7). Pick the CMF chart of that line, or move cp-fko with" >&2
+        echo "[ERROR] utility_scripts_confluent_platform/x.7_confluent_operator_upgrade.sh --flink." >&2
+        exit 1
+    fi
+    _f11_sub=""
+    for _f11_f in "${CF_FLINK_RENDER_ROOT}/cfk/olm/subscription-${NS}-${CFO_PKG_FKO}.yaml" \
+                  "${CF_RENDER_ROOT}/cfk/olm/subscription-${NS}-${CFO_PKG_FKO}.yaml"; do
+        [[ -f "${_f11_f}" ]] && { _f11_sub="${_f11_f}"; break; }
+    done
+    if [[ -n "${_f11_sub}" ]]; then
+        cp "${_f11_sub}" "${MANIFEST_DIR}/flink-operator-olm.yaml"
+    elif [[ -n "${CFO_SUB}" && -n "${CFO_NS}" ]]; then
+        oc get subscriptions.operators.coreos.com "${CFO_SUB}" -n "${CFO_NS}" -o yaml \
+            > "${MANIFEST_DIR}/flink-operator-olm.yaml" 2>/dev/null || rm -f "${MANIFEST_DIR}/flink-operator-olm.yaml"
+    fi
+    echo "[INFO] FLINK_OPERATOR_SOURCE=${_F11_SOURCE}: the Flink operator is cp-fko via OLM (${_F11_FKO_CSV:-not installed})."
+    [[ -f "${MANIFEST_DIR}/flink-operator-olm.yaml" ]] \
+        && echo "[INFO] cp-fko Subscription: ${MANIFEST_DIR}/flink-operator-olm.yaml"
+    unset _f11_rc _f11_pair _f11_sub _f11_f
+fi
+# CMF resources as CFK custom resources (FLINK_CMF_RESOURCE_MODE=cfk): CMFRestClass + FlinkEnvironment
+# in FLINK_CFK_NAMESPACE instead of "confluent flink environment create" (section 3 below).
+if [[ "$(cf_flink_cmf_resource_mode)" == cfk ]]; then
+    (( ${+functions[cfo_render]} )) || source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    export CFO_OWNER_ID="${CFO_OWNER_ID:-$(cfo_owner_id)}"
+    _F11_CFK=true
+    _F11_CFK_NS="${FLINK_CFK_NAMESPACE:-${NS}}"
+fi
+
 echo "=============================================================================="
 echo " Confluent Platform for Apache Flink -> project '${NS}'"
 echo "=============================================================================="
-echo "  operator chart  ${FLINK_OPERATOR_CHART_VERSION}"
+if cf_flink_is_olm; then
+    echo "  operator        cp-fko via OLM (${_F11_FKO_CSV:-not installed})"
+else
+    echo "  operator chart  ${FLINK_OPERATOR_CHART_VERSION}"
+fi
 echo "  CMF chart       ${FLINK_CMF_CHART_VERSION}"
 echo "  state backend   ${FLINK_STATE_BACKEND}"
 echo ""
@@ -129,7 +210,9 @@ if [[ -n "${CONFLUENT_REGISTRY_USER:-}" ]]; then
     _operator_args+=(--set "imagePullSecrets[0].name=${CONFLUENT_PULL_SECRET}")
 fi
 
-if [[ "${SKIP_OPERATOR}" == "true" ]]; then
+if cf_flink_is_olm; then
+    echo "[INFO] olm: no Helm Flink operator release (cp-fko runs through OLM)."
+elif [[ "${SKIP_OPERATOR}" == "true" ]]; then
     echo "[INFO] --skip-operator: leaving the Flink operator alone."
 elif [[ "${DRY_RUN}" == "true" ]]; then
     echo "  [DRY-RUN] helm upgrade --install ${_operator_args[*]}"
@@ -203,6 +286,29 @@ if [[ -n "${CONFLUENT_REGISTRY_USER:-}" ]]; then
 fi
 if [[ -n "${FLINK_LICENSE_KEY:-}" ]]; then
     _cmf_args+=(--set "license.secretRef=${FLINK_LICENSE_SECRET}")
+fi
+
+# Operator mode (contract 2.5, plan 15.13 item 15 / E5): CMF 2.5 runs under restricted-v2. 1.0 grants
+# no anyuid, so fsGroup and runAsUser are nulled (OpenShift assigns both from the namespace range)
+# instead of runAsNonRoot; watchNamespaces stays this namespace.
+if cf_flink_is_olm; then
+    _f11_i=${_cmf_args[(ie)podSecurity.securityContext.runAsNonRoot=null]}
+    _cmf_args[_f11_i,_f11_i]=(podSecurity.securityContext.fsGroup=null --set podSecurity.securityContext.runAsUser=null)
+    unset _f11_i
+fi
+
+# Both modes: Helm 4 upgrades with server-side apply and refuses the liveness-probe fields the patch
+# below owns ("conflict with \"kubectl-patch\" ... livenessProbe.periodSeconds", seen live on a 1.1
+# re-run), so every re-run failed. Taking them back is safe: the same patch is re-applied right after
+# every helm upgrade. Helm 3 has no such flag and needs none (client-side three-way merge).
+if [[ "$(helm version --template '{{.Version}}' 2>/dev/null)" == v<4->.* ]]; then
+    _cmf_args+=(--force-conflicts)
+fi
+
+# Operator mode: the marker ConfigMap tells the scripts-mode guard that this CMF release is ours (8 D19).
+if cf_flink_is_olm && [[ "${SKIP_CMF}" != "true" ]]; then
+    cfo_marker_set "${NS}" \
+        || { echo "[ERROR] Could not write ConfigMap ${CFO_MARKER_CM} in '${NS}' - CMF not installed." >&2; exit 1; }
 fi
 
 if [[ "${SKIP_CMF}" == "true" ]]; then
@@ -291,6 +397,10 @@ elif [[ "${FLINK_CREATE_ROUTES}" != "true" ]]; then
 fi
 
 if [[ "${DRY_RUN}" == "true" ]]; then
+    if [[ "${_F11_CFK:-}" == true ]]; then
+        echo "  [DRY-RUN] render set flink (CMFRestClass ${FLINK_CMF_RESTCLASS_NAME:-default}, FlinkEnvironment ${FLINK_ENVIRONMENT})" \
+            "into ${CF_FLINK_RENDER_ROOT}/cfk/flink, apply in ${_F11_CFK_NS}, wait .status.cmfSync.status=Created"
+    fi
     echo ""
     echo "[INFO] --dry-run complete. Manifests rendered to ${MANIFEST_DIR}."
     exit 0
@@ -421,16 +531,49 @@ PY
         ;;
 esac
 
-if confluent flink environment describe "${FLINK_ENVIRONMENT}" --url "${CMF_URL}" &>/dev/null; then
-    echo "[INFO] Environment '${FLINK_ENVIRONMENT}' already exists - updating its defaults."
-    confluent flink environment update "${FLINK_ENVIRONMENT}" \
-        --defaults "${_defaults_file}" --url "${CMF_URL}" >/dev/null
+# CMF 2.5+ merges these defaults into every FlinkApplication and rejects a podTemplate that carries
+# apiVersion/kind: "Invalid FlinkApplication payload: 'spec.podTemplate' contains unexpected field(s):
+# {apiVersion=v1, kind=Pod}" (seen live with CMF 2.5.0). CMF 2.4 (the scripts-mode pin)
+# keeps the shape above, so this changes nothing there.
+if [[ "${FLINK_CMF_CHART_VERSION:-}" == (2.<5->*|<3->.*) ]]; then
+    python3 - "${_defaults_file}" <<'PY'
+import json, sys
+path = sys.argv[1]
+doc = json.load(open(path))
+tpl = doc.get("spec", {}).get("podTemplate")
+if isinstance(tpl, dict):
+    tpl.pop("apiVersion", None)
+    tpl.pop("kind", None)
+    with open(path, "w") as fh:
+        fh.write(json.dumps(doc, indent=2) + "\n")
+PY
+fi
+
+if [[ "${_F11_CFK:-}" == true ]]; then
+    # CFK CRs (FLINK_CMF_RESOURCE_MODE=cfk): the same defaults become FlinkEnvironment.spec
+    # .flinkApplicationDefaults (never metadata); an environment the CLI made earlier is adopted by name.
+    # The CR's secret mappings (x.4) are kept on every re-render.
+    echo "[INFO] CMF resources as CFK custom resources in '${_F11_CFK_NS}' (FLINK_CMF_RESOURCE_MODE=cfk)."
+    echo "[1/3] Render CMFRestClass + FlinkEnvironment"
+    cfo_render flink "${CF_FLINK_RENDER_ROOT}/cfk" || exit 1
+    echo "[2/3] Apply"
+    cfo_apply_manifest "${CFO_MANIFEST}" || exit 1
+    echo "[3/3] Wait for CMF to accept FlinkEnvironment/${FLINK_ENVIRONMENT}"
+    _cfo_int "${CONFLUENT_OPERATOR_COMPONENT_TIMEOUT:-}" 600
+    cfo_wait_status_field "${_F11_CFK_NS}" "FlinkEnvironment/${FLINK_ENVIRONMENT}" '{.status.cmfSync.status}' Created "${REPLY}" \
+        || { echo "[ERROR] FlinkEnvironment/${FLINK_ENVIRONMENT} did not reach cmfSync Created - is ENABLE_CMF_DAY2_OPS=true set on the CFK Subscription watching '${_F11_CFK_NS}'? (operator/1.0o_flink_operator_olm.sh sets it)" >&2; exit 1; }
 else
-    echo "[INFO] Creating environment '${FLINK_ENVIRONMENT}' -> namespace ${NS}..."
-    confluent flink environment create "${FLINK_ENVIRONMENT}" \
-        --kubernetes-namespace "${NS}" \
-        --defaults "${_defaults_file}" \
-        --url "${CMF_URL}" >/dev/null
+    if confluent flink environment describe "${FLINK_ENVIRONMENT}" --url "${CMF_URL}" &>/dev/null; then
+        echo "[INFO] Environment '${FLINK_ENVIRONMENT}' already exists - updating its defaults."
+        confluent flink environment update "${FLINK_ENVIRONMENT}" \
+            --defaults "${_defaults_file}" --url "${CMF_URL}" >/dev/null
+    else
+        echo "[INFO] Creating environment '${FLINK_ENVIRONMENT}' -> namespace ${NS}..."
+        confluent flink environment create "${FLINK_ENVIRONMENT}" \
+            --kubernetes-namespace "${NS}" \
+            --defaults "${_defaults_file}" \
+            --url "${CMF_URL}" >/dev/null
+    fi
 fi
 echo "[INFO] Environment ready (defaults: ${_defaults_file})."
 
@@ -566,6 +709,9 @@ try:
     print(json.load(sys.stdin).get("status", {}).get("phase", ""))
 except Exception:
     print("")' 2>/dev/null || true)"
+        if [[ "${_F11_CFK:-}" == true ]]; then
+            echo "  [${_waited}s/300s] compute pool ${FLINK_COMPUTE_POOL}: ${_pool_phase:-pending}"
+        fi
         [[ "${_pool_phase}" == "RUNNING" ]] && break
         sleep 5; _waited=$(( _waited + 5 ))
     done
@@ -589,7 +735,16 @@ fi
 echo ""
 echo "[INFO] Install complete."
 echo ""
-if oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
+if { cf_is_operator_mode || cf_flink_is_olm; } \
+        && { (( ${+functions[cf_kafka_present]} )) || source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"; } \
+        && cf_kafka_present "${PROJECT_CONFLUENT_SERVER}"; then
+    # Operator mode: a broker StatefulSet or a CFK Kafka CR (cf_kafka_present).
+    echo "[INFO] Next: ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh   attach the Confluent cluster"
+    echo "[INFO]       ./utility_scripts_confluent_flink/x.3_flink_sample_job.sh      run a sample job end to end"
+elif { cf_is_operator_mode || cf_flink_is_olm; }; then
+    echo "[INFO] Next: ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh --bootstrap <host:port>"
+    echo "[INFO]       attaches a Kafka cluster so Flink SQL can read and write topics."
+elif oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
     echo "[INFO] Next: ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh   attach the Confluent cluster"
     echo "[INFO]       ./utility_scripts_confluent_flink/x.3_flink_sample_job.sh      run a sample job end to end"
 else

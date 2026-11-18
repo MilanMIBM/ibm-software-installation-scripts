@@ -1,0 +1,31 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: KRaftController
+metadata:
+  name: kraftcontroller
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  replicas: 3
+  image:
+    application: docker.io/confluentinc/cp-server:8.4.0
+    init: docker.io/confluentinc/confluent-init-container:3.4.0
+  dataVolumeCapacity: 10Gi
+  storageClass:
+    name: ocs-storagecluster-ceph-rbd
+  clusterID: Mk3OEYBSD34fcwNTJENDM2
+  podTemplate:
+    podSecurityContext: {}
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: '1'
+        memory: 2Gi
+  injectLabels:
+    app.kubernetes.io/part-of: confluent
+  license:
+    secretRef: confluent-license

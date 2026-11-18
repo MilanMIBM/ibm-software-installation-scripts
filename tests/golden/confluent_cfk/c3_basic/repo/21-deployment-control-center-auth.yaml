@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-center-auth
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+    app: control-center-auth
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: control-center-auth
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: confluent
+        confluent.ibm-scripts/installed-by: local.confluent
+        confluent.ibm-scripts/deploy-mode: operator
+        app: control-center-auth
+      annotations:
+        confluent.ibm-scripts/front-proxy-secret-checksum: 85f6540fe2e14f4133ec5835e50647255f2a87375db0a528e4ff329b5896501e
+    spec:
+      serviceAccountName: confluent
+      containers:
+      - name: auth-gateway
+        image: registry.access.redhat.com/ubi9/nginx-124:latest
+        command:
+        - nginx
+        - -c
+        - /etc/nginx/conf/nginx.conf
+        - -g
+        - daemon off;
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - name: gateway-conf
+          mountPath: /etc/nginx/conf
+          readOnly: true
+        - name: gateway-auth
+          mountPath: /etc/nginx/auth
+          readOnly: true
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8443
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+      volumes:
+      - name: gateway-conf
+        secret:
+          secretName: confluent-auth-gateway
+          items:
+          - key: nginx.conf
+            path: nginx.conf
+      - name: gateway-auth
+        secret:
+          secretName: confluent-auth-gateway
+          items:
+          - key: htpasswd
+            path: htpasswd

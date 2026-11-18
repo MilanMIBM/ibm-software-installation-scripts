@@ -619,6 +619,28 @@ Kafka SASL mechanisms are set per listener: `CONFLUENT_SASL_MECHANISM` is the on
 
 Each script loads only its own product's config, chosen from the folder it lives in (`install_cloud_pak_for_data/` and `src/utilities/` → `cpd`, `install_confluent_platform/` → `confluent`, `install_ibm_concert/` → `concert`, `install_datastax_mc_standalone/` → `datastax_mc`). Override per run with `--env-target <name|path|all>` or `ENV_TARGET=<name|path|all>`; `all` loads every config as before.
 
+### Deploy mode: scripts or operator
+
+`CONFLUENT_DEPLOY_MODE` in `confluent_vars.sh` chooses how the platform runs:
+
+| Mode | What runs it |
+| --- | --- |
+| `scripts` | The repo's own raw manifests (StatefulSet `broker`, Deployments). This is the original behaviour, unchanged. |
+| `operator` | Confluent for Kubernetes (CFK) and, for Flink, cp-fko, both installed through OLM. |
+
+- **Default.** The notebook and `0_confluent_prepare_template_config.sh` write `operator` into new files (`--deploy-mode scripts` for the other). **Unset or any other value also means operator.** To keep an existing scripts-mode install as it is, set `CONFLUENT_DEPLOY_MODE="scripts"` in its file. `utility_scripts_confluent_platform/x.9_confluent_set_deploy_mode.sh` reports the mode and can set it.
+- **Guard.** Before any write, every operator-mode script stops with `[BLOCKED]` (exit 2) if the namespace still holds a scripts-mode install. `x.8_confluent_wipe_scripts_mode.sh` (`--keep-data` keeps the PVCs) removes that install. Changing modes is a fresh install.
+- **Install.** The full installer runs an extra first step, `operators` (`operator/1.0o_confluent_operators.sh`). It installs or reuses CFK 3.4 per namespace (OwnNamespace) from `certified-operators`, with `Manual` InstallPlan approval. Upgrades go through `x.7_confluent_operator_upgrade.sh`. `--autoselect-latest` picks the newest compatible versions for a new install.
+- **Air gap.** Mirror the operators with `private_registry_mirroring` 1.0 → 2.2 → 3.4 and `MIRROR_CONFLUENT_CONTENT` including `operators` (components `cfk-operator`, `flink-operator-olm`).
+- **SASL** is CFK's native PLAIN. SCRAM (`CONFLUENT_OPERATOR_SASL_IMPL=scram`) uses Confluent's documented configuration overrides, which are outside Confluent Support.
+- **TLS** comes from the repo (default) or from CFK (`--tls-source cfk`). The external listener always uses a repo-made certificate with the route SANs.
+- **License.** Every CR uses the `confluent-license` secret. Without `CONFLUENT_LICENSE_KEY`, the platform runs on the 30-day trial.
+- **Deleting data.** Deleting a CFK CR deletes its PVCs. So `x.0_confluent_uninstall.sh` first sets the PVs of Kafka, KRaft, ksqlDB and C3 to `Retain` and lists them; `--delete-data` skips that. `x.1` keeps those CRs and re-applies them.
+- **Names.** Pods are `kafka-N` and the internal bootstrap is `kafka.<ns>.svc:9071`. Read endpoints from `confluent_instance_details.sh`, whose keys are unchanged.
+- **Watching.** `x_confluent_cr_dashboard.sh` is a read-only CR dashboard.
+
+The full guide covers sources, approval, the FlinkEnvironment removal steps, SCRAM links and the open checks: [docs/confluent-operator-mode.md](docs/confluent-operator-mode.md).
+
 ### Version presets
 
 ```bash

@@ -1,0 +1,208 @@
+{
+  "_comment": "Fixed scripts-mode context for confluent_variable_template.sh.j2 (WP-B; contract 7.3 j2_scripts_render). Widgets are {value: ...} objects. The new template also needs confluent_deploy_mode and flink_operator_source.",
+  "cluster_url_input": {
+    "value": "https://api.fake.example.com:6443"
+  },
+  "login_argument_select": {
+    "selected_key": "Username/Password",
+    "value": "--username=${OCP_USERNAME} --password=${OCP_PASSWORD}"
+  },
+  "cluster_username_input": {
+    "value": "kubeadmin"
+  },
+  "cluster_password_input": {
+    "value": "fake-password"
+  },
+  "cluster_token_input": {
+    "value": ""
+  },
+  "project_confluent_server_input": {
+    "value": "confluent"
+  },
+  "block_storage_class_select": {
+    "value": "ocs-storagecluster-ceph-rbd"
+  },
+  "file_storage_class_select": {
+    "value": "ocs-storagecluster-cephfs"
+  },
+  "size_select": {
+    "value": "small"
+  },
+  "cluster_id_input": {
+    "value": "AAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "include_flink_checkbox": {
+    "value": true
+  },
+  "confluent_images": {
+    "CONFLUENT_VERSION": "8.2.0",
+    "CONFLUENT_REGISTRY": "docker.io/confluentinc",
+    "CONFLUENT_CONNECT_IMAGE": "docker.io/cnfldemos/cp-server-connect-datagen:0.6.4-7.6.0",
+    "CONFLUENT_REGISTRY_USER": "",
+    "CONFLUENT_REGISTRY_PASSWORD": "",
+    "CONFLUENT_PULL_SECRET": "confluent-registry",
+    "CONFLUENT_C3_VERSION": "2.5.0"
+  },
+  "confluent_component_toggles": {
+    "CONFLUENT_INSTALL_SCHEMA_REGISTRY": "true",
+    "CONFLUENT_INSTALL_CONNECT": "true",
+    "CONFLUENT_INSTALL_KSQLDB": "true",
+    "CONFLUENT_INSTALL_REST_PROXY": "true",
+    "CONFLUENT_INSTALL_CONTROL_CENTER": "true",
+    "CONFLUENT_MONITORING_NETWORK_POLICY": "true"
+  },
+  "confluent_ports": {
+    "CONFLUENT_BROKER_INTERNAL_PORT": "29092",
+    "CONFLUENT_BROKER_CONTROLLER_PORT": "29093",
+    "CONFLUENT_BROKER_EXTERNAL_PORT": "9092",
+    "CONFLUENT_SCHEMA_REGISTRY_PORT": "8081",
+    "CONFLUENT_CONNECT_PORT": "8083",
+    "CONFLUENT_KSQLDB_PORT": "8088",
+    "CONFLUENT_REST_PROXY_PORT": "8082",
+    "CONFLUENT_CONTROL_CENTER_PORT": "9021",
+    "CONFLUENT_PROMETHEUS_PORT": "9090",
+    "CONFLUENT_ALERTMANAGER_PORT": "9093",
+    "CONFLUENT_BROKER_JMX_PORT": "9101"
+  },
+  "confluent_routes_and_waits": {
+    "CONFLUENT_CREATE_ROUTES": "true",
+    "CONFLUENT_ROUTE_DOMAIN": "",
+    "CONFLUENT_ROLLOUT_TIMEOUT": "600s"
+  },
+  "confluent_web_ui_auth": {
+    "CONFLUENT_AUTH_ENABLED": "true",
+    "CONFLUENT_AUTH_MODE": "openshift",
+    "CONFLUENT_AUTH_SECRET": "confluent-auth",
+    "CONFLUENT_AUTH_USERNAME": "${OCP_USERNAME}",
+    "CONFLUENT_AUTH_PASSWORD": "",
+    "CONFLUENT_AUTH_PASSWORD_LENGTH": "24"
+  },
+  "confluent_sasl": {
+    "CONFLUENT_SASL_ENABLED": "true",
+    "CONFLUENT_SASL_PROTOCOL": "SASL_PLAINTEXT",
+    "CONFLUENT_SASL_MECHANISM": "SCRAM-SHA-512",
+    "CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS": "PLAIN,SCRAM-SHA-512",
+    "CONFLUENT_SASL_ADMIN_USER": "confluent-admin",
+    "CONFLUENT_SASL_CLIENTS": "app-client",
+    "CONFLUENT_SASL_SECRET": "confluent-sasl",
+    "CONFLUENT_INTERNAL_TLS_SECRET": "confluent-kafka-internal-tls",
+    "CONFLUENT_INTERNAL_CERT_VALIDITY_DAYS": "825"
+  },
+  "confluent_mds": {
+    "CONFLUENT_MDS_ENABLED": "true",
+    "CONFLUENT_MDS_PORT": "8090",
+    "CONFLUENT_MDS_USER_STORE": "LDAP",
+    "CONFLUENT_MDS_SECRET": "confluent-mds",
+    "CONFLUENT_MDS_SUPER_USER": "mds-admin",
+    "CONFLUENT_MDS_USERS": "kafka-admin,kafka-user",
+    "CONFLUENT_LICENSE_KEY": ""
+  },
+  "confluent_ldap": {
+    "CONFLUENT_LDAP_IMAGE": "docker.io/bitnamilegacy/openldap:2.6.10",
+    "CONFLUENT_LDAP_PORT": "1389",
+    "CONFLUENT_LDAP_DOMAIN": "confluent.io",
+    "CONFLUENT_LDAP_ADMIN_USER": "admin",
+    "CONFLUENT_LDAP_SECRET": "confluent-ldap"
+  },
+  "confluent_oauth": {
+    "CONFLUENT_KEYCLOAK_IMAGE": "quay.io/keycloak/keycloak:26.0",
+    "CONFLUENT_KEYCLOAK_PORT": "8080",
+    "CONFLUENT_KEYCLOAK_REALM": "confluent",
+    "CONFLUENT_KEYCLOAK_CLIENT_ID": "confluent-cli",
+    "CONFLUENT_KEYCLOAK_ADMIN_USER": "admin",
+    "CONFLUENT_KEYCLOAK_SECRET": "confluent-keycloak",
+    "CONFLUENT_MDS_OAUTH_JWKS_URL": "",
+    "CONFLUENT_MDS_OAUTH_ISSUER": "",
+    "CONFLUENT_MDS_OAUTH_AUDIENCE": "Confluent",
+    "CONFLUENT_MDS_OAUTH_SUB_CLAIM": "preferred_username",
+    "CONFLUENT_MDS_OAUTH_GROUPS_CLAIM": "groups",
+    "CONFLUENT_MDS_OAUTH_DEVICE_AUTH_URL": ""
+  },
+  "confluent_external_access": {
+    "CONFLUENT_EXTERNAL_KAFKA_ENABLED": "true",
+    "CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS": "PLAIN,SCRAM-SHA-512",
+    "CONFLUENT_EXTERNAL_KAFKA_PORT": "9094",
+    "CONFLUENT_EXTERNAL_TLS_SECRET": "confluent-kafka-tls",
+    "CONFLUENT_EXTERNAL_CERT_VALIDITY_DAYS": "825"
+  },
+  "confluent_sizing": {
+    "CONFLUENT_STORAGE_CLASS": "${STG_CLASS_BLOCK}",
+    "CONFLUENT_BROKER_REPLICAS": "3",
+    "CONFLUENT_REPLICATION_FACTOR": "3",
+    "CONFLUENT_MIN_INSYNC_REPLICAS": "2",
+    "CONFLUENT_PARTITIONS": "3",
+    "CONFLUENT_BROKER_STORAGE_SIZE": "100Gi",
+    "CONFLUENT_BROKER_CPU_REQUEST": "1",
+    "CONFLUENT_BROKER_MEM_REQUEST": "4Gi",
+    "CONFLUENT_BROKER_CPU_LIMIT": "2",
+    "CONFLUENT_BROKER_MEM_LIMIT": "8Gi",
+    "CONFLUENT_COMPONENT_CPU_REQUEST": "500m",
+    "CONFLUENT_COMPONENT_MEM_REQUEST": "2Gi",
+    "CONFLUENT_COMPONENT_CPU_LIMIT": "1",
+    "CONFLUENT_COMPONENT_MEM_LIMIT": "4Gi"
+  },
+  "flink_sizing": {
+    "PROJECT_CONFLUENT_FLINK": "${PROJECT_CONFLUENT_SERVER}-flink",
+    "FLINK_CMF_STORAGE_CLASS": "${STG_CLASS_BLOCK}",
+    "FLINK_CMF_CPU_REQUEST": "1",
+    "FLINK_CMF_MEM_REQUEST": "2Gi",
+    "FLINK_CMF_CPU_LIMIT": "2",
+    "FLINK_CMF_MEM_LIMIT": "4Gi",
+    "FLINK_CMF_STORAGE_SIZE": "10Gi",
+    "FLINK_JOBMANAGER_CPU": "0.5",
+    "FLINK_JOBMANAGER_MEMORY": "1024m",
+    "FLINK_TASKMANAGER_CPU": "1.0",
+    "FLINK_TASKMANAGER_MEMORY": "2048m",
+    "FLINK_TASK_SLOTS": "2"
+  },
+  "flink_helm": {
+    "FLINK_HELM_REPO_NAME": "confluentinc",
+    "FLINK_HELM_REPO_URL": "https://packages.confluent.io/helm",
+    "FLINK_CMF_CHART_VERSION": "2.4.2",
+    "FLINK_OPERATOR_CHART_VERSION": "1.150.3",
+    "FLINK_CMF_RELEASE_NAME": "cmf",
+    "FLINK_OPERATOR_RELEASE_NAME": "cp-flink-kubernetes-operator"
+  },
+  "flink_images": {
+    "FLINK_IMAGE_REGISTRY": "",
+    "FLINK_APPLICATION_IMAGE": "confluentinc/cp-flink:2.0.2-cp3",
+    "FLINK_SQL_IMAGE": "confluentinc/cp-flink-sql:1.19-cp11",
+    "FLINK_APPLICATION_VERSION": "v2_0",
+    "FLINK_SQL_VERSION": "v1_19"
+  },
+  "flink_cert_manager": {
+    "FLINK_CERT_MANAGER_VERSION": "v1.18.2",
+    "FLINK_CERT_MANAGER_NAMESPACE": "cert-manager"
+  },
+  "flink_cmf_endpoint": {
+    "FLINK_CMF_SERVICE": "cmf-service",
+    "FLINK_CMF_PORT": "80",
+    "FLINK_CREATE_ROUTES": "true",
+    "FLINK_CMF_LOCAL_PORT": "8080",
+    "FLINK_ROLLOUT_TIMEOUT": "600s"
+  },
+  "flink_naming": {
+    "FLINK_ENVIRONMENT": "cp-env",
+    "FLINK_COMPUTE_POOL": "cp-pool",
+    "FLINK_CATALOG": "cp-kafka",
+    "FLINK_KAFKA_DATABASE": "cp-cluster",
+    "FLINK_KAFKA_SECRET": "cp-kafka-credentials"
+  },
+  "flink_state": {
+    "FLINK_STATE_BACKEND": "pvc",
+    "FLINK_STATE_STORAGE_CLASS": "${STG_CLASS_FILE}",
+    "FLINK_STATE_STORAGE_SIZE": "50Gi",
+    "FLINK_STATE_PVC_NAME": "flink-state",
+    "FLINK_CHECKPOINT_INTERVAL": "60s",
+    "FLINK_S3_BUCKET": "",
+    "FLINK_S3_ENDPOINT": "",
+    "FLINK_S3_ACCESS_KEY": "",
+    "FLINK_S3_SECRET_KEY": "",
+    "FLINK_S3_PATH_STYLE_ACCESS": "true",
+    "FLINK_S3_SECRET": "flink-s3-credentials"
+  },
+  "flink_license": {
+    "FLINK_LICENSE_KEY": "${CONFLUENT_LICENSE_KEY:-}",
+    "FLINK_LICENSE_SECRET": "flink-license"
+  }
+}

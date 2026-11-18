@@ -31,7 +31,28 @@
     "connect_image": "docker.io/cnfldemos/cp-server-connect-datagen:0.6.4-7.6.0",
     "ldap_image": "docker.io/bitnamilegacy/openldap:2.6.10",
     "keycloak_image": "quay.io/keycloak/keycloak:26.0",
-    "c3_gateway_image": "registry.access.redhat.com/ubi9/nginx-124:latest"
+    "c3_gateway_image": "registry.access.redhat.com/ubi9/nginx-124:latest",
+    "operator": {
+      "_source": "Phase 0 live checks 2026-11-17 (PackageManifests, Confluent Helm index) + CFK 3.4 co-supported-environments; plan 15.5",
+      "cfk_channel": "3.4",
+      "cfk_csv": "confluent-for-kubernetes.v3.4.0",
+      "cfk_version": "3.4.0",
+      "cfk_init_tag": "3.4.0",
+      "fko_channel": "stable-v1.16",
+      "fko_csv": "cp-fko.v1.16.1-cp1",
+      "cmf_chart": "2.5.0",
+      "flink_sql_image": "confluentinc/cp-flink-sql:1.19-cmf2.5-cp1",
+      "flink_version_max": "v2_2",
+      "compat": {
+        "cfk": {
+          "3.4": {"csv": "confluent-for-kubernetes.v3.4.0", "init_tag": "3.4.0", "cp_min": "7.6.0", "cp_max_exclusive": "8.5.0", "c3_min": "2.4.0", "c3_max_exclusive": "2.8.0"}
+        },
+        "cmf": {
+          "2.4": {"fko_channel": "stable-v1.15", "fko_csv": "cp-fko.v1.15.0-cp4", "min_cfk": "3.4"},
+          "2.5": {"fko_channel": "stable-v1.16", "fko_csv": "cp-fko.v1.16.1-cp1", "min_cfk": "3.4"}
+        }
+      }
+    }
   },
   "flink": {
     "cmf_chart_version": "2.4.2",

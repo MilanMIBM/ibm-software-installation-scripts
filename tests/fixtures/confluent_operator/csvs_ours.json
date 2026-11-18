@@ -1,0 +1,22 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "operators.coreos.com/v1alpha1",
+      "kind": "ClusterServiceVersion",
+      "metadata": {
+        "name": "confluent-for-kubernetes.v3.4.0",
+        "namespace": "confluent",
+        "annotations": {}
+      },
+      "spec": {
+        "version": "3.4.0"
+      },
+      "status": {
+        "phase": "Succeeded",
+        "reason": "InstallSucceeded"
+      }
+    }
+  ]
+}

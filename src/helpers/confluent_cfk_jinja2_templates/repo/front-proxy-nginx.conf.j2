@@ -1,0 +1,50 @@
+{#- nginx.conf of the C3 basic-auth front proxy (Deployment control-center-auth).
+    Same text as the scripts-mode gateway (1.1_confluent_install.sh, secret <auth>-gateway key nginx.conf),
+    but the upstream is the CFK control-center Service instead of localhost. No secret in it:
+    the htpasswd file is mounted from the same secret by cfo_apply_front_proxy.
+    CONTRACT-DEVIATION (approved 2026-11-18 wave 1.5, contract 4.5): CFK's control-center Service is headless (pod IPs, V2). A literal proxy_pass host is
+    resolved once when nginx starts, so after a C3 pod restart (new IP) the proxy would answer 502 until it
+    is restarted too. The upstream therefore goes through a variable with a resolver (per-request lookup,
+    cached 10 s). K8S-EXTENSION(K6): Kubernetes mode uses kube-dns.kube-system.svc.cluster.local here. -#}
+worker_processes 1;
+error_log /dev/stderr warn;
+pid /tmp/nginx.pid;
+events { worker_connections 1024; }
+http {
+  access_log off;
+  client_body_temp_path /tmp/client_body;
+  proxy_temp_path /tmp/proxy;
+  fastcgi_temp_path /tmp/fastcgi;
+  uwsgi_temp_path /tmp/uwsgi;
+  scgi_temp_path /tmp/scgi;
+  server {
+    listen {{ c.gateway_port }};
+    resolver dns-default.openshift-dns.svc.cluster.local valid=10s;
+    set $c3_upstream {{ c.upstream }};
+    # Unauthenticated health endpoint so the kubelet probe does not need
+    # credentials embedded in the pod spec.
+    location = /healthz { return 200 'ok'; add_header Content-Type text/plain; }
+    location / {
+      # Browsers cannot attach basic-auth credentials to a WebSocket handshake,
+      # so challenging one makes the browser pop its login dialog on every
+      # reconnect - which is what C3's UI does continuously. $auth_realm is
+      # empty ('off') for upgrade requests, exempting only those. They are not
+      # an open door: the handshake still has to come from a page the user
+      # already authenticated to load.
+      auth_basic $auth_realm;
+      auth_basic_user_file /etc/nginx/auth/htpasswd;
+      proxy_pass $c3_upstream;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade_val;
+      proxy_read_timeout 300s;
+    }
+  }
+  map $http_upgrade $connection_upgrade_val { default upgrade; '' close; }
+  # 'off' disables auth_basic for that request; any other value is the realm.
+  map $http_upgrade $auth_realm { default 'off'; '' 'Confluent Control Center'; }
+}

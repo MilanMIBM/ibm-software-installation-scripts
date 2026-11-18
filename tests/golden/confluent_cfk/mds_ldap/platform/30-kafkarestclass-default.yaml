@@ -1,0 +1,17 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: KafkaRestClass
+metadata:
+  name: default
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  kafkaClusterRef:
+    name: kafka
+  kafkaRest:
+    authentication:
+      type: bearer
+      bearer:
+        secretRef: confluent-mds-cfk-client

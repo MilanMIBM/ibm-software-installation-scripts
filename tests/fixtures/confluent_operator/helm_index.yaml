@@ -1,0 +1,10 @@
+apiVersion: v1
+entries:
+  confluent-manager-for-apache-flink:
+  - version: 2.6.0
+  - version: 2.5.1
+  - version: 2.5.0
+  - version: 2.5.2-rc1
+  - version: 2.4.2
+  flink-kubernetes-operator:
+  - version: 1.161.1

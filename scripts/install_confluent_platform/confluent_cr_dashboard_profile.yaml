@@ -1,0 +1,14 @@
+# Per-kind overrides for the CR dashboard (src/tui/cr_dashboard, --profile-file),
+# used by x_confluent_cr_dashboard.sh. Format: {kinds: {Kind: {status: <jsonpath>}}}.
+#
+# The CFK platform CRs (Kafka, KRaftController, SchemaRegistry, Connect, KsqlDB,
+# KafkaRestProxy, ControlCenter) need no override: their .status.phase RUNNING is
+# read as healthy by the generic heuristics.
+#
+# The CMF resources report their sync with Confluent Manager for Apache Flink in
+# .status.cmfSync.status (Created when CMF holds the environment / application).
+kinds:
+  FlinkEnvironment:
+    status: .status.cmfSync.status
+  FlinkApplication:
+    status: .status.cmfSync.status

@@ -1,0 +1,27 @@
+{#- Loader pod for the connect-plugins PVC (set connect-plugins, order 20). Sleeps so x.3 can stream
+    `tar -c ... | oc exec -i <pod> -- tar -x -C /mnt/local-plugins/<name>` into it, then x.3 deletes it.
+    restricted-v2 compatible: no fixed UID, no privilege escalation, all capabilities dropped. -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: v1
+kind: Pod
+{{ mac.metadata(c.name, m.ns, c.labels) }}
+spec:
+  restartPolicy: "Never"
+  containers:
+    - name: "loader"
+      image: {{ c.image | q }}
+      command: ["sleep", "3600"]
+      volumeMounts:
+        - name: "local-plugins"
+          mountPath: {{ c.mount | q }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: "RuntimeDefault"
+  volumes:
+    - name: "local-plugins"
+      persistentVolumeClaim:
+        claimName: {{ c.pvc | q }}

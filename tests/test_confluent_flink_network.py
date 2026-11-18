@@ -96,6 +96,37 @@ class FlinkIngressTests(unittest.TestCase):
                     "key": "app", "operator": operator, "values": values,
                 }]}, labels), expected)
 
+    def test_apps_select_the_operator_mode_pod_labels(self):
+        """Operator mode (CFK) labels the broker pods app=kafka (V12): --apps picks them, the default does not."""
+        pods = [{"kind": "Pod", "metadata": {"labels": {"app": app}}} for app in ("kafka", "schema-registry")]
+        kafka_only = policy("kafka-only", {"matchLabels": {"app": "kafka"}})
+        resources = {"items": pods + [kafka_only]}
+        self.assertEqual(render(resources, "confluent", "confluent-flink")["items"], [])
+        got = render(resources, "confluent", "confluent-flink", apps=["kafka", "schema-registry"])["items"]
+        self.assertEqual([p["spec"]["podSelector"] for p in got], [{"matchLabels": {"app": "kafka"}}])
+        registry_only = policy("registry-only", {"matchLabels": {"app": "schema-registry"}})
+        self.assertEqual(render({"items": pods + [registry_only]}, "confluent", "confluent-flink",
+                                use_registry=False, apps=["kafka", "schema-registry"])["items"], [])
+
+    def test_cli_apps_flag_and_default_argv(self):
+        import json
+        import subprocess
+        script = Path(__file__).resolve().parents[1] / "src/helpers/confluent_flink_network.py"
+        pods = [{"kind": "Pod", "metadata": {"labels": {"app": "kafka"}}},
+                {"kind": "Pod", "metadata": {"labels": {"app": "broker"}}}]
+        doc = json.dumps({"items": pods + [policy("all", {}, ["Ingress"])]})
+        base = [sys.executable, "-I", str(script), "--kafka-namespace", "confluent", "--flink-namespace", "f"]
+
+        def run(*extra):
+            out = subprocess.run(base + list(extra), input=doc, capture_output=True, text=True, check=True).stdout
+            return json.loads(out)["items"]
+
+        self.assertEqual(len(run()), 1)                       # today's argv: broker matches
+        self.assertEqual(len(run("--apps", "kafka,schema-registry")), 1)
+        self.assertEqual(run("--apps", "nothing-here"), [])
+        bad = subprocess.run(base + ["--apps", " , "], input=doc, capture_output=True, text=True, check=False)
+        self.assertEqual(bad.returncode, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

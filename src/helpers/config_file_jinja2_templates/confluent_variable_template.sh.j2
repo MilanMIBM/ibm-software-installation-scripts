@@ -50,6 +50,11 @@ export STG_CLASS_FILE="{{ file_storage_class_select.value }}"
 # Confluent Platform
 # ------------------------------------------------------------------------------
 # Topology from https://github.com/confluentinc/cp-all-in-one (KRaft variant).
+# ---- Deploy mode ---------------------------------------------------------------
+# scripts  = the repo renders and applies raw manifests (StatefulSet broker, Deployments, ...).
+# operator = Confluent for Kubernetes (CFK) and cp-fko, installed through OLM, run the platform.
+# Unset or any other value means operator; a scripts-mode install in the namespace then stops every script.
+export CONFLUENT_DEPLOY_MODE="{{ confluent_deploy_mode }}"
 
 # ---- Images ------------------------------------------------------------------
 {{ export_block(confluent_images) }}
@@ -101,6 +106,28 @@ export ICEBERG_WATSONX_CONFIG_FILE="${ICEBERG_WATSONX_CONFIG_FILE:-${CONFLUENT_C
 export CONFLUENT_CLUSTER_ID="{{ cluster_id_input.value }}"
 {{ export_block(confluent_sizing) -}}
 # <<< confluent sizing (managed by 0_confluent_prepare_template_config.sh) <<<
+{%- if confluent_deploy_mode == "operator" %}
+
+# ------------------------------------------------------------------------------
+# Confluent operator mode
+# ------------------------------------------------------------------------------
+# Read only when CONFLUENT_DEPLOY_MODE=operator: Confluent for Kubernetes (CFK)
+# through OLM. NOT managed on re-runs - edit freely; 0_confluent_prepare_template_config.sh
+# --approval / --sasl-impl / --tls-source rewrite their own line.
+# CONFLUENT_OPERATOR_SASL_IMPL: plain = native CFK SASL/PLAIN (supported);
+# scram = SCRAM through configOverrides (documented by Confluent, outside Confluent
+# Support). CONFLUENT_SASL_MECHANISM is PLAIN in operator mode either way.
+{{ export_block(confluent_operator) }}
+# >>> confluent operator (managed by 0_confluent_prepare_template_config.sh) >>>
+# Size: {{ size_select.value }}
+# Re-run the script to change these; edits inside this block are overwritten.
+# Read only when CONFLUENT_DEPLOY_MODE=operator.
+
+# ---- KRaft controllers and operator-mode storage ------------------------------
+# CFK runs the KRaft quorum as its own KRaftController pods (odd count).
+{{ export_block(confluent_operator_sizing) -}}
+# <<< confluent operator (managed by 0_confluent_prepare_template_config.sh) <<<
+{%- endif %}
 {% if include_flink_checkbox.value %}
 # >>> confluent flink (managed by flink_install/0_flink_prepare_template_config.sh) >>>
 # Size: {{ size_select.value }}
@@ -131,4 +158,14 @@ export CONFLUENT_CLUSTER_ID="{{ cluster_id_input.value }}"
 {{ export_block(flink_state) }}
 # ---- Confluent licence --------------------------------------------------------
 {{ export_block(flink_license) -}}
+{%- if flink_operator_source != "helm" %}
+# ---- Flink operator mode (cp-fko through OLM) ---------------------------------
+# Read when the Flink operator source is not helm. FLINK_OLM_CHANNEL must be the
+# cp-fko line FLINK_CMF_CHART_VERSION needs (CMF/FKO lock). Without
+# FLINK_OPERATOR_SOURCE the Flink scripts follow CONFLUENT_DEPLOY_MODE.
+{{ export_block(flink_operator_olm) -}}
+{%- elif flink_operator_olm %}
+# ---- Flink operator source ----------------------------------------------------
+{{ export_block(flink_operator_olm) -}}
+{%- endif -%}
 {% endif %}

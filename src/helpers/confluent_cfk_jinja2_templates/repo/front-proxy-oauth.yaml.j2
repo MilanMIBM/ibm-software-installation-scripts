@@ -1,0 +1,59 @@
+{#- Deployment control-center-auth with oauth-proxy (set repo, order 21; CONFLUENT_AUTH_MODE=openshift).
+    Same container as the scripts-mode sidecar (1.1_confluent_install.sh:1925-1959), as its own Deployment
+    because the ControlCenter CR has no sidecar field (matrix I32); the upstream is the CFK Service.
+    K8S-EXTENSION(K6): Kubernetes has no OpenShift OAuth - basic (nginx) or an OIDC proxy there. -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: apps/v1
+kind: Deployment
+{{ mac.metadata(c.name, m.ns, c.labels) }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ c.name | q }}
+  template:
+    metadata:
+      labels: {{ c.labels | j }}
+{% if c.checksum %}
+      annotations: {{ {c.checksum_annotation: c.checksum} | j }}
+{% endif %}
+    spec:
+      serviceAccountName: {{ c.service_account | q }}
+      containers:
+        - name: "oauth-proxy"
+          image: {{ c.image | q }}
+          args:
+            - "--provider=openshift"
+            - "--https-address="
+            - {{ ("--http-address=:" ~ c.port) | q }}
+            - {{ ("--upstream=" ~ c.upstream) | q }}
+            - {{ ("--openshift-service-account=" ~ c.service_account) | q }}
+            - {{ ("--openshift-sar=" ~ c.sar) | q }}
+            - "--cookie-secret-file=/etc/proxy/secrets/cookie-secret"
+            - "--skip-provider-button=true"
+            - "--pass-access-token=false"
+            - "--skip-auth-regex=^/healthz$"
+          ports:
+            - containerPort: {{ c.port }}
+          volumeMounts:
+            - name: "oauth-secret"
+              mountPath: "/etc/proxy/secrets"
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: "/oauth/healthz"
+              port: {{ c.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+      volumes:
+        - name: "oauth-secret"
+          secret:
+            secretName: {{ (c.auth_secret ~ "-oauth") | q }}

@@ -1,0 +1,38 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "operators.coreos.com/v1alpha1",
+      "kind": "ClusterServiceVersion",
+      "metadata": {
+        "name": "cp-fko.v1.15.0-cp4",
+        "namespace": "other-flink",
+        "annotations": {}
+      },
+      "spec": {
+        "version": "1.15.0-cp4"
+      },
+      "status": {
+        "phase": "Succeeded",
+        "reason": "InstallSucceeded"
+      }
+    },
+    {
+      "apiVersion": "operators.coreos.com/v1alpha1",
+      "kind": "ClusterServiceVersion",
+      "metadata": {
+        "name": "cp-fko.v1.16.1-cp1",
+        "namespace": "cfk-eval",
+        "annotations": {}
+      },
+      "spec": {
+        "version": "1.16.1-cp1"
+      },
+      "status": {
+        "phase": "Succeeded",
+        "reason": "InstallSucceeded"
+      }
+    }
+  ]
+}

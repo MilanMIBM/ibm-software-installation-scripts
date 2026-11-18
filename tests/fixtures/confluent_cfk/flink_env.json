@@ -1,0 +1,67 @@
+{
+  "_about": "CMFRestClass + FlinkEnvironment (CMF resource mode cfk) with the pvc state defaults",
+  "input": {
+    "schema_version": 1,
+    "namespace": "confluent",
+    "flink_namespace": "confluent-flink",
+    "owner_id": "local.confluent",
+    "vars": {
+      "FLINK_CFK_NAMESPACE": "confluent-flink",
+      "FLINK_CMF_PORT": "80",
+      "FLINK_CMF_RESOURCE_MODE": "cfk",
+      "FLINK_CMF_RESTCLASS_NAME": "default",
+      "FLINK_CMF_SERVICE": "cmf-service",
+      "FLINK_ENVIRONMENT": "cp-env",
+      "FLINK_OPERATOR_SOURCE": "olm",
+      "PROJECT_CONFLUENT_FLINK": "confluent-flink"
+    },
+    "live": {
+      "flink_defaults": {
+        "spec": {
+          "flinkConfiguration": {
+            "state.backend.type": "rocksdb",
+            "state.checkpoints.dir": "file:///flink-state/checkpoints",
+            "state.savepoints.dir": "file:///flink-state/savepoints",
+            "execution.checkpointing.interval": "60s",
+            "execution.checkpointing.mode": "EXACTLY_ONCE",
+            "kubernetes.operator.savepoint.history.max.age": "72h",
+            "taskmanager.numberOfTaskSlots": "2"
+          },
+          "podTemplate": {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "spec": {
+              "containers": [
+                {
+                  "name": "flink-main-container",
+                  "volumeMounts": [
+                    {
+                      "name": "flink-state",
+                      "mountPath": "/flink-state"
+                    }
+                  ]
+                }
+              ],
+              "volumes": [
+                {
+                  "name": "flink-state",
+                  "persistentVolumeClaim": {
+                    "claimName": "flink-state"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "flink_env_secrets": {
+        "kafka-cp": "cp-kafka-credentials"
+      }
+    }
+  },
+  "renders": [
+    {
+      "set": "flink"
+    }
+  ]
+}

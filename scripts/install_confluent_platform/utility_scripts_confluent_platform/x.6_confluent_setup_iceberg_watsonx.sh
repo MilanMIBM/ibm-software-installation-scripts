@@ -37,6 +37,7 @@ while [[ "${_b}" != / && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="${_b:h}"; done
 source "${_b}/env_bootstrap.sh"
 unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 _setup_config="${ICEBERG_WATSONX_CONFIG_FILE:-${CONFIGS_ROOT:-${_CP4D_REPO_ROOT}/configs}/confluent_platform_config/iceberg_watsonx_setup.sh}"
 _setup_args=()
@@ -72,5 +73,13 @@ done
 unset _tool
 
 if [[ -n "${OC_LOGIN:-}" ]]; then eval "${OC_LOGIN}"; fi
+cf_operator_guard platform || exit $?
+if cf_is_operator_mode; then
+    # Operator mode: Connect is the CFK StatefulSet pod (container connect), and connectors are managed through
+    # REST (default) or Connector CRs (CONFLUENT_CONNECTOR_MANAGEMENT=cr, plan 15.7).
+    (( ${+functions[cfo_connector_management]} )) || source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    _setup_args+=(--connect-target "pod/${CF_CONNECT_CR}-0" --connect-container connect --management "$(cfo_connector_management)")
+    export CFO_OWNER_ID="${CFO_OWNER_ID:-$(cfo_owner_id)}" CONFLUENT_CONNECT_STATE_FILE
+fi
 exec python3 "${_CP4D_REPO_ROOT}/src/helpers/confluent_iceberg_setup.py" \
     --repo-root "${_CP4D_REPO_ROOT}" "${_setup_args[@]}"

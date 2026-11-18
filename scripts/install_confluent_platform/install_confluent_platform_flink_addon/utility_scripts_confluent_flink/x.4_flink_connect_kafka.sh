@@ -120,8 +120,13 @@ if ! command -v confluent &>/dev/null; then
 fi
 
 source "${SCRIPT_DIR}/../../confluent_kafka_security.sh"
+# Operator mode: the Kafka side is CFK (endpoint resolvers), and/or the CMF resources are CFK CRs.
+if cf_is_operator_mode || [[ "$(cf_flink_cmf_resource_mode)" == cfk ]]; then
+    source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+fi
 
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?      # operator mode: the CFK resolvers below must not meet a scripts-mode broker
 
 NS="${PROJECT_CONFLUENT_FLINK}"
 KAFKA_NS="${PROJECT_CONFLUENT_SERVER}"
@@ -144,7 +149,19 @@ mkdir -p "${RESOURCE_DIR}"
 # ==============================================================================
 _discovered=false
 
-if [[ -z "${BOOTSTRAP}" ]]; then
+if [[ -z "${BOOTSTRAP}" ]] && cf_is_operator_mode; then
+    # Operator mode (H27): the CFK Kafka CR's internal listener (fully qualified, Flink runs elsewhere).
+    if ! cf_kafka_present "${KAFKA_NS}"; then
+        echo "[ERROR] No Confluent cluster found in project '${KAFKA_NS}', and no" >&2
+        echo "[ERROR] --bootstrap was given. Either install the Confluent Platform" >&2
+        echo "[ERROR] first, or point this at an existing cluster:" >&2
+        echo "[ERROR]   ./x.4_flink_connect_kafka.sh --bootstrap kafka.example.com:9092" >&2
+        exit 1
+    fi
+    _discovered=true
+    BOOTSTRAP="$(cf_bootstrap_internal "${KAFKA_NS}")"
+    echo "[INFO] Discovered Kafka cluster in '${KAFKA_NS}' (CFK)."
+elif [[ -z "${BOOTSTRAP}" ]]; then
     if ! oc get statefulset broker -n "${KAFKA_NS}" &>/dev/null; then
         echo "[ERROR] No Confluent cluster found in project '${KAFKA_NS}', and no" >&2
         echo "[ERROR] --bootstrap was given. Either install the Confluent Platform" >&2
@@ -162,7 +179,16 @@ if [[ -z "${BOOTSTRAP}" ]]; then
     echo "[INFO] Discovered Kafka cluster in '${KAFKA_NS}'."
 fi
 
-if [[ "${USE_SR}" == "true" && -z "${SR_URL}" ]]; then
+if [[ "${USE_SR}" == "true" && -z "${SR_URL}" ]] && cf_is_operator_mode; then
+    # Operator mode (H27): the SchemaRegistry CR's internal REST endpoint.
+    SR_URL="$(cf_component_url "${KAFKA_NS}" "${CF_SR_CR}")"
+    if [[ -z "${SR_URL}" ]]; then
+        echo "[WARN] No SchemaRegistry CR found in '${KAFKA_NS}'."
+        echo "[WARN] Continuing without one: topics will only be readable as raw"
+        echo "[WARN] bytes/JSON, not as Avro/Protobuf tables."
+        USE_SR=false
+    fi
+elif [[ "${USE_SR}" == "true" && -z "${SR_URL}" ]]; then
     if oc get service schema-registry -n "${KAFKA_NS}" &>/dev/null; then
         SR_URL="http://schema-registry.${KAFKA_NS}.svc.cluster.local:${CONFLUENT_SCHEMA_REGISTRY_PORT}"
     else
@@ -216,11 +242,27 @@ _external=false
 # may borrow its CA; any other :443 cluster brings its own via --ca-file, or
 # chains to a public CA.
 _own_routes=false
-[[ "${_external}" == "true" && "${BOOTSTRAP%%,*}" == broker-*-kafka-${KAFKA_NS}.* ]] && _own_routes=true
+if cf_is_operator_mode; then
+    # Operator mode: this install's own Kafka routes carry app.kubernetes.io/part-of=confluent (externalAccess labels).
+    if [[ "${_external}" == "true" ]]; then
+        _boot_host="${${BOOTSTRAP%%,*}%:*}"
+        for _h in ${(f)"$(oc get routes -n "${KAFKA_NS}" -l app.kubernetes.io/part-of=confluent \
+                -o jsonpath='{range .items[*]}{.spec.host}{"\n"}{end}' 2>/dev/null || true)"}; do
+            [[ -n "${_h}" && "${_h}" == "${_boot_host}" ]] && _own_routes=true
+        done
+        unset _boot_host _h
+    fi
+else
+    [[ "${_external}" == "true" && "${BOOTSTRAP%%,*}" == broker-*-kafka-${KAFKA_NS}.* ]] && _own_routes=true
+fi
 
 if [[ "${USE_SASL}" == "true" ]]; then
     _live_proto="" _live_mech=""
-    if [[ "${_discovered}" == "true" ]]; then
+    if [[ "${_discovered}" == "true" ]] && cf_is_operator_mode; then
+        # Operator mode (H27): what the Kafka CR's internal listener runs.
+        read -r _live_proto _live_mech _ <<< "$(cf_live_security "${KAFKA_NS}")"
+        [[ "${_live_mech}" == "-" ]] && _live_mech=""
+    elif [[ "${_discovered}" == "true" ]]; then
         read -r _live_proto _live_mech <<< "$(kafka_pod_internal_security "${KAFKA_NS}" broker-0)"
         [[ "${_live_mech}" == "-" ]] && _live_mech=""
     fi
@@ -254,6 +296,21 @@ if [[ "${SECURITY_PROTOCOL}" == "SASL_SSL" ]]; then
     if [[ -n "${CA_FILE}" ]]; then
         [[ -f "${CA_FILE}" ]] || { echo "[ERROR] No such file: ${CA_FILE}" >&2; exit 1; }
         CA_PEM="$(cat "${CA_FILE}")"
+    elif { [[ "${_discovered}" == "true" || "${_own_routes}" == "true" ]]; } && cf_is_operator_mode; then
+        # Operator mode: the CA of the external (route) certificate or of the internal listener
+        # (repo TLS source: ca.crt; cfk source: ca-pair-sslcerts tls.crt).
+        if [[ "${_own_routes}" == "true" ]]; then
+            _ca_secret="${CONFLUENT_EXTERNAL_TLS_SECRET:-confluent-kafka-tls}"
+            CA_PEM="$(cf_ca_pem "${KAFKA_NS}" external)"
+        else
+            if [[ "$(cfo_tls_source)" == cfk ]]; then _ca_secret="${CFO_CA_PAIR_SECRET}"; else _ca_secret="${CONFLUENT_INTERNAL_TLS_SECRET:-confluent-kafka-internal-tls}"; fi
+            CA_PEM="$(cf_ca_pem "${KAFKA_NS}" internal)"
+        fi
+        if [[ -z "${CA_PEM}" ]]; then
+            echo "[ERROR] SASL_SSL needs the brokers' CA, and secret '${_ca_secret}' in '${KAFKA_NS}'" >&2
+            echo "[ERROR] has none. Pass it with --ca-file." >&2
+            exit 1
+        fi
     elif [[ "${_discovered}" == "true" || "${_own_routes}" == "true" ]]; then
         if [[ "${_own_routes}" == "true" ]]; then
             _ca_secret="${CONFLUENT_EXTERNAL_TLS_SECRET:-confluent-kafka-tls}"
@@ -297,6 +354,8 @@ echo ""
 if [[ "${_discovered}" == "true" && "${NS}" != "${KAFKA_NS}" ]]; then
     _network_args=(--kafka-namespace "${KAFKA_NS}" --flink-namespace "${NS}")
     [[ "${USE_SR}" == "true" ]] || _network_args+=(--no-schema-registry)
+    # Operator mode (H28): CFK's pod app labels (kafka, schema-registry; V12).
+    cf_is_operator_mode && _network_args+=(--apps "${(j:,:)${=$(cf_kafka_app_labels)}}")
     _network_plan="$(oc get networkpolicy,pods -n "${KAFKA_NS}" -o json \
         | python3 "${_CP4D_REPO_ROOT}/src/helpers/confluent_flink_network.py" "${_network_args[@]}")"
     _policy_count="$(print -r -- "${_network_plan}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))')"
@@ -324,7 +383,18 @@ fi
 # broker capping it lower rejects the producer. The statement then sits in
 # PENDING forever while the write task restart-loops, and nothing CMF reports
 # points at the broker - so check it here, where the message can be useful.
-if [[ "${_discovered}" == "true" && "${DRY_RUN}" != "true" ]]; then
+if [[ "${_discovered}" == "true" && "${DRY_RUN}" != "true" ]] && cf_is_operator_mode; then
+    # Operator mode (H29): the Kafka CR's configOverrides (the renderer sets 3600000).
+    _txn_max="$(cf_kafka_txn_max "${KAFKA_NS}")"
+    if (( ${_txn_max:-900000} < 3600000 )); then
+        echo "[WARN] The Kafka CR caps transaction.max.timeout.ms at ${_txn_max:-900000}ms."
+        echo "[WARN] Flink's exactly-once sink requests 3600000ms, so every INSERT INTO"
+        echo "[WARN] will hang in PENDING. Re-apply the CR with the operator-mode install,"
+        echo "[WARN] which sets transaction.max.timeout.ms=3600000:"
+        echo "[WARN]   ../../1.1_confluent_install.sh"
+        echo ""
+    fi
+elif [[ "${_discovered}" == "true" && "${DRY_RUN}" != "true" ]]; then
     _txn_max="$(oc get statefulset broker -n "${KAFKA_NS}" \
         -o jsonpath='{range .spec.template.spec.containers[0].env[?(@.name=="KAFKA_TRANSACTION_MAX_TIMEOUT_MS")]}{.value}{end}' 2>/dev/null || true)"
     # Empty means the broker default of 900000 (15 minutes).
@@ -565,10 +635,21 @@ if [[ "${USE_SASL}" == "true" ]]; then
         confluent flink secret create "${SECRET_FILE}" --url "${CMF_URL}" >/dev/null
     fi
 
-    echo "[INFO] Mapping the secret into environment '${FLINK_ENVIRONMENT}'..."
-    confluent flink secret-mapping create "${MAPPING_FILE}" \
-        --environment "${FLINK_ENVIRONMENT}" --url "${CMF_URL}" >/dev/null 2>&1 \
-        || echo "[INFO] Secret mapping already present."
+    if [[ "$(cf_flink_cmf_resource_mode)" == cfk ]]; then
+        # CMF resources as CFK CRs (H31): the mapping lives in FlinkEnvironment.spec.secrets (the CLI
+        # mapping would be reverted by CFK); 1.1 keeps it on every re-render.
+        _cfk_ns="${FLINK_CFK_NAMESPACE:-${NS}}"
+        echo "[INFO] Mapping the secret into FlinkEnvironment/${FLINK_ENVIRONMENT} (${_cfk_ns}, spec.secrets)..."
+        _patch="$(_SECRET_ID="${SECRET_ID}" cfo_python -c 'import json,os
+print(json.dumps({"spec": {"secrets": {os.environ["_SECRET_ID"]: os.environ["_SECRET_ID"]}}}))')"
+        oc patch flinkenvironments.platform.confluent.io "${FLINK_ENVIRONMENT}" -n "${_cfk_ns}" --type=merge -p "${_patch}" >/dev/null \
+            || { echo "[ERROR] Could not patch FlinkEnvironment/${FLINK_ENVIRONMENT} in ${_cfk_ns} (run 1.1_flink_install.sh first)." >&2; exit 1; }
+    else
+        echo "[INFO] Mapping the secret into environment '${FLINK_ENVIRONMENT}'..."
+        confluent flink secret-mapping create "${MAPPING_FILE}" \
+            --environment "${FLINK_ENVIRONMENT}" --url "${CMF_URL}" >/dev/null 2>&1 \
+            || echo "[INFO] Secret mapping already present."
+    fi
 else
     echo "[INFO] --no-sasl: no credentials, so no CMF secret is created."
 fi

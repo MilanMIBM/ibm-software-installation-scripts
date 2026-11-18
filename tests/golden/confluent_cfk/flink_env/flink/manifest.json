@@ -1,0 +1,31 @@
+{
+  "set": "flink",
+  "namespace": "confluent-flink",
+  "files": [
+    {
+      "order": 10,
+      "stage": 1,
+      "path": "flink/10-cmfrestclass-default.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "CMFRestClass",
+      "name": "default",
+      "namespace": "confluent-flink",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 20,
+      "stage": 1,
+      "path": "flink/20-flinkenvironment-cp-env.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "FlinkEnvironment",
+      "name": "cp-env",
+      "namespace": "confluent-flink",
+      "wait": "cmfSync",
+      "apply": true
+    }
+  ],
+  "disabled": [],
+  "info": [],
+  "warnings": []
+}

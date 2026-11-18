@@ -1,0 +1,17 @@
+{#- SchemaRegistry (set platform, order 40). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: SchemaRegistry
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  replicas: 1
+{{ mac.image(c) }}
+{{ mac.pod_template(c) }}
+{{ mac.common_tail(c, m) }}
+  dependencies:
+    kafka: {{ c.kafka | j }}
+  configOverrides:
+    server:
+{% for line in c.server_overrides %}
+      - {{ line | q }}
+{% endfor %}

@@ -1,0 +1,50 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: ControlCenter
+metadata:
+  name: control-center
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  replicas: 1
+  image:
+    application: docker.io/confluentinc/cp-enterprise-control-center-next-gen:2.7.0
+    init: docker.io/confluentinc/confluent-init-container:3.4.0
+  dataVolumeCapacity: 10Gi
+  storageClass:
+    name: ocs-storagecluster-ceph-rbd
+  podTemplate:
+    podSecurityContext: {}
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: '1'
+        memory: 4Gi
+  injectLabels:
+    app.kubernetes.io/part-of: confluent
+  services:
+    prometheus:
+      image: docker.io/confluentinc/cp-enterprise-prometheus:2.7.0
+      pvc:
+        dataVolumeCapacity: 10Gi
+    alertmanager:
+      image: docker.io/confluentinc/cp-enterprise-alertmanager:2.7.0
+  dependencies:
+    kafka:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+    schemaRegistry:
+      url: http://schema-registry.confluent.svc.cluster.local:8081
+    connect:
+    - name: connect
+      url: http://connect.confluent.svc.cluster.local:8083
+    ksqldb:
+    - name: ksqldb
+      url: http://ksqldb-server.confluent.svc.cluster.local:8088
+    prometheusClient:
+      url: http://control-center.confluent.svc.cluster.local:9090
+    alertManagerClient:
+      url: http://control-center.confluent.svc.cluster.local:9093

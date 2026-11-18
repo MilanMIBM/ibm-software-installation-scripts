@@ -1477,7 +1477,7 @@ mcm_script_policy() {
     esac
     case "${name:l}" in
         # TUI launchers and shells: one screen, one cluster.
-        x_service_instance_manager.sh|x_cr_state_dashboard.sh|x_runner_shell.sh)
+        x_service_instance_manager.sh|x_cr_state_dashboard.sh|x_confluent_cr_dashboard.sh|x_runner_shell.sh)
             print -r -- single-only
             return 0
             ;;
@@ -1491,7 +1491,7 @@ mcm_script_policy() {
             print -r -- allow
             return 0
             ;;
-        *uninstall*|*reinstall*|*delete*|*remove*|*prune*|*force*|*clean*|*refresh*|*restore*|cpd-cli_toggle_olm_image.sh)
+        *uninstall*|*reinstall*|*delete*|*remove*|*prune*|*force*|*clean*|*refresh*|*restore*|cpd-cli_toggle_olm_image.sh|x.7_confluent_operator_upgrade.sh|x.8_confluent_wipe_scripts_mode.sh)
             print -r -- confirm
             return 0
             ;;

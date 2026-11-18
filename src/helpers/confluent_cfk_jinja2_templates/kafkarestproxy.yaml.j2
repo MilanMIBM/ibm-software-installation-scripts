@@ -1,0 +1,15 @@
+{#- KafkaRestProxy (set platform, order 70). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: KafkaRestProxy
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  replicas: 1
+{{ mac.image(c) }}
+{{ mac.pod_template(c) }}
+{{ mac.common_tail(c, m) }}
+  dependencies:
+    kafka: {{ c.kafka | j }}
+{% if c.sr %}
+    schemaRegistry: {{ c.sr | j }}
+{% endif %}

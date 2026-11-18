@@ -1,0 +1,60 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Connect
+metadata:
+  name: connect
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  replicas: 1
+  image:
+    application: docker.io/cnfldemos/cp-server-connect-datagen:0.6.7-8.0.0
+    init: docker.io/confluentinc/confluent-init-container:3.4.0
+    pullSecretRef:
+    - confluent-registry
+  podTemplate:
+    podSecurityContext: {}
+    resources:
+      requests:
+        cpu: '1'
+        memory: 2Gi
+      limits:
+        cpu: '2'
+        memory: 4Gi
+  injectLabels:
+    app.kubernetes.io/part-of: confluent
+  license:
+    secretRef: confluent-license
+  groupID: compose-connect-group
+  internalTopicReplicationFactor: 3
+  keyConverterType: org.apache.kafka.connect.storage.StringConverter
+  valueConverterType: io.confluent.connect.avro.AvroConverter
+  dependencies:
+    kafka:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    producer:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    consumer:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    admin:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    schemaRegistry:
+      url: http://schema-registry.confluent.svc.cluster.local:8081

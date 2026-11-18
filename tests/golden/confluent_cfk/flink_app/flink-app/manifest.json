@@ -1,0 +1,20 @@
+{
+  "set": "flink-app",
+  "namespace": "confluent-flink",
+  "files": [
+    {
+      "order": 10,
+      "stage": 1,
+      "path": "flink-app/10-flinkapplication-state-machine.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "FlinkApplication",
+      "name": "state-machine",
+      "namespace": "confluent-flink",
+      "wait": "jobStatus",
+      "apply": true
+    }
+  ],
+  "disabled": [],
+  "info": [],
+  "warnings": []
+}

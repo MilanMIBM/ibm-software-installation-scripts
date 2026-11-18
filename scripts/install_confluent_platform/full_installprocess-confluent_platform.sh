@@ -17,6 +17,7 @@ _iceberg_setup_override="${DO_ICEBERG_WATSONX_SETUP-}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 ir_dispatch "$@"
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - full install
@@ -47,6 +48,34 @@ ir_dispatch "$@"
 # Or pick steps by name: --from <step> resumes there, --skip <step>[,...] leaves
 # steps out, --list-steps shows the plan.
 # ==============================================================================
+
+# Operator mode (CONFLUENT_DEPLOY_MODE=operator or unset; contract 2.7, D21): the operator-mode flags are
+# taken out of the arguments before h_steps_parse --strict, which would reject them, and handed to the
+# steps through the environment. Every [BLOCKED] banner of the run is repeated when the chain ends.
+if cf_is_operator_mode; then
+    source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    _cfo_args=()
+    while (( $# > 0 )); do
+        case "$1" in
+            --autoselect-latest) export CFO_AUTOSELECT_LATEST=1; shift ;;
+            --persist)           export CFO_AUTOSELECT_PERSIST=1; shift ;;
+            --tls-source)
+                h_need_value "$1" "${2:-}"
+                [[ "$2" == (repo|cfk) ]] || { echo "[ERROR] --tls-source must be repo or cfk (got '$2')." >&2; exit 1; }
+                export CONFLUENT_OPERATOR_TLS_SOURCE_CLI="$2"; shift 2 ;;
+            *) _cfo_args+=("$1"); shift ;;
+        esac
+    done
+    set -- "${_cfo_args[@]}"
+    unset _cfo_args
+    export CFO_BANNER_FILE="$(mktemp "${TMPDIR:-/tmp}/cfo-banner.XXXXXX")"
+    trap 'cfo_banner_replay; rm -f "${CFO_BANNER_FILE}"; (( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
+    H_STEPS_USAGE="Operator mode (CONFLUENT_DEPLOY_MODE=operator or unset):
+$(printf '  %-28s%s\n' \
+    "--autoselect-latest" "operators step: the newest compatible CFK/cp-fko set from the catalogs (new installs)" \
+    "--persist" "with --autoselect-latest: save the chosen versions to the vars file" \
+    "--tls-source repo|cfk" "who makes the in-cluster certificates (this run; default CONFLUENT_OPERATOR_TLS_SOURCE)")"
+fi
 
 h_steps_parse --strict "$@"
 
@@ -95,6 +124,14 @@ else
     DO_FLINK_ADDON=false
 fi
 
+# Operator mode: the operators step (CFK and cp-fko through OLM) runs first, so its scripts-mode guard
+# fires before 1.0 writes anything (contract D20, plan O22).
+if cf_is_operator_mode; then
+    DO_CONFLUENT_OPERATORS="${DO_CONFLUENT_OPERATORS:-true}"   # 1.0o CFK / cp-fko via OLM
+    h_step     operators        "${DO_CONFLUENT_OPERATORS}"        "1.0o confluent operators (CFK/cp-fko via OLM)" \
+        "${SCRIPT_DIR}/operator/1.0o_confluent_operators.sh"
+fi
+
 # Status (non-zero = a component is not ready yet) only warns.
 h_step         prep             "${DO_CONFLUENT_PREP}"             "1.0 confluent prep" \
     "${SCRIPT_DIR}/1.0_confluent_prep.sh"
@@ -111,6 +148,17 @@ h_step         flink            "${DO_FLINK_ADDON}"                "flink addon 
 unset _flink_note
 
 h_steps_plan
+
+# Operator mode with the Flink add-on configured: the guard of the operators step and the Flink add-on list
+# Helm releases (CMF is a Helm chart in every mode), so helm must be on PATH before anything runs.
+if cf_is_operator_mode && cf_flink_configured && cf_flink_is_olm \
+   && { h_step_on operators || h_step_on flink; } && ! command -v helm >/dev/null 2>&1; then
+    echo "[ERROR] helm is not on PATH. Operator mode with the Flink add-on configured needs it: the scripts-mode" >&2
+    echo "[ERROR] guard lists the Helm releases in ${PROJECT_CONFLUENT_FLINK}, and CMF installs with Helm." >&2
+    echo "[ERROR] Install helm, or leave the Flink add-on out (DO_FLINK_ADDON=false and --skip operators)." >&2
+    exit 1
+fi
+
 h_steps_run
 
 echo ""

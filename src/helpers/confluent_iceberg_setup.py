@@ -22,8 +22,18 @@ from pathlib import Path
 from multi_cluster_state import configs_root, writable_configs_root
 from softwarehub_service_instance_helpers import APIError, SoftwareHub, request_json
 
-
 CONNECTOR_CLASS = "org.apache.iceberg.connect.IcebergSinkConnector"
+
+# Operator mode, CONFLUENT_CONNECTOR_MANAGEMENT=cr (plan 15.7): the credentials go into this secret as one
+# Java properties file, mounted by Connect at /mnt/secrets/<secret>/<key>, and the Connector CR reads them through
+# FileConfigProvider references instead of carrying them in its spec.
+CR_SECRET = "iceberg-watsonx-credentials"
+CR_SECRET_KEY = "iceberg.properties"
+SECRET_PROPERTIES = (
+    "iceberg.catalog.rest.auth.basic.password",
+    "iceberg.catalog.s3.access-key-id",
+    "iceberg.catalog.s3.secret-access-key",
+)
 
 
 def info(message):
@@ -81,7 +91,7 @@ class Settings:
             self.output.relative_to(self.root.resolve())
         except ValueError:
             raise ValueError("ICEBERG_OUTPUT_FILE must be inside this repository and ignored by Git") from None
-        check = subprocess.run(["git", "check-ignore", "-q", "--", str(self.output)], cwd=self.root)
+        check = subprocess.run(["git", "check-ignore", "-q", "--", str(self.output)], cwd=self.root, check=False)
         if check.returncode:
             raise ValueError("ICEBERG_OUTPUT_FILE must be ignored by Git and must not be tracked")
         self.credentials = configs / "openshift_config/service_id_credentials.txt"
@@ -113,19 +123,24 @@ class Settings:
 class Connect:
     """Reach the worker inside its pod; never put connector credentials in argv."""
 
-    def __init__(self, settings):
+    def __init__(self, settings, target="deployment/connect", container=None):
         self.settings = settings
+        self.target = target
+        self.container = container
 
     def request(self, method, path, body=None):
-        args = ["oc", "exec", "-i", "deployment/connect", "-n", self.settings.namespace, "--",
+        args = ["oc", "exec", "-i", self.target, "-n", self.settings.namespace]
+        if self.container:
+            args += ["-c", self.container]
+        args += ["--",
                 "curl", "-sS", "--max-time", "30", "-X", method,
                 "-H", "Content-Type: application/json", "-w", "\n%{http_code}"]
         if body is not None:
             args += ["--data-binary", "@-"]
         args += [f"http://localhost:{self.settings.port}" + path]
-        response = subprocess.run(args, input="" if body is None else json.dumps(body), capture_output=True, text=True)
+        response = subprocess.run(args, input="" if body is None else json.dumps(body), capture_output=True, text=True, check=False)
         if response.returncode:
-            raise RuntimeError("Cannot reach the Connect worker; check deployment/connect and its REST service")
+            raise RuntimeError(f"Cannot reach the Connect worker; check {self.target} and its REST service")
         try:
             raw, code = response.stdout.rsplit("\n", 1)
             return int(code), json.loads(raw) if raw else {}
@@ -183,7 +198,7 @@ def prepare_identity(settings):
         env = {**settings.env, "KUBECONFIG": str(kubeconfig),
                "ENV_TARGET": settings.env.get("ICEBERG_CPD_ENV_TARGET", "cpd")}
         # The helper prints newly issued passwords; retain them only in its private credentials file.
-        result = subprocess.run(["zsh", str(helper), settings.username], env=env, capture_output=True, text=True)
+        result = subprocess.run(["zsh", str(helper), settings.username], env=env, capture_output=True, text=True, check=False)
         if result.returncode:
             raise RuntimeError(f"SID setup failed (exit {result.returncode}); run {helper.name} for {settings.username} with the selected CPD environment to inspect it")
     password = saved_password(settings)
@@ -216,7 +231,138 @@ def write_config(path, config):
     return "written"
 
 
-def setup(settings, *, dry_run=False, prepare_only=False):
+def _properties_escape(text, key=False):
+    """Escape a value (or key) for a java.util.Properties file."""
+    out = []
+    for ch in str(text):
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch in "=:#!" or (key and ch == " "):
+            out.append("\\" + ch)
+        elif ord(ch) > 126 or ord(ch) < 32:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    text = "".join(out)
+    if not key and text.startswith(" "):
+        text = "\\" + text
+    return text
+
+
+def connect_state_add_secret(path, secret):
+    """Add <secret> to connect_state.mounted_secrets (contract 4.2), atomically, 0600. True when it changed."""
+    path = Path(path)
+    try:
+        state = json.loads(path.read_text())
+    except FileNotFoundError:
+        state = {}
+    except ValueError as exc:
+        raise RuntimeError(f"{path} is not valid JSON ({exc})") from None
+    if not isinstance(state, dict):
+        raise RuntimeError(f"{path} does not hold a JSON object")  # noqa: TRY004 - main() reports RuntimeError
+    state.setdefault("schema_version", 1)
+    state.setdefault("plugins", {"confluentHub": [], "url": []})
+    state.setdefault("local_plugins", {"enabled": False, "pvc": "connect-plugins", "dirs": []})
+    secrets = state.setdefault("mounted_secrets", [])
+    if secret in secrets:
+        return False
+    secrets.append(secret)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temporary = tempfile.mkstemp(prefix=".connect-state-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(state, stream, indent=2)
+            stream.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return True
+
+
+class ConnectorCR:
+    """CONFLUENT_CONNECTOR_MANAGEMENT=cr (operator mode): secret + Connector CR instead of PUT /connectors."""
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.root = settings.root
+        venv = self.root / ".venv/bin/python"
+        self.python = str(venv) if venv.exists() else sys.executable
+        self.renderer = self.root / "src/helpers/confluent_cfk_render.py"
+        self.state_file = settings.env.get("CONFLUENT_CONNECT_STATE_FILE") or str(
+            configs_root(self.root, settings.env) / "confluent_platform_config/confluent_connect_state.json")
+
+    def labels(self):
+        labels = {"app.kubernetes.io/part-of": "confluent"}
+        if self.settings.env.get("CFO_OWNER_ID"):
+            labels["confluent.ibm-scripts/installed-by"] = self.settings.env["CFO_OWNER_ID"]
+        return labels
+
+    def apply_secret(self, config):
+        """The credential properties go to `oc apply -f -` on stdin; nothing secret reaches argv."""
+        lines = [f"{_properties_escape(p, key=True)}={_properties_escape(config[p])}" for p in SECRET_PROPERTIES if p in config]
+        manifest = {"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+                    "metadata": {"name": CR_SECRET, "namespace": self.settings.namespace, "labels": self.labels()},
+                    "stringData": {CR_SECRET_KEY: "\n".join(lines) + "\n"}}
+        result = subprocess.run(["oc", "apply", "-f", "-"], input=json.dumps(manifest), capture_output=True, text=True, check=False)
+        if result.returncode:
+            raise RuntimeError(f"Cannot apply secret {CR_SECRET}: {result.stderr.strip()[:300]}")
+        info(f"Credentials stored in secret {CR_SECRET} (key {CR_SECRET_KEY})")
+
+    def connector_args(self, config):
+        configs = {k: v for k, v in config.items() if k not in ("name", "connector.class", "tasks.max") and k not in SECRET_PROPERTIES}
+        refs = [{"secret": CR_SECRET, "key": CR_SECRET_KEY, "property": p} for p in SECRET_PROPERTIES if p in config]
+        return {"name": self.settings.name, "class": config.get("connector.class", CONNECTOR_CLASS),
+                "tasks_max": int(config.get("tasks.max", 1)), "configs": configs, "secret_refs": refs}
+
+    def render(self, config):
+        """Render set `connector` through the renderer CLI with the repo venv (jinja2, PyYAML)."""
+        try:
+            state = json.loads(Path(self.state_file).read_text())
+        except (FileNotFoundError, ValueError):
+            state = {}
+        with tempfile.TemporaryDirectory(prefix="iceberg-cr-") as directory:
+            work = Path(directory)
+            (work / "live.json").write_text(json.dumps({"connect_state": state} if isinstance(state, dict) else {}))
+            (work / "args.json").write_text(json.dumps(self.connector_args(config)))
+            env = dict(self.settings.env)
+            built = subprocess.run([self.python, "-I", str(self.renderer), "input-from-env", "--live", str(work / "live.json")],
+                                   env=env, capture_output=True, text=True, check=False)
+            if built.returncode:
+                raise RuntimeError("Building the renderer input failed: " + built.stderr.strip()[:500])
+            out = subprocess.run([self.python, "-I", str(self.renderer), "render", "--set", "connector",
+                                  "--out-dir", str(work / "out"), "--args", str(work / "args.json")],
+                                 input=built.stdout, env=env, capture_output=True, text=True, check=False)
+            if out.returncode:
+                raise RuntimeError("Rendering the Connector CR failed: " + out.stderr.strip()[:500])
+            manifest = json.loads(out.stdout)
+            return (work / "out" / manifest["files"][0]["path"]).read_text()
+
+    def apply(self, config, *, rerun_install):
+        self.apply_secret(config)
+        if connect_state_add_secret(self.state_file, CR_SECRET):
+            info(f"Secret {CR_SECRET} added to connect_state.mounted_secrets; re-applying the platform so Connect mounts it")
+            rerun_install()
+        text = self.render(config)
+        result = subprocess.run(["oc", "apply", "-f", "-"], input=text, capture_output=True, text=True, check=False)
+        if result.returncode:
+            raise RuntimeError(f"Cannot apply Connector CR {self.settings.name}: {result.stderr.strip()[:300]}")
+        info(f"Connector CR applied: {self.settings.name}")
+
+
+def _rerun_install(settings):
+    script = settings.root / "scripts/install_confluent_platform/1.1_confluent_install.sh"
+    result = subprocess.run(["zsh", str(script)], env=settings.env, check=False)
+    if result.returncode:
+        raise RuntimeError(f"1.1_confluent_install.sh failed (exit {result.returncode})")
+
+
+def setup(settings, *, dry_run=False, prepare_only=False, connect=None, management="rest"):
     hub = SoftwareHub.sign_in(
         settings.env["CPD_URL"], settings.env["CPD_USERNAME"],
         password=settings.env.get("CPD_PASSWORD", ""), api_key=settings.env.get("CPD_APIKEY", ""),
@@ -224,7 +370,7 @@ def setup(settings, *, dry_run=False, prepare_only=False):
     )
     instance = hub.find_instance(settings.instance_name, "watsonx-data")
     catalog_config(settings, "Bearer " + hub.token)
-    connect = Connect(settings)
+    connect = connect or Connect(settings)
     plugins = connect.require("GET", "/connector-plugins")
     installed = any(x["class"] == CONNECTOR_CLASS for x in plugins)
     path = "/connectors/" + urllib.parse.quote(settings.name, safe="") + "/config"
@@ -256,6 +402,8 @@ def setup(settings, *, dry_run=False, prepare_only=False):
         matches = code == 200 and working and existing == candidate
         info("Connector: " + ("configuration already matches" if matches else "would create" if code == 404 else "would update"))
         info(f"Dry run: would prepare {settings.output}; connector deployment {'enabled' if settings.apply and not prepare_only else 'disabled'}")
+        if management == "cr":
+            info(f"Dry run: would store the credentials in secret {CR_SECRET} and apply a Connector CR (CONFLUENT_CONNECTOR_MANAGEMENT=cr)")
         return
     if not working:
         password = prepare_identity(settings)
@@ -266,7 +414,7 @@ def setup(settings, *, dry_run=False, prepare_only=False):
     info("SID authentication to the Iceberg REST catalog passed")
     if not installed:
         helper = settings.root / "scripts/install_confluent_platform/utility_scripts_confluent_platform/x.3_confluent_add_connector.sh"
-        result = subprocess.run(["zsh", str(helper), settings.env.get("ICEBERG_PLUGIN_SOURCE", "iceberg/iceberg-kafka-connect:1.9.2"), "--name", "iceberg"], env=settings.env)
+        result = subprocess.run(["zsh", str(helper), settings.env.get("ICEBERG_PLUGIN_SOURCE", "iceberg/iceberg-kafka-connect:1.9.2"), "--name", "iceberg"], env=settings.env, check=False)
         if result.returncode:
             raise RuntimeError(f"Iceberg plugin installation failed (exit {result.returncode})")
         if not any(x["class"] == CONNECTOR_CLASS for x in connect.require("GET", "/connector-plugins")):
@@ -279,7 +427,9 @@ def setup(settings, *, dry_run=False, prepare_only=False):
     if prepare_only or not settings.apply:
         info("Prepared for Control Center upload; connector deployment disabled")
         return
-    if code == 200 and existing == config:
+    if management == "cr":
+        ConnectorCR(settings).apply(config, rerun_install=lambda: _rerun_install(settings))
+    elif code == 200 and existing == config:
         info("Connector configuration already matches; no update needed")
     else:
         connect.require("PUT", path, config)
@@ -301,13 +451,20 @@ def main():
     parser.add_argument("--service-id", help="Override ICEBERG_SERVICE_ID")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--connect-target", default="deployment/connect",
+                        help="oc exec target of the Connect worker (operator mode: pod/connect-0)")
+    parser.add_argument("--connect-container", default=None, help="container of that pod (operator mode: connect)")
+    parser.add_argument("--management", choices=("rest", "cr"), default="rest",
+                        help="rest: PUT /connectors (default); cr: secret + Connector CR (operator mode)")
     args = parser.parse_args()
     env = dict(os.environ)
     if args.service_id:
         env["ICEBERG_SERVICE_ID"] = args.service_id
     try:
         settings = Settings(args.repo_root, env)
-        setup(settings, dry_run=args.dry_run, prepare_only=args.prepare_only)
+        connect = Connect(settings, target=args.connect_target, container=args.connect_container)
+        setup(settings, dry_run=args.dry_run, prepare_only=args.prepare_only, connect=connect,
+              management=args.management)
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
         print("[ERROR] " + str(exc), file=sys.stderr)
         return 1

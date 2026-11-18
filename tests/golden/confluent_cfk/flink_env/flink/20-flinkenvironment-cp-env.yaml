@@ -1,0 +1,39 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkEnvironment
+metadata:
+  name: cp-env
+  namespace: confluent-flink
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  kubernetesNamespace: confluent-flink
+  flinkApplicationDefaults:
+    spec:
+      flinkConfiguration:
+        state.backend.type: rocksdb
+        state.checkpoints.dir: file:///flink-state/checkpoints
+        state.savepoints.dir: file:///flink-state/savepoints
+        execution.checkpointing.interval: 60s
+        execution.checkpointing.mode: EXACTLY_ONCE
+        kubernetes.operator.savepoint.history.max.age: 72h
+        taskmanager.numberOfTaskSlots: '2'
+      podTemplate:
+        apiVersion: v1
+        kind: Pod
+        spec:
+          containers:
+          - name: flink-main-container
+            volumeMounts:
+            - name: flink-state
+              mountPath: /flink-state
+          volumes:
+          - name: flink-state
+            persistentVolumeClaim:
+              claimName: flink-state
+  cmfRestClassRef:
+    name: default
+    namespace: confluent-flink
+  secrets:
+    kafka-cp: cp-kafka-credentials

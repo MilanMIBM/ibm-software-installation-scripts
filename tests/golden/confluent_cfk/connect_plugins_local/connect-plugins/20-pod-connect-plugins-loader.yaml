@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: connect-plugins-loader
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+    app: connect-plugins-loader
+spec:
+  restartPolicy: Never
+  containers:
+  - name: loader
+    image: registry.access.redhat.com/ubi9/ubi:latest
+    command:
+    - sleep
+    - '3600'
+    volumeMounts:
+    - name: local-plugins
+      mountPath: /mnt/local-plugins
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop:
+        - ALL
+      seccompProfile:
+        type: RuntimeDefault
+  volumes:
+  - name: local-plugins
+    persistentVolumeClaim:
+      claimName: connect-plugins

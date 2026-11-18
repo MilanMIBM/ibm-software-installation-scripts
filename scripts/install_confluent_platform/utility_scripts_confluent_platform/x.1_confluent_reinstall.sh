@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
-
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 # ==============================================================================
 # Confluent Platform - reinstall
 # ------------------------------------------------------------------------------
@@ -43,12 +43,21 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 
 PASSTHRU=()
 RUN_STATUS=true
+DELETE_DATA=false
 
 for _arg in "$@"; do
     case "${_arg}" in
         --no-status)  RUN_STATUS=false ;;
         --keep-data|--keep-project|--yes|-y)
                       PASSTHRU+=("${_arg}") ;;
+        --delete-data)
+            # Operator mode only (plan 15.14 item 1); scripts mode rejects it as before.
+            if cf_is_operator_mode; then
+                DELETE_DATA=true
+            else
+                echo "[ERROR] Unknown argument '${_arg}'. Try --help." >&2
+                exit 1
+            fi ;;
         --dry-run)
             echo "[ERROR] --dry-run is not meaningful here: it would tear nothing down" >&2
             echo "[ERROR] and then reinstall over a live platform. Run" >&2
@@ -94,7 +103,24 @@ echo " Step 1/3: uninstall"
 echo "------------------------------------------------------------------------------"
 # The reinstall only rebuilds the platform, so the Flink addon is kept unless
 # DO_FLINK_UNINSTALL=true is set explicitly.
-DO_FLINK_UNINSTALL="${DO_FLINK_UNINSTALL:-false}" "${UNINSTALL}" "${PASSTHRU[@]}"
+if cf_is_operator_mode; then
+    # Operator mode (plan 15.14 item 1): CFK deletes a stateful CR's PVCs with it, so keeping the data means
+    # keeping Kafka, KRaft, ksqlDB and Control Center: only the application resources, the stateless
+    # components and the repo objects go, and 1.1 re-renders and re-applies the rest (CFK reconciles in
+    # place). --delete-data runs the full operator uninstall with --delete-data instead.
+    if [[ "${DELETE_DATA}" == true ]]; then
+        if (( ${PASSTHRU[(Ie)--keep-data]} )); then
+            echo "[ERROR] --keep-data and --delete-data exclude each other." >&2
+            exit 1
+        fi
+        DO_FLINK_UNINSTALL="${DO_FLINK_UNINSTALL:-false}" "${UNINSTALL}" --delete-data "${PASSTHRU[@]}"
+    else
+        echo "[INFO] Kafka, KRaft, ksqlDB and Control Center CRs kept with their data; 1.1 re-applies them (CFK reconciles in place)."
+        DO_FLINK_UNINSTALL="${DO_FLINK_UNINSTALL:-false}" CFO_X0_KEEP_STATEFUL=1 "${UNINSTALL}" "${PASSTHRU[@]}"
+    fi
+else
+    DO_FLINK_UNINSTALL="${DO_FLINK_UNINSTALL:-false}" "${UNINSTALL}" "${PASSTHRU[@]}"
+fi
 
 echo ""
 echo "------------------------------------------------------------------------------"

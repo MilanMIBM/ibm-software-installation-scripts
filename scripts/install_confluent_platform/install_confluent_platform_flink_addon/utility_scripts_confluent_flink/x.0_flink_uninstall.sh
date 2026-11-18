@@ -42,6 +42,9 @@ source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 #   --yes                skip the interactive confirmation
 #   --dry-run            print what would be deleted, delete nothing
 # ==============================================================================
+# CONTRACT-DEVIATION: the dispatch line sits here, not directly after the source line (contract 1.3): --help prints
+# lines 19-41 of this file, so a line above them would change the scripts-mode help (byte identity, contract 1.1).
+cf_flink_operator_mode && exec zsh "${SCRIPT_DIR}/operator/${0:t}" "$@"
 
 KEEP_DATA=false
 KEEP_PROJECT=false
@@ -247,8 +250,13 @@ fi
 echo ""
 echo "[INFO] Left in place (cluster-scoped, may be shared):"
 if oc get crd flinkdeployments.flink.apache.org &>/dev/null; then
-    echo "[INFO]   Flink CRDs. Remove them only if no other Flink installation exists:"
-    echo "[INFO]     oc delete crd flinkdeployments.flink.apache.org flinksessionjobs.flink.apache.org"
+    # O24: CRDs an OLM install of cp-fko owns are shared with it - never suggest deleting those.
+    if [[ "$(oc get crd flinkdeployments.flink.apache.org -o jsonpath='{.metadata.labels.olm\.managed}' 2>/dev/null || true)" == "true" ]]; then
+        echo "[INFO] The flink.apache.org CRDs are OLM-managed (shared with cp-fko installs) - do not delete them."
+    else
+        echo "[INFO]   Flink CRDs. Remove them only if no other Flink installation exists:"
+        echo "[INFO]     oc delete crd flinkdeployments.flink.apache.org flinksessionjobs.flink.apache.org"
+    fi
 fi
 if [[ "${KEEP_CERT_MANAGER}" == "true" ]] && oc get crd certificates.cert-manager.io &>/dev/null; then
     echo "[INFO]   cert-manager. Other operators commonly depend on it; remove with:"

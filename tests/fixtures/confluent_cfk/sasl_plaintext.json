@@ -1,0 +1,93 @@
+{
+  "_about": "SASL_PLAINTEXT + native PLAIN (generated operator default), plus a KafkaTopic",
+  "input": {
+    "schema_version": 1,
+    "namespace": "confluent",
+    "flink_namespace": "confluent-flink",
+    "owner_id": "local.confluent",
+    "vars": {
+      "CONFLUENT_AUTH_ENABLED": "true",
+      "CONFLUENT_AUTH_MODE": "openshift",
+      "CONFLUENT_AUTH_SECRET": "confluent-auth",
+      "CONFLUENT_AUTO_CREATE_TOPICS": "true",
+      "CONFLUENT_BROKER_CPU_LIMIT": "2",
+      "CONFLUENT_BROKER_CPU_REQUEST": "1",
+      "CONFLUENT_BROKER_MEM_LIMIT": "8Gi",
+      "CONFLUENT_BROKER_MEM_REQUEST": "4Gi",
+      "CONFLUENT_BROKER_REPLICAS": "3",
+      "CONFLUENT_BROKER_STORAGE_SIZE": "100Gi",
+      "CONFLUENT_C3_GATEWAY_PORT": "8443",
+      "CONFLUENT_C3_STORAGE_SIZE": "10Gi",
+      "CONFLUENT_C3_VERSION": "2.7.0",
+      "CONFLUENT_CLUSTER_ID": "Mk3OEYBSD34fcwNTJENDM2",
+      "CONFLUENT_COMPONENT_CPU_LIMIT": "1",
+      "CONFLUENT_COMPONENT_CPU_REQUEST": "500m",
+      "CONFLUENT_COMPONENT_MEM_LIMIT": "4Gi",
+      "CONFLUENT_COMPONENT_MEM_REQUEST": "2Gi",
+      "CONFLUENT_CONNECTOR_MANAGEMENT": "rest",
+      "CONFLUENT_CONNECT_IMAGE": "docker.io/cnfldemos/cp-server-connect-datagen:0.6.7-8.0.0",
+      "CONFLUENT_CREATE_ROUTES": "true",
+      "CONFLUENT_EXTERNAL_KAFKA_ENABLED": "false",
+      "CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS": "PLAIN",
+      "CONFLUENT_EXTERNAL_TLS_SECRET": "confluent-kafka-tls",
+      "CONFLUENT_INSTALL_CONNECT": "true",
+      "CONFLUENT_INSTALL_CONTROL_CENTER": "true",
+      "CONFLUENT_INSTALL_KSQLDB": "true",
+      "CONFLUENT_INSTALL_REST_PROXY": "true",
+      "CONFLUENT_INSTALL_SCHEMA_REGISTRY": "true",
+      "CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS": "PLAIN",
+      "CONFLUENT_INTERNAL_TLS_SECRET": "confluent-kafka-internal-tls",
+      "CONFLUENT_KRAFT_CPU_LIMIT": "1",
+      "CONFLUENT_KRAFT_CPU_REQUEST": "250m",
+      "CONFLUENT_KRAFT_MEM_LIMIT": "2Gi",
+      "CONFLUENT_KRAFT_MEM_REQUEST": "1Gi",
+      "CONFLUENT_KRAFT_REPLICAS": "3",
+      "CONFLUENT_KRAFT_STORAGE_SIZE": "10Gi",
+      "CONFLUENT_KSQLDB_STORAGE_SIZE": "10Gi",
+      "CONFLUENT_MDS_ENABLED": "false",
+      "CONFLUENT_MIN_INSYNC_REPLICAS": "2",
+      "CONFLUENT_MONITORING_NETWORK_POLICY": "true",
+      "CONFLUENT_OPERATOR_IMAGE_SOURCE": "tags",
+      "CONFLUENT_OPERATOR_INIT_IMAGE": "docker.io/confluentinc/confluent-init-container:3.4.0",
+      "CONFLUENT_OPERATOR_NETWORK_POLICIES": "true",
+      "CONFLUENT_OPERATOR_SASL_IMPL": "plain",
+      "CONFLUENT_OPERATOR_TLS_SOURCE": "repo",
+      "CONFLUENT_PARTITIONS": "3",
+      "CONFLUENT_PROMETHEUS_STORAGE_SIZE": "10Gi",
+      "CONFLUENT_PULL_SECRET": "confluent-registry",
+      "CONFLUENT_REGISTRY": "docker.io/confluentinc",
+      "CONFLUENT_REPLICATION_FACTOR": "3",
+      "CONFLUENT_SASL_ADMIN_USER": "confluent-admin",
+      "CONFLUENT_SASL_ENABLED": "true",
+      "CONFLUENT_SASL_MECHANISM": "PLAIN",
+      "CONFLUENT_SASL_PROTOCOL": "SASL_PLAINTEXT",
+      "CONFLUENT_SASL_SECRET": "confluent-sasl",
+      "CONFLUENT_STORAGE_CLASS": "ocs-storagecluster-ceph-rbd",
+      "CONFLUENT_VERSION": "8.4.0",
+      "PROJECT_CONFLUENT_FLINK": "confluent-flink",
+      "PROJECT_CONFLUENT_SERVER": "confluent",
+      "STG_CLASS_BLOCK": "ocs-storagecluster-ceph-rbd",
+      "STG_CLASS_FILE": "ocs-storagecluster-cephfs"
+    },
+    "live": {
+      "route_domain": "apps.example.com",
+      "license_present": true,
+      "pull_secret_present": false
+    }
+  },
+  "renders": [
+    {
+      "set": "platform"
+    },
+    {
+      "set": "topic",
+      "args": {
+        "name": "orders",
+        "partitions": 6,
+        "configs": {
+          "cleanup.policy": "compact"
+        }
+      }
+    }
+  ]
+}

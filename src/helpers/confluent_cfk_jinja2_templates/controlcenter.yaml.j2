@@ -1,0 +1,23 @@
+{#- ControlCenter next-gen (set platform, order 80). replicas 1 is the only value CFK allows (15.12 item 3).
+    Prometheus/Alertmanager are embedded under spec.services; prometheusClient is required (V20). No
+    externalAccess and no authentication: the repo front proxy control-center-auth guards the UI (O13). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: ControlCenter
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  replicas: 1
+{{ mac.image(c) }}
+  dataVolumeCapacity: {{ c.storage | q }}
+  storageClass:
+    name: {{ m.storage_class | q }}
+{{ mac.pod_template(c) }}
+{{ mac.common_tail(c, m) }}
+  services:
+    prometheus:
+      image: {{ c.prometheus_image | q }}
+      pvc:
+        dataVolumeCapacity: {{ c.prometheus_storage | q }}
+    alertmanager:
+      image: {{ c.alertmanager_image | q }}
+  dependencies: {{ c.dependencies | j }}

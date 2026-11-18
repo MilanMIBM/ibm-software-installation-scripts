@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
-
+cf_is_operator_mode && exec zsh "${SCRIPT_DIR}/operator/${0:t}" "$@"
 # ==============================================================================
 # Confluent Platform - install a connector plugin into Kafka Connect
 # ------------------------------------------------------------------------------

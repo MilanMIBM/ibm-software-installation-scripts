@@ -1,0 +1,50 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "packages.operators.coreos.com/v1",
+      "kind": "PackageManifest",
+      "metadata": {
+        "name": "confluent-for-kubernetes",
+        "namespace": "openshift-marketplace"
+      },
+      "status": {
+        "catalogSource": "certified-operators",
+        "defaultChannel": "3.4",
+        "channels": [
+          {
+            "name": "3.3",
+            "currentCSV": "confluent-for-kubernetes.v3.3.1",
+            "entries": [
+              {
+                "name": "confluent-for-kubernetes.v3.3.1"
+              },
+              {
+                "name": "confluent-for-kubernetes.v3.3.0"
+              }
+            ]
+          },
+          {
+            "name": "3.4",
+            "currentCSV": "confluent-for-kubernetes.v3.4.0",
+            "entries": [
+              {
+                "name": "confluent-for-kubernetes.v3.4.0"
+              }
+            ]
+          },
+          {
+            "name": "3.5",
+            "currentCSV": "confluent-for-kubernetes.v3.5.0",
+            "entries": [
+              {
+                "name": "confluent-for-kubernetes.v3.5.0"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

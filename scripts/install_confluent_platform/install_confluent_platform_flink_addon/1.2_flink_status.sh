@@ -29,6 +29,7 @@ _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]];
 
 SHOW_JOBS=false
 NO_CMF=false
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 while (( $# > 0 )); do
     case "$1" in
@@ -42,6 +43,7 @@ while (( $# > 0 )); do
 done
 
 eval "${OC_LOGIN}" >/dev/null
+cf_operator_guard flink || exit $?
 
 NS="${PROJECT_CONFLUENT_FLINK}"
 
@@ -60,9 +62,17 @@ fi
 # ------------------------------------------------------------------------------
 # Prerequisite
 # ------------------------------------------------------------------------------
+if cf_flink_is_olm || [[ "$(cf_flink_cmf_resource_mode)" == cfk ]]; then
+    source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    export CFO_OWNER_ID="${CFO_OWNER_ID:-$(cfo_owner_id)}"
+fi
+
 echo ""
 echo "-- cert-manager --------------------------------------------------------------"
-if oc get crd certificates.cert-manager.io &>/dev/null; then
+if cf_flink_is_olm; then
+    # Operator mode (H20): OLM issues cp-fko's webhook certificate.
+    printf '  %-42s %s\n' "cert-manager" "not required (cp-fko via OLM)"
+elif oc get crd certificates.cert-manager.io &>/dev/null; then
     printf '  %-42s %s\n' "cert-manager" "installed"
 else
     printf '  %-42s %s\n' "cert-manager" "MISSING - the Flink operator webhook will fail"
@@ -80,8 +90,42 @@ if command -v helm &>/dev/null; then
     else
         helm list -n "${NS}" 2>/dev/null | sed 's/^/  /'
     fi
+    if cf_flink_is_olm; then
+        # Operator mode: CMF is the only Helm release; a Flink operator release here would be a second operator.
+        _fko_rel="$(helm list -n "${NS}" -o json 2>/dev/null | cfo_python "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_olm.py" guard-flink --helm /dev/stdin 2>/dev/null | awk '$1 == "fko" {print $2}' || true)"
+        if [[ -n "${_fko_rel}" ]]; then
+            echo "  [WARN] Helm Flink operator release(s) ${_fko_rel//$'\n'/, } in '${NS}' - cp-fko via OLM expects only CMF here"
+        fi
+    fi
 else
     echo "  (helm is not on PATH)"
+fi
+
+# ------------------------------------------------------------------------------
+# Operators (operator mode: cp-fko, and CFK for CMF resources as CRs)
+# ------------------------------------------------------------------------------
+if cf_flink_is_olm; then
+    echo ""
+    echo "-- Operators (OLM) -----------------------------------------------------------"
+    _cfk_ns="${FLINK_CFK_NAMESPACE:-${NS}}"
+    _op_nss=("${NS}")
+    [[ "$(cf_flink_cmf_resource_mode)" == cfk && "${_cfk_ns}" != "${NS}" ]] && _op_nss+=("${_cfk_ns}")
+    printf '  %-20s %-26s %-14s %-10s %-12s %-38s %s\n' NAMESPACE SUBSCRIPTION CHANNEL APPROVAL STATE CSV "PHASE / PENDING / DEPLOYMENT"
+    for _ons in "${_op_nss[@]}"; do
+        _rows="$(cfo_operator_rows "${_ons}" 2>/dev/null || true)"
+        if [[ -z "${_rows}" ]]; then
+            printf '  %-20s %s\n' "${_ons}" "(no Subscription)"
+            continue
+        fi
+        for _row in "${(@f)_rows}"; do
+            _c=("${(@s:	:)_row}")
+            printf '  %-20s %-26s %-14s %-10s %-12s %-38s %s\n' "${_ons}" "${_c[1]:--}" "${_c[3]:--}" "${_c[4]:--}" \
+                "${_c[5]:--}" "${_c[6]:--}" "${_c[7]:--} / ${_c[8]:--} / ${_c[9]:--} ${_c[10]:-} (vs startingCSV: ${_c[11]:--})"
+        done
+        _ogs="$(oc get operatorgroups.operators.coreos.com -n "${_ons}" \
+            -o jsonpath='{range .items[*]}{.metadata.name}={.spec.targetNamespaces}{" "}{end}' 2>/dev/null || true)"
+        printf '  %-20s %s\n' "" "OperatorGroup: ${_ogs:-(none)}"
+    done
 fi
 
 # ------------------------------------------------------------------------------
@@ -90,7 +134,10 @@ fi
 echo ""
 echo "-- Workloads -----------------------------------------------------------------"
 printf '  %-42s %-12s %s\n' "NAME" "READY" "STATE"
-for _d in flink-kubernetes-operator confluent-manager-for-apache-flink; do
+# Operator mode (H20): the OLM Deployment of cp-fko is named after the package.
+_workloads=(flink-kubernetes-operator confluent-manager-for-apache-flink)
+cf_flink_is_olm && _workloads=("${CFO_PKG_FKO}" confluent-manager-for-apache-flink)
+for _d in "${_workloads[@]}"; do
     if ! oc get deployment "${_d}" -n "${NS}" &>/dev/null; then
         printf '  %-42s %-12s %s\n' "${_d}" "-" "not installed"
         continue
@@ -187,6 +234,24 @@ if [[ "${NO_CMF}" != "true" ]] && command -v confluent &>/dev/null \
 fi
 
 # ------------------------------------------------------------------------------
+# CMF resources as CFK custom resources (FLINK_CMF_RESOURCE_MODE=cfk, H21)
+# ------------------------------------------------------------------------------
+if [[ "$(cf_flink_cmf_resource_mode)" == cfk ]]; then
+    echo ""
+    echo "-- CFK Flink resources (${FLINK_CFK_NAMESPACE:-${NS}}) ---------------------------------"
+    _cfk_crs="$(oc get cmfrestclasses.platform.confluent.io,flinkenvironments.platform.confluent.io,flinkapplications.platform.confluent.io \
+        -n "${FLINK_CFK_NAMESPACE:-${NS}}" 2>/dev/null || true)"
+    if [[ -z "${_cfk_crs}" ]]; then
+        echo "  (none)"
+    else
+        echo "${_cfk_crs}" | sed 's/^/  /'
+    fi
+    _env_sync="$(oc get flinkenvironments.platform.confluent.io "${FLINK_ENVIRONMENT}" -n "${FLINK_CFK_NAMESPACE:-${NS}}" \
+        -o jsonpath='{.status.cmfSync.status}' 2>/dev/null || true)"
+    printf '  %-42s %s\n' "FlinkEnvironment/${FLINK_ENVIRONMENT} cmfSync" "${_env_sync:-(none)}"
+fi
+
+# ------------------------------------------------------------------------------
 # Jobs
 # ------------------------------------------------------------------------------
 if [[ "${SHOW_JOBS}" == "true" ]]; then
@@ -208,7 +273,22 @@ fi
 # ------------------------------------------------------------------------------
 echo ""
 echo "-- Kafka -----------------------------------------------------------------------"
-if oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
+if cf_is_operator_mode || cf_flink_is_olm; then
+    # Operator mode (H21): a CFK Kafka CR, or a scripts-mode broker StatefulSet.
+    (( ${+functions[cf_kafka_present]} )) || source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    _kcr="$(oc get kafkas.platform.confluent.io "${CF_KAFKA_CR}" -n "${PROJECT_CONFLUENT_SERVER}" \
+        -o jsonpath='{.metadata.name}|{.status.readyReplicas}|{.status.phase}' 2>/dev/null || true)"
+    if [[ -n "${_kcr%%|*}" ]]; then
+        _kparts=("${(@s:|:)_kcr}")
+        printf '  %-42s %s\n' "Confluent cluster (${PROJECT_CONFLUENT_SERVER})" \
+            "${_kparts[2]:-0} broker(s) ready (Kafka CR, phase ${_kparts[3]:-unknown}); bootstrap $(cf_bootstrap_internal "${PROJECT_CONFLUENT_SERVER}")"
+    elif oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
+        _br="$(oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)"
+        printf '  %-42s %s\n' "Confluent cluster (${PROJECT_CONFLUENT_SERVER})" "${_br:-0} broker(s) ready"
+    else
+        printf '  %-42s %s\n' "Confluent cluster (${PROJECT_CONFLUENT_SERVER})" "not installed"
+    fi
+elif oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
     _br="$(oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)"
     printf '  %-42s %s\n' "Confluent cluster (${PROJECT_CONFLUENT_SERVER})" "${_br:-0} broker(s) ready"
 else

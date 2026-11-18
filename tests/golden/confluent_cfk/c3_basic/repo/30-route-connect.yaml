@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: connect
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  to:
+    kind: Service
+    name: connect
+  port:
+    targetPort: external
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

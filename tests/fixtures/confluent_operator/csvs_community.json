@@ -1,0 +1,22 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "operators.coreos.com/v1alpha1",
+      "kind": "ClusterServiceVersion",
+      "metadata": {
+        "name": "flink-kubernetes-operator.v1.16.1",
+        "namespace": "openshift-operators",
+        "annotations": {}
+      },
+      "spec": {
+        "version": "1.16.1"
+      },
+      "status": {
+        "phase": "Succeeded",
+        "reason": "InstallSucceeded"
+      }
+    }
+  ]
+}

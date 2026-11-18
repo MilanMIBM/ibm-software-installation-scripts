@@ -1,0 +1,20 @@
+{
+  "set": "connector",
+  "namespace": "confluent",
+  "files": [
+    {
+      "order": 10,
+      "stage": 1,
+      "path": "connector/10-connector-iceberg-sink.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "Connector",
+      "name": "iceberg-sink",
+      "namespace": "confluent",
+      "wait": "state",
+      "apply": true
+    }
+  ],
+  "disabled": [],
+  "info": [],
+  "warnings": []
+}

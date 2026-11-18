@@ -69,6 +69,7 @@ STATUS="${SCRIPT_DIR}/../1.2_confluent_status.sh"
 [[ -f "${INSTALL}" ]] || { echo "[ERROR] Not found: ${INSTALL}" >&2; exit 1; }
 
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 SA="confluent"
@@ -84,8 +85,14 @@ fi
 # ------------------------------------------------------------------------------
 # Report the transition
 # ------------------------------------------------------------------------------
+if cf_is_operator_mode; then
+    # Operator mode: the auth containers live in the front proxy Deployment, not in Control Center (O13).
+    _current_mode="$(oc get deployment "${CFO_FRONT_PROXY}" -n "${NS}" \
+        -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null || true)"
+else
 _current_mode="$(oc get deployment control-center -n "${NS}" \
     -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null || true)"
+fi
 case "${_current_mode}" in
     *oauth-proxy*)   _current="OpenShift auth (oauth-proxy)" ;;
     *auth-gateway*)  _current="basic auth (nginx htpasswd)" ;;
@@ -179,6 +186,17 @@ echo "--------------------------------------------------------------------------
 echo " Step 2/2: redeploy Control Center"
 echo "------------------------------------------------------------------------------"
 
+if cf_is_operator_mode; then
+    # Operator mode: only the C3 front proxy changes (oauth-proxy, or none with --disable), then the repo set
+    # again so the cfk-monitoring-internal NetworkPolicy matches it. Never 1.1 with components switched off:
+    # in operator mode that deletes their CRs.
+    if $DISABLE; then _fp_mode=none; else _fp_mode=openshift; fi
+    _fp_rc=0
+    cfo_apply_front_proxy "${NS}" "${_fp_mode}" || _fp_rc=$?
+    (( _fp_rc == 0 )) || { echo "[ERROR] Applying the Control Center front proxy (${_fp_mode}) failed." >&2; exit 1; }
+    cfo_apply_manifest "${CFO_MANIFEST}" || _fp_rc=$?
+    (( _fp_rc == 0 )) || { echo "[ERROR] Re-applying the repo objects failed." >&2; exit 1; }
+else
 # Confine the install to the monitoring stack; the other components carry no UI
 # auth configuration and re-applying them is unnecessary work.
 export CONFLUENT_INSTALL_SCHEMA_REGISTRY="false"
@@ -188,6 +206,7 @@ export CONFLUENT_INSTALL_REST_PROXY="false"
 export CONFLUENT_INSTALL_CONTROL_CENTER="true"
 
 "${INSTALL}"
+fi
 
 # ------------------------------------------------------------------------------
 # Summary

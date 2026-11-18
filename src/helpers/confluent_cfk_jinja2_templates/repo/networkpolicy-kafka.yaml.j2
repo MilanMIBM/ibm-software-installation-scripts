@@ -1,0 +1,16 @@
+{#- NetworkPolicy cfk-kafka-listeners (set repo, order 10; gate CONFLUENT_OPERATOR_NETWORK_POLICIES).
+    9071 internal listener from anywhere (Flink, CPD and other namespaces read it, parity with scripts mode);
+    replication 9072, embedded REST/MDS 8090 and the metrics ports from this namespace only (it holds the
+    OwnNamespace CFK operator, 15.13 item 4, D22); 9092 only from the router and only with external access on
+    (15.13 item 2). Pods are selected by app=<cr>, never by injectLabels (V12). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  podSelector:
+    matchLabels:
+      app: "kafka"
+  policyTypes:
+    - "Ingress"
+  ingress: {{ c.ingress | j }}

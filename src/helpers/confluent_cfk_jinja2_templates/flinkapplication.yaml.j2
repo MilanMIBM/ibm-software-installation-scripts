@@ -1,0 +1,21 @@
+{#- FlinkApplication (set flink-app). cpu is a string (the CRD refuses 0.5 as a number, V9); flinkVersion is
+    capped at the CRD enum (v2_2 on CFK 3.4). Open item 9.6: cmfRestClassRef presence in the CRD (P7). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkApplication
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  flinkEnvironment: {{ c.environment | q }}
+  cmfRestClassRef:
+    name: {{ c.restclass | q }}
+    namespace: {{ m.ns | q }}
+  image: {{ c.image | q }}
+  flinkVersion: {{ c.flink_version | q }}
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: {{ c.slots | q }}
+  serviceAccount: "flink"
+  jobManager:
+    resource: {{ c.jobmanager | j }}
+  taskManager:
+    resource: {{ c.taskmanager | j }}
+  job: {{ c.job | j }}

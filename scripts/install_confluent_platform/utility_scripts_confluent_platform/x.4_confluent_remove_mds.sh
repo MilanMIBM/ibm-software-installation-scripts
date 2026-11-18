@@ -57,6 +57,7 @@ USER_STORE="${SCRIPT_DIR}/x.4_confluent_user_store.sh"
 [[ -f "${INSTALL}" ]] || { echo "[ERROR] Not found: ${INSTALL}" >&2; exit 1; }
 
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 : "${CONFLUENT_MDS_SECRET:=confluent-mds}"
@@ -65,8 +66,14 @@ NS="${PROJECT_CONFLUENT_SERVER}"
 
 oc get namespace "${NS}" &>/dev/null || { echo "[ERROR] Project '${NS}' does not exist." >&2; exit 1; }
 
+if cf_is_operator_mode; then
+    # Operator mode: MDS is on when the Kafka CR runs the RBAC authorizer.
+    _current="$(oc get kafkas.platform.confluent.io "${CF_KAFKA_CR}" -n "${NS}" -o jsonpath='{.spec.authorization.type}' 2>/dev/null || true)"
+    [[ "${_current}" == rbac ]] || _current=""
+else
 _current="$(oc get sts broker -n "${NS}" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KAFKA_CONFLUENT_METADATA_SERVER_LISTENERS")].value}' 2>/dev/null || true)"
+fi
 [[ -n "${_current}" ]] && _state="enabled (${_current})" || _state="not enabled"
 
 echo "=============================================================================="
@@ -105,6 +112,14 @@ echo "--------------------------------------------------------------------------
 echo " Step 1/3: disable MDS on the brokers"
 echo "------------------------------------------------------------------------------"
 
+if cf_is_operator_mode; then
+    # Operator mode: our ConfluentRolebindings go first, while MDS still answers (CFK needs it to remove them);
+    # 1.1 with MDS off then drops the RBAC authorizer and deletes the KafkaRestClass it no longer renders.
+    _cfo_int "${CONFLUENT_OPERATOR_COMPONENT_TIMEOUT:-}" 600
+    _rb_rc=0
+    cfo_delete_group "${NS}" "${REPLY}" ConfluentRolebinding || _rb_rc=$?
+    (( _rb_rc == 0 )) || { echo "[ERROR] Deleting the ConfluentRolebindings failed; MDS is unchanged." >&2; exit 1; }
+fi
 export CONFLUENT_MDS_ENABLED="false"
 "${INSTALL}"
 
@@ -132,6 +147,13 @@ if $PURGE; then
         oc delete secret "${_s}" -n "${NS}" --ignore-not-found >/dev/null 2>&1 || true
         echo "[INFO] Deleted secret '${_s}' (if it existed)."
     done
+    if cf_is_operator_mode; then
+        # The secrets operator mode derives for CFK's MDS (token keypair, LDAP bind, REST class bearer).
+        for _s in "${CFO_MDS_TOKEN_SECRET}" "${CFO_MDS_LDAP_SECRET}" "${CFO_MDS_CLIENT_SECRET}"; do
+            oc delete secret "${_s}" -n "${NS}" --ignore-not-found >/dev/null 2>&1 || true
+            echo "[INFO] Deleted secret '${_s}' (if it existed)."
+        done
+    fi
 
     # Older runs of x.4_confluent_add_mds.sh wrote a separate credentials file.
     # It is no longer generated (confluent_instance_details.sh carries these

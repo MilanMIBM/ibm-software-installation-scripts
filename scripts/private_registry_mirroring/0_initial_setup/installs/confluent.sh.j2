@@ -9,6 +9,14 @@
 #   charts      Flink Helm charts (pushed to the registry as OCI artifacts)
 #   connectors  Kafka Connect plugin ZIPs from MIRROR_CONFLUENT_CONNECTORS_FILE
 #   files       other downloads (the upstream cert-manager manifest for Flink)
+#   operators   operator mode (CONFLUENT_DEPLOY_MODE=operator, the default when
+#               unset): the OLM bundles of Confluent for Kubernetes (component
+#               cfk-operator) and cp-fko (flink-operator-olm), mirrored by the
+#               shared operators track (2.2 / 3.4; Subscriptions keep
+#               source certified-operators). With "images", cfk-operator also
+#               mirrors CONFLUENT_OPERATOR_INIT_IMAGE (confluent-init-container).
+# Operator mode: flink-operator is the Helm chart (FLINK_OPERATOR_SOURCE=helm);
+# with the cp-fko source use flink-operator-olm instead (prefill does this).
 export MIRROR_CONFLUENT_REGISTRY_PATH="{{ install.INSTALL_REGISTRY_PATH_DEFAULT }}"
 export MIRROR_CONFLUENT_COMPONENTS=""
 export MIRROR_CONFLUENT_CONTENT=""
@@ -17,3 +25,10 @@ export MIRROR_CONFLUENT_CONTENT=""
 # paths are skipped - they are already offline)
 export MIRROR_CONFLUENT_CONNECTORS_FILE=""
 export MIRROR_CONFLUENT_PATH_OVERRIDES=""
+# Operator mode, component cfk-operator: digest (sha256:...) of the CFK operator
+# image docker.io/confluentinc/confluent-operator that the CSV runs. It cannot be
+# derived offline; read it on a connected cluster with
+#   oc get csv confluent-for-kubernetes.v<version> -n <namespace> \
+#     -o jsonpath='{.spec.install.spec.deployments[0].spec.template.spec.containers[0].image}'
+# Empty: the image is left to oc-mirror (the bundle's relatedImages; unverified).
+export MIRROR_CONFLUENT_OPERATOR_DIGEST=""

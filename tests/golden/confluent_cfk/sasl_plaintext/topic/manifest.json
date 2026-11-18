@@ -1,0 +1,20 @@
+{
+  "set": "topic",
+  "namespace": "confluent",
+  "files": [
+    {
+      "order": 10,
+      "stage": 1,
+      "path": "topic/10-kafkatopic-orders.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "KafkaTopic",
+      "name": "orders",
+      "namespace": "confluent",
+      "wait": "state",
+      "apply": true
+    }
+  ],
+  "disabled": [],
+  "info": [],
+  "warnings": []
+}

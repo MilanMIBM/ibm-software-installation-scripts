@@ -1,0 +1,13 @@
+{#- KafkaTopic (set topic). CFK creates it through Kafka's embedded REST on 8090 (V24). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: KafkaTopic
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  kafkaClusterRef:
+    name: "kafka"
+  partitionCount: {{ c.partitions }}
+  replicas: {{ c.replicas }}
+{% if c.configs %}
+  configs: {{ c.configs | j }}
+{% endif %}

@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-center-auth
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+    app: control-center-auth
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: control-center-auth
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: confluent
+        confluent.ibm-scripts/installed-by: local.confluent
+        confluent.ibm-scripts/deploy-mode: operator
+        app: control-center-auth
+      annotations:
+        confluent.ibm-scripts/front-proxy-secret-checksum: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    spec:
+      serviceAccountName: confluent
+      containers:
+      - name: oauth-proxy
+        image: image-registry.openshift-image-registry.svc:5000/openshift/oauth-proxy:v4.4
+        args:
+        - --provider=openshift
+        - --https-address=
+        - --http-address=:8443
+        - --upstream=http://control-center.confluent.svc.cluster.local:9021
+        - --openshift-service-account=confluent
+        - --openshift-sar={"namespace":"confluent","resource":"services","verb":"get"}
+        - --cookie-secret-file=/etc/proxy/secrets/cookie-secret
+        - --skip-provider-button=true
+        - --pass-access-token=false
+        - --skip-auth-regex=^/healthz$
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - name: oauth-secret
+          mountPath: /etc/proxy/secrets
+          readOnly: true
+        readinessProbe:
+          httpGet:
+            path: /oauth/healthz
+            port: 8443
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 30
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+      volumes:
+      - name: oauth-secret
+        secret:
+          secretName: confluent-auth-oauth

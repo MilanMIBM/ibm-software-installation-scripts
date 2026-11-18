@@ -1,0 +1,19 @@
+{#- Route per enabled component (set repo, orders 30-35), same names as scripts mode (O12). Targets the CFK
+    Service by port name (external; http-external for mds on kafka), or the front proxy for control-center.
+    K8S-EXTENSION(K4): Kubernetes mode renders an Ingress (or nothing) instead. -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: route.openshift.io/v1
+kind: Route
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+{% if c.host %}
+  host: {{ c.host | q }}
+{% endif %}
+  to:
+    kind: "Service"
+    name: {{ c.service | q }}
+  port:
+    targetPort: {{ c.port | q }}
+  tls:
+    termination: "edge"
+    insecureEdgeTerminationPolicy: "Redirect"

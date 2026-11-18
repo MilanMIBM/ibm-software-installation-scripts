@@ -1,0 +1,16 @@
+[
+  {
+    "name": "cmf",
+    "namespace": "confluent-flink",
+    "chart": "confluent-manager-for-apache-flink-2.4.2",
+    "app_version": "2.4.2",
+    "status": "deployed"
+  },
+  {
+    "name": "cp-flink-kubernetes-operator",
+    "namespace": "confluent-flink",
+    "chart": "flink-kubernetes-operator-1.150.3",
+    "app_version": "1.15.0-cp3",
+    "status": "deployed"
+  }
+]

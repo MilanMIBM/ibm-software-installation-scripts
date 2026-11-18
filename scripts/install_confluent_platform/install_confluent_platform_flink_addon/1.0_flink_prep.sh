@@ -60,12 +60,22 @@ run() { cf_dry_run "$@"; }
 # Validate configuration
 # ------------------------------------------------------------------------------
 _missing=()
-for _var in PROJECT_CONFLUENT_FLINK FLINK_HELM_REPO_NAME FLINK_HELM_REPO_URL \
-            FLINK_CMF_CHART_VERSION FLINK_OPERATOR_CHART_VERSION \
-            FLINK_CMF_STORAGE_CLASS FLINK_CMF_STORAGE_SIZE \
-            FLINK_STATE_BACKEND FLINK_ENVIRONMENT FLINK_COMPUTE_POOL; do
-    [[ -z "${(P)_var:-}" ]] && _missing+=("${_var}")
-done
+if cf_flink_is_olm; then
+    # Operator mode (H1): the Flink operator is cp-fko through OLM, so no operator chart version is needed.
+    for _var in PROJECT_CONFLUENT_FLINK FLINK_HELM_REPO_NAME FLINK_HELM_REPO_URL \
+                FLINK_CMF_CHART_VERSION \
+                FLINK_CMF_STORAGE_CLASS FLINK_CMF_STORAGE_SIZE \
+                FLINK_STATE_BACKEND FLINK_ENVIRONMENT FLINK_COMPUTE_POOL; do
+        [[ -z "${(P)_var:-}" ]] && _missing+=("${_var}")
+    done
+else
+    for _var in PROJECT_CONFLUENT_FLINK FLINK_HELM_REPO_NAME FLINK_HELM_REPO_URL \
+                FLINK_CMF_CHART_VERSION FLINK_OPERATOR_CHART_VERSION \
+                FLINK_CMF_STORAGE_CLASS FLINK_CMF_STORAGE_SIZE \
+                FLINK_STATE_BACKEND FLINK_ENVIRONMENT FLINK_COMPUTE_POOL; do
+        [[ -z "${(P)_var:-}" ]] && _missing+=("${_var}")
+    done
+fi
 if (( ${#_missing[@]} > 0 )); then
     echo "[ERROR] Missing required variables in configs/confluent_platform_config/confluent_vars.sh: ${_missing[*]}" >&2
     echo "[ERROR] Run install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh first." >&2
@@ -78,6 +88,13 @@ case "${FLINK_STATE_BACKEND}" in
         echo "[ERROR] FLINK_STATE_BACKEND must be one of: pvc, s3, none (got '${FLINK_STATE_BACKEND}')." >&2
         exit 1 ;;
 esac
+
+# Operator mode (H1): the static operator-mode checks, including the CMF chart / cp-fko channel lock
+# (FLINK_OLM_CHANNEL must be the line FLINK_CMF_CHART_VERSION needs, plan O7). No cluster call.
+if cf_flink_is_olm; then
+    source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    cfo_check_config flink || exit 1
+fi
 
 if [[ "${FLINK_STATE_BACKEND}" == "s3" ]]; then
     for _var in FLINK_S3_BUCKET FLINK_S3_ENDPOINT FLINK_S3_ACCESS_KEY FLINK_S3_SECRET_KEY; do
@@ -129,6 +146,7 @@ else
 fi
 
 eval "${OC_LOGIN}"
+cf_operator_guard flink || exit $?
 
 NS="${PROJECT_CONFLUENT_FLINK}"
 SA="flink"
@@ -143,15 +161,37 @@ echo "[INFO] Preparing project '${NS}' for Confluent Platform for Apache Flink."
 # cluster-level grant. A namespace admin has none of those rights, and finding
 # out halfway through leaves a partial install to unpick - so check up front.
 _denied=()
-oc auth can-i create customresourcedefinitions &>/dev/null || _denied+=("customresourcedefinitions (the Flink operator installs CRDs)")
-oc auth can-i create clusterroles &>/dev/null || _denied+=("clusterroles (cert-manager and the SCC binding)")
-if (( ${#_denied[@]} > 0 )); then
-    echo "[ERROR] This account lacks the cluster-scoped permissions this install needs:" >&2
-    for _d in "${_denied[@]}"; do echo "[ERROR]   - ${_d}" >&2; done
-    echo "[ERROR] Log in as a cluster administrator, or have one install the Flink" >&2
-    echo "[ERROR] operator and cert-manager once - after that, --skip-cert-manager" >&2
-    echo "[ERROR] and 1.1's --skip-operator let a namespace admin do the rest." >&2
-    exit 1
+if cf_flink_is_olm; then
+    # Operator mode (H3): OLM installs the CRDs and issues the webhook certificate, and CMF runs under
+    # restricted-v2 (no SCC grant), so the rights needed are the OLM objects in the Flink namespace -
+    # or, for an existing cp-fko, only reading its CSV.
+    if [[ "$(cf_flink_operator_source)" == existing ]]; then
+        oc auth can-i get clusterserviceversions.operators.coreos.com -n "${NS}" &>/dev/null \
+            || _denied+=("get clusterserviceversions.operators.coreos.com in ${NS} (to check the existing cp-fko)")
+    else
+        oc auth can-i create subscriptions.operators.coreos.com -n "${NS}" &>/dev/null \
+            || _denied+=("create subscriptions.operators.coreos.com in ${NS} (cp-fko through OLM)")
+        oc auth can-i create operatorgroups.operators.coreos.com -n "${NS}" &>/dev/null \
+            || _denied+=("create operatorgroups.operators.coreos.com in ${NS} (cp-fko through OLM)")
+    fi
+    if (( ${#_denied[@]} > 0 )); then
+        echo "[ERROR] This account lacks the permissions the OLM Flink operator needs:" >&2
+        for _d in "${_denied[@]}"; do echo "[ERROR]   - ${_d}" >&2; done
+        echo "[ERROR] Log in as a user who may manage operators in '${NS}', or have one run" >&2
+        echo "[ERROR] operator/1.0o_flink_operator_olm.sh once." >&2
+        exit 1
+    fi
+else
+    oc auth can-i create customresourcedefinitions &>/dev/null || _denied+=("customresourcedefinitions (the Flink operator installs CRDs)")
+    oc auth can-i create clusterroles &>/dev/null || _denied+=("clusterroles (cert-manager and the SCC binding)")
+    if (( ${#_denied[@]} > 0 )); then
+        echo "[ERROR] This account lacks the cluster-scoped permissions this install needs:" >&2
+        for _d in "${_denied[@]}"; do echo "[ERROR]   - ${_d}" >&2; done
+        echo "[ERROR] Log in as a cluster administrator, or have one install the Flink" >&2
+        echo "[ERROR] operator and cert-manager once - after that, --skip-cert-manager" >&2
+        echo "[ERROR] and 1.1's --skip-operator let a namespace admin do the rest." >&2
+        exit 1
+    fi
 fi
 
 # ------------------------------------------------------------------------------
@@ -178,7 +218,10 @@ fi
 # issues. Without it the operator pod starts but every FlinkDeployment is
 # rejected, which surfaces much later as an unexplained "no endpoints available
 # for service flink-operator-webhook-service".
-if [[ "${SKIP_CERT_MANAGER}" == "true" ]]; then
+if cf_flink_is_olm; then
+    # Operator mode (H5): OLM issues cp-fko's webhook certificate itself.
+    echo "[INFO] olm: cert-manager not required"
+elif [[ "${SKIP_CERT_MANAGER}" == "true" ]]; then
     echo "[INFO] --skip-cert-manager: not checking cert-manager."
 elif oc get crd certificates.cert-manager.io &>/dev/null; then
     echo "[INFO] cert-manager is already installed - leaving it alone."
@@ -244,15 +287,31 @@ fi
 # are owned by 9999, so an arbitrary uid cannot write its own logs or unpack a
 # jar. anyuid is the option that works with the images as published, and it is
 # what the sibling Confluent scripts already grant.
-for _sa in "${SA}" flink-operator confluent-manager-for-apache-flink; do
+if cf_flink_is_olm; then
+    # Operator mode (H7, plan 15.13 item 15 / E5): cp-fko's bundle creates flink-operator and flink (with
+    # its Role) in this namespace and OLM owns them - they are never re-created or annotated here. CMF
+    # 2.5 runs under restricted-v2 (1.1 nulls its fsGroup/runAsUser), so no SCC is granted at all.
     if [[ "${DRY_RUN}" == "true" ]]; then
-        echo "  [DRY-RUN] oc create serviceaccount ${_sa} -n ${NS}"
-        echo "  [DRY-RUN] oc adm policy add-scc-to-user anyuid -z ${_sa} -n ${NS}"
-        continue
+        echo "  [DRY-RUN] oc create serviceaccount confluent-manager-for-apache-flink -n ${NS}"
+    else
+        oc create serviceaccount confluent-manager-for-apache-flink -n "${NS}" --dry-run=client -o yaml | oc apply -f -
     fi
-    oc create serviceaccount "${_sa}" -n "${NS}" --dry-run=client -o yaml | oc apply -f -
-    oc adm policy add-scc-to-user anyuid -z "${_sa}" -n "${NS}"
-done
+    if [[ -z "$(oc get serviceaccount "${SA}" -n "${NS}" -o name --ignore-not-found 2>/dev/null || true)" ]]; then
+        echo "[WARN] Service account '${SA}' is not in '${NS}' yet - cp-fko's bundle creates it. Run" >&2
+        echo "[WARN] operator/1.0o_flink_operator_olm.sh first; Flink jobs need it." >&2
+    fi
+    echo "[INFO] olm: no SCC grant (CMF and cp-fko run under restricted-v2)."
+else
+    for _sa in "${SA}" flink-operator confluent-manager-for-apache-flink; do
+        if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "  [DRY-RUN] oc create serviceaccount ${_sa} -n ${NS}"
+            echo "  [DRY-RUN] oc adm policy add-scc-to-user anyuid -z ${_sa} -n ${NS}"
+            continue
+        fi
+        oc create serviceaccount "${_sa}" -n "${NS}" --dry-run=client -o yaml | oc apply -f -
+        oc adm policy add-scc-to-user anyuid -z "${_sa}" -n "${NS}"
+    done
+fi
 
 # ------------------------------------------------------------------------------
 # Registry pull secret - reuses the Confluent one when it is configured, so a
@@ -269,9 +328,20 @@ if [[ -n "${CONFLUENT_REGISTRY_USER:-}" ]]; then
             --docker-username="${CONFLUENT_REGISTRY_USER}" \
             --docker-password="${CONFLUENT_REGISTRY_PASSWORD}" \
             -n "${NS}" --dry-run=client -o yaml | oc apply -f -
-        for _sa in "${SA}" flink-operator confluent-manager-for-apache-flink; do
-            oc secrets link "${_sa}" "${CONFLUENT_PULL_SECRET}" --for=pull -n "${NS}"
-        done
+        if cf_flink_is_olm; then
+            # Operator mode (H8): only the CMF account and the job account; the OLM-managed flink account is
+            # patched (secrets link), never re-created. The operator pod pulls through OLM's own secret.
+            oc secrets link confluent-manager-for-apache-flink "${CONFLUENT_PULL_SECRET}" --for=pull -n "${NS}"
+            if [[ -n "$(oc get serviceaccount "${SA}" -n "${NS}" -o name --ignore-not-found 2>/dev/null || true)" ]]; then
+                oc secrets link "${SA}" "${CONFLUENT_PULL_SECRET}" --for=pull -n "${NS}"
+            else
+                echo "[WARN] Service account '${SA}' not found - pull secret not linked to it (re-run after the operator step)." >&2
+            fi
+        else
+            for _sa in "${SA}" flink-operator confluent-manager-for-apache-flink; do
+                oc secrets link "${_sa}" "${CONFLUENT_PULL_SECRET}" --for=pull -n "${NS}"
+            done
+        fi
         echo "[INFO] Pull secret '${CONFLUENT_PULL_SECRET}' created for ${_registry_host}."
     fi
 else
@@ -349,7 +419,31 @@ esac
 # ------------------------------------------------------------------------------
 # Helm repository
 # ------------------------------------------------------------------------------
-if [[ "${FLINK_CHART_SOURCE:-repo}" == (oci|local) ]]; then
+if cf_flink_is_olm; then
+    # Operator mode (H11): only the CMF chart comes from Helm; cp-fko is an OLM package (its catalog
+    # and channel were checked by operator/1.0o_flink_operator_olm.sh).
+    if [[ "${FLINK_CHART_SOURCE:-repo}" == (oci|local) ]]; then
+        [[ -n "${FLINK_CMF_CHART_REF:-}" ]] || { echo "[ERROR] FLINK_CHART_SOURCE=${FLINK_CHART_SOURCE} needs FLINK_CMF_CHART_REF." >&2; exit 1; }
+        if [[ "${DRY_RUN}" != "true" ]] && ! helm show chart "${FLINK_CMF_CHART_REF}" --version "${FLINK_CMF_CHART_VERSION}" &>/dev/null; then
+            echo "[ERROR] Chart ${FLINK_CMF_CHART_REF} version ${FLINK_CMF_CHART_VERSION} is not reachable (helm registry login done by 3.5?)." >&2
+            exit 1
+        fi
+        echo "[INFO] CMF chart from ${FLINK_CHART_SOURCE}: ${FLINK_CMF_CHART_REF}"
+    elif [[ "${DRY_RUN}" == "true" ]]; then
+        echo "  [DRY-RUN] helm repo add ${FLINK_HELM_REPO_NAME} ${FLINK_HELM_REPO_URL}"
+    else
+        helm repo add "${FLINK_HELM_REPO_NAME}" "${FLINK_HELM_REPO_URL}" --force-update >/dev/null
+        helm repo update "${FLINK_HELM_REPO_NAME}" >/dev/null
+        echo "[INFO] Helm repo '${FLINK_HELM_REPO_NAME}' -> ${FLINK_HELM_REPO_URL}"
+        if ! helm show chart "${FLINK_HELM_REPO_NAME}/confluent-manager-for-apache-flink" --version "${FLINK_CMF_CHART_VERSION}" &>/dev/null; then
+            echo "[ERROR] Chart confluent-manager-for-apache-flink version ${FLINK_CMF_CHART_VERSION} is not available in the repository." >&2
+            echo "[ERROR] Available versions:" >&2
+            helm search repo "${FLINK_HELM_REPO_NAME}/confluent-manager-for-apache-flink" --versions 2>/dev/null | head -6 >&2
+            exit 1
+        fi
+        echo "[INFO] Chart verified: CMF ${FLINK_CMF_CHART_VERSION} (the Flink operator is cp-fko via OLM)."
+    fi
+elif [[ "${FLINK_CHART_SOURCE:-repo}" == (oci|local) ]]; then
     # Private registry (scripts/private_registry_mirroring 3.5): the charts are
     # OCI artifacts in the registry (or local .tgz files) - no Helm repository.
     for _ref in "${FLINK_CMF_CHART_REF:-}:${FLINK_CMF_CHART_VERSION}" "${FLINK_OPERATOR_CHART_REF:-}:${FLINK_OPERATOR_CHART_VERSION}"; do
@@ -390,7 +484,19 @@ fi
 # is installable on its own and attached later with x.4_flink_connect_kafka.sh.
 # ------------------------------------------------------------------------------
 echo ""
-if oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
+if cf_is_operator_mode || cf_flink_is_olm; then
+    # Operator mode (H12): a scripts-mode broker StatefulSet or a CFK Kafka CR.
+    (( ${+functions[cf_kafka_present]} )) || source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    if cf_kafka_present "${PROJECT_CONFLUENT_SERVER}"; then
+        echo "[INFO] Confluent cluster found in '${PROJECT_CONFLUENT_SERVER}'."
+        echo "[INFO] After the install, attach it with:  ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh"
+    else
+        echo "[INFO] No Confluent cluster found in '${PROJECT_CONFLUENT_SERVER}'."
+        echo "[INFO] Flink will install standalone. Attach a Kafka cluster later with"
+        echo "[INFO] ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh, which also accepts an external one"
+        echo "[INFO] via --bootstrap."
+    fi
+elif oc get statefulset broker -n "${PROJECT_CONFLUENT_SERVER}" &>/dev/null; then
     echo "[INFO] Confluent cluster found in '${PROJECT_CONFLUENT_SERVER}'."
     echo "[INFO] After the install, attach it with:  ./utility_scripts_confluent_flink/x.4_flink_connect_kafka.sh"
 else

@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/common_helpers.sh"
 ir_dispatch "$@"
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform for Apache Flink - full install
@@ -38,6 +39,43 @@ ir_dispatch "$@"
 # steps out, --list-steps shows the plan.
 # ==============================================================================
 
+# Operator mode (FLINK_OPERATOR_SOURCE olm|existing, contract 2.7 / 8 D21): --autoselect-latest and
+# --persist are taken out of "$@" before the strict parse and handed to the steps through the
+# environment; with the Helm Flink operator they stay in "$@" and are rejected as today. Every [BLOCKED]
+# banner of the steps is collected in CFO_BANNER_FILE and repeated when the chain ends.
+if cf_flink_is_olm; then
+    source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    _cfo_args=()
+    for _cfo_a in "$@"; do
+        case "${_cfo_a}" in
+            --autoselect-latest) export CFO_AUTOSELECT_LATEST=1 ;;
+            --persist)           export CFO_AUTOSELECT_PERSIST=1 ;;
+            *)                   _cfo_args+=("${_cfo_a}") ;;
+        esac
+    done
+    set -- "${_cfo_args[@]}"
+    unset _cfo_args _cfo_a
+    if [[ -n "${CFO_AUTOSELECT_PERSIST:-}" && -z "${CFO_AUTOSELECT_LATEST:-}" ]]; then
+        echo "[ERROR] --persist needs --autoselect-latest." >&2
+        exit 1
+    fi
+    # CONTRACT-DEVIATION (2.7 passes the flags on without this check): the steps run as separate processes,
+    # so a choice that is not saved reaches only the operator step,
+    # and 1.1 would then install the pinned CMF chart next to a newer cp-fko (the CMF/FKO lock, plan O7).
+    if [[ -n "${CFO_AUTOSELECT_LATEST:-}" && -z "${CFO_AUTOSELECT_PERSIST:-}" ]]; then
+        echo "[ERROR] --autoselect-latest in the full installer needs --persist: the chosen cp-fko line and the" >&2
+        echo "[ERROR] CMF chart that pairs with it must reach every step (they run as separate processes)." >&2
+        echo "[ERROR] Report only: ./operator/1.0o_flink_operator_olm.sh --autoselect-latest --dry-run" >&2
+        exit 1
+    fi
+    CFO_BANNER_FILE="$(mktemp "${TMPDIR:-/tmp}/cfo-banner.XXXXXX")" || CFO_BANNER_FILE=""
+    export CFO_BANNER_FILE
+    trap 'cfo_banner_replay; rm -f "${CFO_BANNER_FILE}"; (( SECONDS >= 60 )) && echo "[TIMER] $(basename $0) completed in $((SECONDS/60))m $((SECONDS%60))s" || echo "[TIMER] $(basename $0) completed in ${SECONDS}s"' EXIT
+    H_STEPS_USAGE="Operator mode (FLINK_OPERATOR_SOURCE=$(cf_flink_operator_source)):
+$(printf '  %-28s%s\n' "--autoselect-latest" "choose the newest compatible cp-fko line + CMF chart (new installs only; needs --persist)" \
+    "--persist" "with --autoselect-latest: save the chosen versions to the vars file")"
+fi
+
 h_steps_parse --strict "$@"
 
 DO_FLINK_PREP="${DO_FLINK_PREP:-true}"                         # 1.0 prepare the cluster
@@ -55,8 +93,20 @@ fi
 echo "=============================================================================="
 echo " Confluent Platform for Apache Flink full install - project '${PROJECT_CONFLUENT_FLINK}'"
 echo "=============================================================================="
-echo "[INFO] CMF chart: ${FLINK_CMF_CHART_VERSION:-?}  Operator chart: ${FLINK_OPERATOR_CHART_VERSION:-?}"
+if cf_flink_is_olm; then
+    echo "[INFO] CMF chart: ${FLINK_CMF_CHART_VERSION:-?}  Flink operator: cp-fko via OLM ($(cf_flink_operator_source), channel ${FLINK_OLM_CHANNEL:-derived from the CMF chart})"
+else
+    echo "[INFO] CMF chart: ${FLINK_CMF_CHART_VERSION:-?}  Operator chart: ${FLINK_OPERATOR_CHART_VERSION:-?}"
+fi
 
+# Operator mode: cp-fko (and, for CMF resources as CFK CRs, CFK) through OLM, first in the chain (contract
+# 8 D20): its bundle creates the flink / flink-operator service accounts 1.0 relies on, and its guard stops
+# the chain before 1.0 writes anything when the namespace holds a scripts-mode Flink install.
+if cf_flink_is_olm; then
+    DO_FLINK_OPERATOR="${DO_FLINK_OPERATOR:-true}"                 # 1.0o cp-fko through OLM
+    h_step     operator         "${DO_FLINK_OPERATOR}"         "1.0o flink operator (cp-fko via OLM)" \
+        "${SCRIPT_DIR}/operator/1.0o_flink_operator_olm.sh"
+fi
 # 1.1 runs with --no-status because 1.2 follows it; a failing status only warns.
 h_step         prep             "${DO_FLINK_PREP}"             "1.0 flink prep" \
     "${SCRIPT_DIR}/1.0_flink_prep.sh"

@@ -1,0 +1,34 @@
+{#- Connect (set platform, order 50). Group id, internal-topic RF and converters as scripts mode sets them
+    (1.1_confluent_install.sh:1346-1376). Plugins: build.onDemand from the connect state file (O16); local plugins
+    from the connect-plugins PVC at /mnt/local-plugins (/mnt/plugins is reserved for onDemand, V28).
+    Open item 9.6: whether the CRD wants onDemand.plugins.locationType - only the arrays are emitted. -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: Connect
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  replicas: 1
+{{ mac.image(c) }}
+{{ mac.pod_template(c) }}
+{{ mac.common_tail(c, m) }}
+  groupID: "compose-connect-group"
+  internalTopicReplicationFactor: {{ c.rf }}
+  keyConverterType: "org.apache.kafka.connect.storage.StringConverter"
+  valueConverterType: "io.confluent.connect.avro.AvroConverter"
+{% if c.build %}
+  build: {{ c.build | j }}
+{% endif %}
+{% if c.mounted_volumes %}
+  mountedVolumes: {{ c.mounted_volumes | j }}
+{% endif %}
+{% if c.mounted_secrets %}
+  mountedSecrets: {{ c.mounted_secrets | j }}
+{% endif %}
+  dependencies: {{ c.dependencies | j }}
+{% if c.server_overrides %}
+  configOverrides:
+    server:
+{% for line in c.server_overrides %}
+      - {{ line | q }}
+{% endfor %}
+{% endif %}

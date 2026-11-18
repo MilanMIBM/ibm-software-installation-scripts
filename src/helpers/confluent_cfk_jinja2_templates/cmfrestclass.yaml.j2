@@ -1,0 +1,8 @@
+{#- CMFRestClass (set flink, order 10). The CMF REST API is unauthenticated as the chart ships it. -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: CMFRestClass
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  cmfRest:
+    endpoint: {{ c.endpoint | q }}

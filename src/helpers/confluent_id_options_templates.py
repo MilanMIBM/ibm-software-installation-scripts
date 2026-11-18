@@ -2,6 +2,7 @@
 # mirroring 0_confluent_prepare_template_config.sh and
 # install_confluent_platform_flink_addon/0_flink_prepare_template_config.sh.
 
+from src.helpers import confluent_operator_config as _operator_config
 from src.helpers.version_catalog import catalog_value
 
 # ------------------------------------------------------------------------------
@@ -415,3 +416,164 @@ default_flink_license = [
     {"key": "FLINK_LICENSE_KEY", "value": "${CONFLUENT_LICENSE_KEY:-}"},
     {"key": "FLINK_LICENSE_SECRET", "value": "flink-license"},
 ]
+
+# ------------------------------------------------------------------------------
+# Deploy mode: scripts (raw manifests) | operator (CFK + cp-fko through OLM)
+# ------------------------------------------------------------------------------
+# Plan: .claude/plans/confluent-operator-install-mode/implementation-contract.md §2, §5.2.
+# KRaft presets live once, in confluent_operator_config.py (WP-A); this module only
+# re-exports them for the notebook.
+
+confluent_deploy_mode_options = ["operator", "scripts"]
+
+confluent_deploy_mode_records = [
+    {
+        "deploy_mode_name": "Operator - Confluent for Kubernetes (CFK) + cp-fko through OLM (default)",
+        "deploy_mode_id": "operator",
+    },
+    {
+        "deploy_mode_name": "Scripts - the repo renders and applies raw manifests (StatefulSet broker, Deployments)",
+        "deploy_mode_id": "scripts",
+    },
+]
+
+default_confluent_deploy_mode = "operator"
+
+# Operator-mode selects (the first entry is the default)
+confluent_operator_approval_options = ["Manual", "Automatic"]
+confluent_operator_tls_source_options = ["repo", "cfk"]
+confluent_operator_sasl_impl_options = ["plain", "scram"]
+confluent_connector_management_options = ["rest", "cr"]
+# "follow" = do not write the variable: the Flink scripts then follow the platform mode
+flink_operator_source_options = ["follow", "helm", "olm", "existing"]
+flink_cmf_resource_mode_options = ["follow", "cli", "cfk"]
+
+# Every operator-settings variable, in the order 0_confluent_prepare_template_config.sh
+# writes them; the four select-controlled ones are marked by the selects below.
+confluent_operator_select_keys = {
+    "CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL": confluent_operator_approval_options,
+    "CONFLUENT_OPERATOR_TLS_SOURCE": confluent_operator_tls_source_options,
+    "CONFLUENT_OPERATOR_SASL_IMPL": confluent_operator_sasl_impl_options,
+    "CONFLUENT_CONNECTOR_MANAGEMENT": confluent_connector_management_options,
+}
+
+confluent_operator_var_order = [
+    "CONFLUENT_OPERATOR_SOURCE",
+    "CONFLUENT_OPERATOR_PACKAGE",
+    "CONFLUENT_OPERATOR_SUBSCRIPTION_NAME",
+    "CONFLUENT_OPERATOR_CHANNEL",
+    "CONFLUENT_OPERATOR_STARTING_CSV",
+    "CONFLUENT_OPERATOR_CATALOG_SOURCE",
+    "CONFLUENT_OPERATOR_CATALOG_SOURCE_NAMESPACE",
+    "CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL",
+    "CONFLUENT_OPERATOR_INSTALL_IN_PLATFORM_NS",
+    "CONFLUENT_OPERATOR_INSTALL_IN_FLINK_NS",
+    "CONFLUENT_OPERATOR_EXTRA_NAMESPACES",
+    "CONFLUENT_OPERATOR_PACKAGES_PER_NS",
+    "CONFLUENT_OPERATOR_ALLOW_PATCH_EXISTING",
+    "CONFLUENT_OPERATOR_RESTRICT_CROSS_NS_RESTCLASS",
+    "CONFLUENT_OPERATOR_IMAGE_SOURCE",
+    "CONFLUENT_OPERATOR_INIT_IMAGE",
+    "CONFLUENT_OPERATOR_TLS_SOURCE",
+    "CONFLUENT_OPERATOR_SASL_IMPL",
+    "CONFLUENT_CONNECTOR_MANAGEMENT",
+    "CONFLUENT_AUTO_CREATE_TOPICS",
+    "CONFLUENT_OPERATOR_NETWORK_POLICIES",
+    "CONFLUENT_EXTERNAL_KAFKA_BOOTSTRAP_PREFIX",
+    "CONFLUENT_EXTERNAL_KAFKA_BROKER_PREFIX",
+    "CONFLUENT_OPERATOR_CSV_TIMEOUT",
+    "CONFLUENT_OPERATOR_INSTALLPLAN_TIMEOUT",
+    "CONFLUENT_OPERATOR_KAFKA_TIMEOUT",
+    "CONFLUENT_OPERATOR_COMPONENT_TIMEOUT",
+    "CONFLUENT_OPERATOR_CONNECT_TIMEOUT",
+    "CONFLUENT_CONNECT_PLUGINS_PVC",
+    "CONFLUENT_CONNECT_PLUGINS_PVC_SIZE",
+    "CONFLUENT_CONNECT_PLUGINS_LOADER_IMAGE",
+]
+
+_cfk_init_tag = catalog_value("confluent/operator/cfk_init_tag", default="3.4.0")
+
+# Operator settings (§2.2) minus the select-controlled ones. ${...} references stay
+# literal: they expand when confluent_vars.sh is sourced.
+default_confluent_operator = [
+    {"key": "CONFLUENT_OPERATOR_SOURCE", "value": "olm"},  # olm | existing
+    {"key": "CONFLUENT_OPERATOR_PACKAGE", "value": "confluent-for-kubernetes"},
+    {"key": "CONFLUENT_OPERATOR_SUBSCRIPTION_NAME", "value": "confluent-for-kubernetes"},
+    {
+        "key": "CONFLUENT_OPERATOR_CHANNEL",
+        "value": catalog_value("confluent/operator/cfk_channel", default="3.4"),
+    },
+    {
+        "key": "CONFLUENT_OPERATOR_STARTING_CSV",
+        "value": catalog_value("confluent/operator/cfk_csv", default="confluent-for-kubernetes.v3.4.0"),
+    },
+    {"key": "CONFLUENT_OPERATOR_CATALOG_SOURCE", "value": "certified-operators"},
+    {"key": "CONFLUENT_OPERATOR_CATALOG_SOURCE_NAMESPACE", "value": "openshift-marketplace"},
+    {"key": "CONFLUENT_OPERATOR_INSTALL_IN_PLATFORM_NS", "value": "true"},
+    {"key": "CONFLUENT_OPERATOR_INSTALL_IN_FLINK_NS", "value": "true"},
+    {"key": "CONFLUENT_OPERATOR_EXTRA_NAMESPACES", "value": ""},  # space-separated
+    {"key": "CONFLUENT_OPERATOR_PACKAGES_PER_NS", "value": ""},  # ns=pkg[,pkg] ns2=pkg
+    {"key": "CONFLUENT_OPERATOR_ALLOW_PATCH_EXISTING", "value": "false"},
+    {"key": "CONFLUENT_OPERATOR_RESTRICT_CROSS_NS_RESTCLASS", "value": "false"},
+    {"key": "CONFLUENT_OPERATOR_IMAGE_SOURCE", "value": "tags"},  # tags | csv
+    {
+        "key": "CONFLUENT_OPERATOR_INIT_IMAGE",
+        "value": "${CONFLUENT_REGISTRY}/confluent-init-container:" + _cfk_init_tag,
+    },
+    {"key": "CONFLUENT_AUTO_CREATE_TOPICS", "value": "true"},
+    {"key": "CONFLUENT_OPERATOR_NETWORK_POLICIES", "value": "true"},
+    {"key": "CONFLUENT_EXTERNAL_KAFKA_BOOTSTRAP_PREFIX", "value": "kafka-${PROJECT_CONFLUENT_SERVER}"},
+    {"key": "CONFLUENT_EXTERNAL_KAFKA_BROKER_PREFIX", "value": "kafka-${PROJECT_CONFLUENT_SERVER}-b"},
+    {"key": "CONFLUENT_OPERATOR_CSV_TIMEOUT", "value": "600"},
+    {"key": "CONFLUENT_OPERATOR_INSTALLPLAN_TIMEOUT", "value": "300"},
+    {"key": "CONFLUENT_OPERATOR_KAFKA_TIMEOUT", "value": "900"},
+    {"key": "CONFLUENT_OPERATOR_COMPONENT_TIMEOUT", "value": "600"},
+    {"key": "CONFLUENT_OPERATOR_CONNECT_TIMEOUT", "value": "900"},
+    {"key": "CONFLUENT_CONNECT_PLUGINS_PVC", "value": "connect-plugins"},
+    {"key": "CONFLUENT_CONNECT_PLUGINS_PVC_SIZE", "value": "5Gi"},
+    {
+        "key": "CONFLUENT_CONNECT_PLUGINS_LOADER_IMAGE",
+        "value": "registry.access.redhat.com/ubi9/ubi:latest",
+    },
+]
+
+# KRaft controllers + operator-mode storage per size (§2.3), from confluent_operator_config.py
+confluent_operator_size_presets = _operator_config.KRAFT_PRESETS
+
+# Flink operator settings (§2.5), written only when the Flink operator source is not helm.
+# FLINK_OLM_CHANNEL / FLINK_OLM_STARTING_CSV follow the CMF chart (CMF/FKO lock).
+_fko_default = _operator_config.fko_for_cmf(catalog_value("confluent/operator/cmf_chart", default="2.5.0"))
+
+default_flink_operator_olm = [
+    {"key": "FLINK_OLM_PACKAGE", "value": "cp-fko"},
+    {"key": "FLINK_OLM_SUBSCRIPTION_NAME", "value": "cp-fko"},
+    {"key": "FLINK_OLM_CHANNEL", "value": _fko_default["channel"]},
+    {"key": "FLINK_OLM_STARTING_CSV", "value": _fko_default["csv"]},
+    {"key": "FLINK_OLM_CATALOG_SOURCE", "value": "certified-operators"},
+    {"key": "FLINK_OLM_CATALOG_SOURCE_NAMESPACE", "value": "openshift-marketplace"},
+    {"key": "FLINK_OLM_INSTALL_PLAN_APPROVAL", "value": "Manual"},
+    {"key": "FLINK_CFK_NAMESPACE", "value": "${PROJECT_CONFLUENT_FLINK}"},
+    {"key": "FLINK_CMF_RESTCLASS_NAME", "value": "default"},
+    {"key": "FLINK_ENVIRONMENT_DELETE_WAIT", "value": "60"},
+]
+
+# Values operator mode writes instead of the scripts-mode defaults
+operator_mode_overrides = {"CONFLUENT_SASL_MECHANISM": "PLAIN"}
+
+flink_operator_mode_overrides = {
+    "FLINK_CMF_CHART_VERSION": catalog_value("confluent/operator/cmf_chart", default="2.5.0"),
+    "FLINK_SQL_IMAGE": catalog_value(
+        "confluent/operator/flink_sql_image", default="confluentinc/cp-flink-sql:1.19-cmf2.5-cp1"
+    ),
+}
+
+
+def records_with_overrides(records, overrides):
+    """Copy of key/value rows with the values of ``overrides`` swapped in (same keys, same order)."""
+    return [{"key": r["key"], "value": overrides.get(r["key"], r["value"])} for r in records]
+
+
+def without_scram(mechanisms):
+    """Comma list without SCRAM-* entries; PLAIN when nothing is left (operator mode, SASL impl plain)."""
+    kept = [m.strip() for m in str(mechanisms or "").split(",") if m.strip() and not m.strip().upper().startswith("SCRAM-")]
+    return ",".join(kept) or "PLAIN"

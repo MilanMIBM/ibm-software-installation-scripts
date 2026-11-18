@@ -1,7 +1,10 @@
 #!/bin/zsh
 # Segment 0 hook: confluent (contract: _template.sh)
 #   prefill  from configs/confluent_platform_config/confluent_vars.sh: the
-#            component toggles, auth add-ons and the Flink add-on
+#            component toggles, auth add-ons and the Flink add-on. Operator mode
+#            (CONFLUENT_DEPLOY_MODE, docs/confluent-operator-mode.md) adds
+#            cfk-operator, swaps flink-operator for flink-operator-olm when the
+#            Flink operator source is olm, and adds the "operators" content kind.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done
@@ -20,7 +23,9 @@ component	control-center	C3 next-gen + its Prometheus and Alertmanager
 component	c3-gateway	nginx auth gateway in front of C3 (CONFLUENT_AUTH_MODE=basic)
 component	ldap	bundled OpenLDAP (CONFLUENT_MDS_USER_STORE=LDAP)
 component	keycloak	bundled Keycloak (CONFLUENT_MDS_USER_STORE=OAUTH)
+component	cfk-operator	Confluent for Kubernetes operator (operator mode): OLM bundle via the shared operators track, init container, confluent-operator image
 component	flink-operator	Flink Kubernetes operator chart + images
+component	flink-operator-olm	cp-fko Flink operator (FLINK_OPERATOR_SOURCE=olm): OLM bundle via the shared operators track
 component	flink-cmf	Confluent Manager for Apache Flink chart + images
 component	flink-runtime	FLINK_APPLICATION_IMAGE
 component	flink-sql	FLINK_SQL_IMAGE
@@ -44,11 +49,27 @@ EOF
                 OAUTH) comps+=(keycloak) ;;
             esac
         fi
+        # Operator mode: the resolvers of confluent_helpers.sh read the loaded vars
+        # (unset CONFLUENT_DEPLOY_MODE = operator). Scripts mode adds nothing here.
+        source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
+        # CFK: the platform in operator mode, and the Flink namespace when CMF
+        # resources are CFK CRs (FLINK_CMF_RESOURCE_MODE=cfk) - same rule as
+        # confluent_operator_config.plan_operator_targets.
+        if cf_is_operator_mode \
+            || { [[ -n "${FLINK_CMF_CHART_VERSION:-}" ]] && [[ "$(cf_flink_cmf_resource_mode)" == cfk ]]; }; then
+            comps+=(cfk-operator)
+        fi
         content="images"
         if [[ -n "${FLINK_CMF_CHART_VERSION:-}" ]]; then
-            comps+=(flink-operator flink-cmf flink-runtime flink-sql)
+            # helm: the operator chart; olm: the cp-fko bundle; existing: already on the cluster.
+            case "$(cf_flink_operator_source)" in
+                helm) comps+=(flink-operator) ;;
+                olm)  comps+=(flink-operator-olm) ;;
+            esac
+            comps+=(flink-cmf flink-runtime flink-sql)
             content="images,charts"
         fi
+        (( ${comps[(Ie)cfk-operator]} + ${comps[(Ie)flink-operator-olm]} )) && content+=",operators"
         print -r -- "MIRROR_CONFLUENT_COMPONENTS"$'\t'"${(j:,:)comps}" >&3
         print -r -- "MIRROR_CONFLUENT_CONTENT"$'\t'"${content}" >&3
         ;;

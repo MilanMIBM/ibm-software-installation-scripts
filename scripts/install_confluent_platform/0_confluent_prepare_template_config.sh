@@ -22,6 +22,14 @@ source "${SCRIPT_DIR}/../../src/helpers/version_resolver.sh"
 #   ./0_confluent_prepare_template_config.sh --size medium --partitions 12
 #   ./0_confluent_prepare_template_config.sh --size xsmall --regenerate-cluster-id
 #   ./0_confluent_prepare_template_config.sh --size large --dry-run
+#   ./0_confluent_prepare_template_config.sh --deploy-mode scripts
+#
+# Deploy mode (CONFLUENT_DEPLOY_MODE): a new file gets "operator" (Confluent for
+# Kubernetes through OLM) unless --deploy-mode scripts is given; an existing file
+# keeps its value, and switching it needs --switch-deploy-mode (a fresh install,
+# plan O19). Operator mode also writes the operator settings and a second managed
+# block (KRaft controllers, operator-mode storage). Scripts mode writes nothing
+# else new. Plan: .claude/plans/confluent-operator-install-mode/.
 #
 # Deliberately does NOT source the config or contact the cluster: it is a pure
 # file-rewriting step that runs before 1.0_confluent_prep.sh.
@@ -69,6 +77,21 @@ Overrides (any of these beat the size preset):
   --dry-run                 print the resulting block without writing
   --target-cluster NAME     Use configs/clusters/NAME (mode on, or a cluster with its folder)
   -h, --help                this message
+
+Deploy mode:
+  --deploy-mode MODE        scripts | operator (CONFLUENT_DEPLOY_MODE). New file:
+                            operator. Existing file: keeps its value.
+  --switch-deploy-mode      allow --deploy-mode to change an existing file's mode
+                            (a fresh install: scripts -> operator needs
+                            x.8_confluent_wipe_scripts_mode.sh first)
+
+Operator mode only (ignored with a warning in scripts mode):
+  --sasl-impl IMPL          plain (default, native CFK) | scram (configOverrides,
+                            outside Confluent Support)
+  --tls-source SRC          repo (default, repo-made certificates) | cfk
+  --approval MODE           Manual (default) | Automatic InstallPlan approval
+  --kraft-replicas N        CONFLUENT_KRAFT_REPLICAS (odd, >= 1)
+  --kraft-storage SIZE      CONFLUENT_KRAFT_STORAGE_SIZE (e.g. 20Gi)
 
 Cluster id: by default the id already in confluent_vars.sh is preserved, and one
 is generated only when none is present. The id is baked into the broker's
@@ -130,6 +153,9 @@ REGEN_ID=false
 STORAGE_CLASS_OVERRIDE=""
 CLUSTER_ID_OVERRIDE=""
 typeset -A OVERRIDE
+DEPLOY_MODE_FLAG=""
+SWITCH_DEPLOY_MODE=false
+typeset -A OPERATOR_FLAG KRAFT_FLAG
 
 # Accepts true/false/yes/no/1/0 for boolean-style flags.
 _parse_bool() {
@@ -160,10 +186,116 @@ while (( $# > 0 )); do
         --overwrite-cluster-id)   h_need_value "$1" "${2:-}"; REGEN_ID="$(_parse_bool "$1" "$2")"; shift 2 ;;
         --regenerate-cluster-id)  REGEN_ID=true; shift ;;
         --dry-run)                DRY_RUN=true; shift ;;
+        --deploy-mode)            h_need_value "$1" "${2:-}"; DEPLOY_MODE_FLAG="$2"; shift 2 ;;
+        --switch-deploy-mode)     SWITCH_DEPLOY_MODE=true; shift ;;
+        --sasl-impl)              h_need_value "$1" "${2:-}"; OPERATOR_FLAG[CONFLUENT_OPERATOR_SASL_IMPL]="$2"; shift 2 ;;
+        --tls-source)             h_need_value "$1" "${2:-}"; OPERATOR_FLAG[CONFLUENT_OPERATOR_TLS_SOURCE]="$2"; shift 2 ;;
+        --approval)               h_need_value "$1" "${2:-}"; OPERATOR_FLAG[CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL]="$2"; shift 2 ;;
+        --kraft-replicas)         h_need_value "$1" "${2:-}"; KRAFT_FLAG[CONFLUENT_KRAFT_REPLICAS]="$2"; shift 2 ;;
+        --kraft-storage)          h_need_value "$1" "${2:-}"; KRAFT_FLAG[CONFLUENT_KRAFT_STORAGE_SIZE]="$2"; shift 2 ;;
         -h|--help)                usage; exit 0 ;;
         *) echo "[ERROR] Unknown argument '$1'. Use --help." >&2; exit 1 ;;
     esac
 done
+
+# ------------------------------------------------------------------------------
+# Deploy mode (CONFLUENT_DEPLOY_MODE), decided before anything is written:
+#   --deploy-mode given           -> that value
+#   no file yet                   -> operator
+#   the file has the line         -> its value (scripts, else operator)
+#   the file has no line, no flag -> undecided: nothing about the mode is written,
+#                                    and no operator-mode setting either (the file
+#                                    may belong to a live scripts-mode install)
+# A file in one mode is switched only with --switch-deploy-mode (plan O19).
+# ------------------------------------------------------------------------------
+_resolve_mode() {   # <raw value> -> scripts | operator (trimmed, case-insensitive)
+    local v="${(L)1}"
+    v="${v//[[:space:]]/}"
+    [[ "${v}" == scripts ]] && print -r -- scripts || print -r -- operator
+}
+
+if [[ -n "${DEPLOY_MODE_FLAG}" ]]; then
+    DEPLOY_MODE_FLAG="${(L)DEPLOY_MODE_FLAG}"
+    [[ "${DEPLOY_MODE_FLAG}" == (scripts|operator) ]] || {
+        echo "[ERROR] --deploy-mode expects scripts or operator, got '${DEPLOY_MODE_FLAG}'." >&2; exit 1; }
+fi
+if $SWITCH_DEPLOY_MODE && [[ -z "${DEPLOY_MODE_FLAG}" ]]; then
+    echo "[ERROR] --switch-deploy-mode needs --deploy-mode scripts|operator." >&2
+    exit 1
+fi
+
+# Value of `export NAME=...` in the vars file, as the shell reads it when sourced:
+# "double" or 'single' quoted, or bare up to the first blank; the last line wins.
+# Empty when absent.
+_file_value() {
+    local line
+    line="$(grep -E "^export $1=" "${VARS_FILE}" 2>/dev/null | tail -1)" || true
+    line="${line#export $1=}"
+    case "${line}" in
+        \"*) line="${line#\"}"; line="${line%%\"*}" ;;
+        \'*) line="${line#\'}"; line="${line%%\'*}" ;;
+        *)   line="${line%%[[:space:]]*}" ;;
+    esac
+    print -r -- "${line}"
+}
+_file_has()   { grep -qE "^export $1=" "${VARS_FILE}" 2>/dev/null; }
+
+_MODE_LINE_PRESENT=false
+_MODE_LINE_VALUE=""
+if [[ -f "${VARS_FILE}" ]] && _file_has CONFLUENT_DEPLOY_MODE; then
+    _MODE_LINE_PRESENT=true
+    _MODE_LINE_VALUE="$(_file_value CONFLUENT_DEPLOY_MODE)"
+fi
+
+DEPLOY_MODE=""
+DEPLOY_MODE_SWITCH_FROM=""
+if [[ -n "${DEPLOY_MODE_FLAG}" ]]; then
+    DEPLOY_MODE="${DEPLOY_MODE_FLAG}"
+    if $_MODE_LINE_PRESENT && [[ "$(_resolve_mode "${_MODE_LINE_VALUE}")" != "${DEPLOY_MODE}" ]]; then
+        if ! $SWITCH_DEPLOY_MODE; then
+            echo "[ERROR] ${VARS_FILE} is in $(_resolve_mode "${_MODE_LINE_VALUE}") mode; switching to ${DEPLOY_MODE} needs --switch-deploy-mode (a fresh install, plan O19)" >&2
+            exit 1
+        fi
+        DEPLOY_MODE_SWITCH_FROM="$(_resolve_mode "${_MODE_LINE_VALUE}")"
+    fi
+elif [[ ! -f "${VARS_FILE}" ]]; then
+    DEPLOY_MODE=operator
+elif $_MODE_LINE_PRESENT; then
+    DEPLOY_MODE="$(_resolve_mode "${_MODE_LINE_VALUE}")"
+fi
+
+# Operator-mode flags: validated and canonicalised up front; ignored (with a
+# warning) in scripts mode, where nothing reads them.
+for _k in "${(@k)OPERATOR_FLAG}"; do
+    _v="${OPERATOR_FLAG[$_k]}"
+    case "${_k}" in
+        CONFLUENT_OPERATOR_SASL_IMPL)
+            _v="${(L)_v}"; [[ "${_v}" == (plain|scram) ]] || {
+                echo "[ERROR] --sasl-impl expects plain or scram, got '${OPERATOR_FLAG[$_k]}'." >&2; exit 1; } ;;
+        CONFLUENT_OPERATOR_TLS_SOURCE)
+            _v="${(L)_v}"; [[ "${_v}" == (repo|cfk) ]] || {
+                echo "[ERROR] --tls-source expects repo or cfk, got '${OPERATOR_FLAG[$_k]}'." >&2; exit 1; } ;;
+        CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL)
+            case "${(L)_v}" in
+                manual)    _v=Manual ;;
+                automatic) _v=Automatic ;;
+                *) echo "[ERROR] --approval expects Manual or Automatic, got '${_v}'." >&2; exit 1 ;;
+            esac ;;
+    esac
+    OPERATOR_FLAG[$_k]="${_v}"
+done
+if [[ -n "${KRAFT_FLAG[CONFLUENT_KRAFT_REPLICAS]:-}" ]]; then
+    _v="${KRAFT_FLAG[CONFLUENT_KRAFT_REPLICAS]}"
+    [[ "${_v}" =~ ^[0-9]+$ ]] && (( _v >= 1 && _v % 2 == 1 )) || {
+        echo "[ERROR] --kraft-replicas expects an odd integer >= 1, got '${_v}'." >&2; exit 1; }
+fi
+if [[ -n "${KRAFT_FLAG[CONFLUENT_KRAFT_STORAGE_SIZE]:-}" ]]; then
+    [[ "${KRAFT_FLAG[CONFLUENT_KRAFT_STORAGE_SIZE]}" =~ ^[0-9]+(Mi|Gi|Ti)$ ]] || {
+        echo "[ERROR] --kraft-storage '${KRAFT_FLAG[CONFLUENT_KRAFT_STORAGE_SIZE]}' must look like 10Gi / 1Ti." >&2; exit 1; }
+fi
+if [[ "${DEPLOY_MODE}" != operator ]] && (( ${#OPERATOR_FLAG} + ${#KRAFT_FLAG} > 0 )); then
+    echo "[WARN] --sasl-impl, --tls-source, --approval and --kraft-* apply to operator mode only - ignored (CONFLUENT_DEPLOY_MODE=${DEPLOY_MODE:-not set in the file})." >&2
+fi
 
 # ------------------------------------------------------------------------------
 # Create the config if it does not exist yet.
@@ -492,6 +624,213 @@ elif [[ -n "${_backfill}" ]]; then
     printf '         %s\n' "${_backfilled_names[@]}"
 fi
 
+# ------------------------------------------------------------------------------
+# Deploy mode line (plan O2, contract §5.2 / §7.3). Kept apart from the platform
+# defaults above: it is decided up front, and it is the only line a scripts-mode
+# run adds to a file that lacks it.
+# ------------------------------------------------------------------------------
+# _file_value / _file_has are defined with the deploy-mode decision above.
+# Rewrite every `export NAME=...` line in place as export NAME="value"
+# (cf_persist_var semantics; the values here are generated, never secrets).
+# Written in place like the splices below, so the file keeps its mode (the
+# config holds OCP_PASSWORD) and a symlinked config stays a symlink.
+_file_set() {   # <name> <value>
+    python3 - "${VARS_FILE}" "$1" "$2" <<'PY'
+import re, sys
+path, name, value = sys.argv[1:4]
+text = open(path).read()
+pattern = re.compile(r"^export " + re.escape(name) + r"=.*$", re.M)
+text = pattern.sub(lambda _: f'export {name}="{value}"', text)
+with open(path, "w") as fh:
+    fh.write(text)
+PY
+}
+
+_deploy_mode_snippet() {   # <value>
+    cat <<EOF
+# ---- Deploy mode ---------------------------------------------------------------
+# scripts  = the repo renders and applies raw manifests (StatefulSet broker, Deployments, ...).
+# operator = Confluent for Kubernetes (CFK) and cp-fko, installed through OLM, run the platform.
+# Unset or any other value means operator; a scripts-mode install in the namespace then stops every script.
+export CONFLUENT_DEPLOY_MODE="$1"
+EOF
+}
+
+if [[ -z "${DEPLOY_MODE}" ]]; then
+    echo "[WARN] ${VARS_FILE} has no CONFLUENT_DEPLOY_MODE - the scripts treat it as operator mode. Run with --deploy-mode scripts to keep a scripts-mode install, or --deploy-mode operator." >&2
+elif ! $_MODE_LINE_PRESENT; then
+    if $DRY_RUN; then
+        echo "[INFO] --dry-run: would write CONFLUENT_DEPLOY_MODE=\"${DEPLOY_MODE}\" to ${VARS_FILE##*/}."
+    else
+        printf '\n%s\n' "$(_deploy_mode_snippet "${DEPLOY_MODE}")" >> "${VARS_FILE}"
+        echo "[INFO] CONFLUENT_DEPLOY_MODE=\"${DEPLOY_MODE}\" written to ${VARS_FILE##*/}."
+    fi
+elif [[ -n "${DEPLOY_MODE_SWITCH_FROM}" ]]; then
+    if $DRY_RUN; then
+        echo "[INFO] --dry-run: would switch CONFLUENT_DEPLOY_MODE ${DEPLOY_MODE_SWITCH_FROM} -> ${DEPLOY_MODE} in ${VARS_FILE##*/}."
+    else
+        _file_set CONFLUENT_DEPLOY_MODE "${DEPLOY_MODE}"
+        echo "[INFO] CONFLUENT_DEPLOY_MODE: ${DEPLOY_MODE_SWITCH_FROM} -> ${DEPLOY_MODE} saved to ${VARS_FILE##*/}."
+    fi
+    if [[ "${DEPLOY_MODE}" == operator ]]; then
+        echo "[INFO] Switching to operator mode is a fresh install (plan O19): remove the scripts-mode install first with"
+        echo "       scripts/install_confluent_platform/utility_scripts_confluent_platform/x.8_confluent_wipe_scripts_mode.sh (--keep-data keeps the PVCs);"
+        echo "       until then every operator-mode script stops at the scripts-mode guard."
+    else
+        echo "[INFO] Switching to scripts mode is a fresh install (plan O19): remove the operator-mode install first with"
+        echo "       scripts/install_confluent_platform/utility_scripts_confluent_platform/x.0_confluent_uninstall.sh run in operator mode"
+        echo "       (before this switch; add --delete-data --remove-operator for a clean namespace). The operator settings stay in the file, unused."
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# Operator mode only: the operator settings (written once, then preserved), the
+# SASL forcing of plan O9 (CFK components authenticate with PLAIN), and notes.
+# ------------------------------------------------------------------------------
+if [[ "${DEPLOY_MODE}" == operator ]]; then
+    _cat_or() { vr_catalog "$1" 2>/dev/null || print -r -- "$2"; }
+    _cat_cfk_channel="$(_cat_or confluent/operator/cfk_channel 3.4)"
+    _cat_cfk_csv="$(_cat_or confluent/operator/cfk_csv confluent-for-kubernetes.v3.4.0)"
+    _cat_cfk_init_tag="$(_cat_or confluent/operator/cfk_init_tag 3.4.0)"
+    _operator_defaults=(
+        'CONFLUENT_OPERATOR_SOURCE|olm|# ---- Operators (OLM) ----------------------------------------------------------
+# olm = this repo installs Confluent for Kubernetes through OLM (Subscription in
+# each target namespace, OwnNamespace OperatorGroup); existing = only reuse one.'
+        'CONFLUENT_OPERATOR_PACKAGE|confluent-for-kubernetes|'
+        'CONFLUENT_OPERATOR_SUBSCRIPTION_NAME|confluent-for-kubernetes|'
+        "CONFLUENT_OPERATOR_CHANNEL|${_cat_cfk_channel}|"
+        "CONFLUENT_OPERATOR_STARTING_CSV|${_cat_cfk_csv}|# Empty = the channel head."
+        'CONFLUENT_OPERATOR_CATALOG_SOURCE|certified-operators|# Air-gapped: the mirrored CatalogSource (private_registry_mirroring, content "operators").'
+        'CONFLUENT_OPERATOR_CATALOG_SOURCE_NAMESPACE|openshift-marketplace|'
+        "CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL|${OPERATOR_FLAG[CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL]:-Manual}|# Manual = the scripts approve only the InstallPlan they asked for; upgrades go
+# through x.7_confluent_operator_upgrade.sh. Automatic = OLM applies minor bumps,
+# which roll the cluster."
+        'CONFLUENT_OPERATOR_INSTALL_IN_PLATFORM_NS|true|# Where operators are installed: the platform namespace, the Flink namespace,
+# extra namespaces (space-separated) and per-namespace package lists
+# (ns=pkg[,pkg] ns2=pkg; a named namespace replaces its derived set).'
+        'CONFLUENT_OPERATOR_INSTALL_IN_FLINK_NS|true|'
+        'CONFLUENT_OPERATOR_EXTRA_NAMESPACES||'
+        'CONFLUENT_OPERATOR_PACKAGES_PER_NS||'
+        'CONFLUENT_OPERATOR_ALLOW_PATCH_EXISTING|false|# true = the scripts may patch spec.config.env of a Subscription they did not create.'
+        'CONFLUENT_OPERATOR_RESTRICT_CROSS_NS_RESTCLASS|false|'
+        'CONFLUENT_OPERATOR_IMAGE_SOURCE|tags|# tags = CONFLUENT_VERSION / CONFLUENT_C3_VERSION image tags; csv = the operator CSV digests.'
+        "CONFLUENT_OPERATOR_INIT_IMAGE|\${CONFLUENT_REGISTRY}/confluent-init-container:${_cat_cfk_init_tag}|"
+        "CONFLUENT_OPERATOR_TLS_SOURCE|${OPERATOR_FLAG[CONFLUENT_OPERATOR_TLS_SOURCE]:-repo}|# ---- Security --------------------------------------------------------------
+# repo = the scripts generate the certificates (as scripts mode does); cfk = CFK
+# auto-generates the in-cluster certificates (the external route cert stays repo-made)."
+        "CONFLUENT_OPERATOR_SASL_IMPL|${OPERATOR_FLAG[CONFLUENT_OPERATOR_SASL_IMPL]:-plain}|# plain = native CFK SASL/PLAIN (supported by Confluent Support).
+# scram = SCRAM through Kafka configOverrides: documented by Confluent but outside
+# Confluent Support. Either way CONFLUENT_SASL_MECHANISM is PLAIN in operator mode."
+        'CONFLUENT_CONNECTOR_MANAGEMENT|rest|# rest = connectors through the Connect REST API (as today); cr = Connector CRs.'
+        'CONFLUENT_AUTO_CREATE_TOPICS|true|# ---- Kafka / network ---------------------------------------------------------'
+        'CONFLUENT_OPERATOR_NETWORK_POLICIES|true|# NetworkPolicy cfk-kafka-listeners in front of the Kafka listeners.'
+        'CONFLUENT_EXTERNAL_KAFKA_BOOTSTRAP_PREFIX|kafka-${PROJECT_CONFLUENT_SERVER}|# External route hosts: <bootstrap prefix>.<domain>, <broker prefix><N>.<domain>.'
+        'CONFLUENT_EXTERNAL_KAFKA_BROKER_PREFIX|kafka-${PROJECT_CONFLUENT_SERVER}-b|'
+        'CONFLUENT_OPERATOR_CSV_TIMEOUT|600|# ---- Waits (seconds) ---------------------------------------------------------'
+        'CONFLUENT_OPERATOR_INSTALLPLAN_TIMEOUT|300|'
+        'CONFLUENT_OPERATOR_KAFKA_TIMEOUT|900|'
+        'CONFLUENT_OPERATOR_COMPONENT_TIMEOUT|600|'
+        'CONFLUENT_OPERATOR_CONNECT_TIMEOUT|900|'
+        'CONFLUENT_CONNECT_PLUGINS_PVC|connect-plugins|# ---- Connect plugins from local files (x.3_confluent_add_connector.sh) --------'
+        'CONFLUENT_CONNECT_PLUGINS_PVC_SIZE|5Gi|'
+        'CONFLUENT_CONNECT_PLUGINS_LOADER_IMAGE|registry.access.redhat.com/ubi9/ubi:latest|'
+    )
+
+    _operator_backfill=""
+    _operator_names=()
+    for _entry in "${_operator_defaults[@]}"; do
+        _name="${_entry%%|*}"
+        _rest="${_entry#*|}"
+        _value="${_rest%%|*}"
+        _comment="${_rest#*|}"
+
+        _file_has "${_name}" && continue
+
+        _operator_names+=("${_name}")
+        [[ -n "${_comment}" ]] && _operator_backfill+=$'\n'"${_comment}"
+        _operator_backfill+=$'\n'"export ${_name}=\"${_value}\""
+    done
+
+    if [[ -n "${_operator_backfill}" ]] && ! $DRY_RUN; then
+        {
+            echo ""
+            echo "# ------------------------------------------------------------------------------"
+            echo "# Confluent operator mode - added by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo "# ------------------------------------------------------------------------------"
+            echo "# Read only when CONFLUENT_DEPLOY_MODE=operator. NOT managed on re-runs - edit"
+            echo "# them freely; --approval, --sasl-impl and --tls-source rewrite their own line."
+            printf '%s\n' "${_operator_backfill}"
+        } >> "${VARS_FILE}"
+        echo "[INFO] Added ${#_operator_names[@]} missing operator-mode variable(s) to ${VARS_FILE##*/}:"
+        printf '         %s\n' "${_operator_names[@]}"
+    elif [[ -n "${_operator_backfill}" ]]; then
+        echo "[INFO] --dry-run: would add ${#_operator_names[@]} missing operator-mode variable(s):"
+        printf '         %s\n' "${_operator_names[@]}"
+    fi
+
+    # Flags given for settings that were already in the file rewrite their line.
+    for _k in CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL CONFLUENT_OPERATOR_TLS_SOURCE CONFLUENT_OPERATOR_SASL_IMPL; do
+        [[ -n "${OPERATOR_FLAG[$_k]:-}" ]] || continue
+        _file_has "${_k}" || continue
+        _old="$(_file_value "${_k}")"
+        [[ "${_old}" == "${OPERATOR_FLAG[$_k]}" ]] && continue
+        if $DRY_RUN; then
+            echo "[INFO] --dry-run: would set ${_k}: ${_old} -> ${OPERATOR_FLAG[$_k]}"
+        else
+            _file_set "${_k}" "${OPERATOR_FLAG[$_k]}"
+            echo "[INFO] ${_k}: ${_old} -> ${OPERATOR_FLAG[$_k]}"
+        fi
+    done
+
+    # The SASL implementation now in effect (flag, else the file, else plain).
+    _sasl_impl="${OPERATOR_FLAG[CONFLUENT_OPERATOR_SASL_IMPL]:-$(_file_value CONFLUENT_OPERATOR_SASL_IMPL)}"
+    _sasl_impl="${(L)${_sasl_impl:-plain}}"
+    [[ "${_sasl_impl}" == (plain|scram) ]] || _sasl_impl=plain
+
+    # Plan O9: CFK components authenticate with native PLAIN only, and with impl
+    # plain the listeners accept PLAIN only.
+    _drop_scram() {   # <comma list> -> the list without SCRAM-*; PLAIN when empty
+        local -a kept=()
+        local m
+        for m in ${(s:,:)1}; do
+            m="${m//[[:space:]]/}"
+            [[ -z "${m}" || "${(U)m}" == SCRAM-* ]] && continue
+            kept+=("${m}")
+        done
+        (( ${#kept} )) || kept=(PLAIN)
+        print -r -- "${(j:,:)kept}"
+    }
+    _force_line() {   # <name> <new value>
+        local old
+        _file_has "$1" || return 0
+        old="$(_file_value "$1")"
+        [[ "${old}" == "$2" ]] && return 0
+        if $DRY_RUN; then
+            echo "[INFO] --dry-run: would set $1: ${old} -> $2 (operator mode, plan O9)"
+        else
+            _file_set "$1" "$2"
+            echo "[INFO] $1: ${old} -> $2 (operator mode, plan O9)"
+        fi
+    }
+    _force_line CONFLUENT_SASL_MECHANISM PLAIN
+    if [[ "${_sasl_impl}" == plain ]]; then
+        for _k in CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS; do
+            _file_has "${_k}" && _force_line "${_k}" "$(_drop_scram "$(_file_value "${_k}")")"
+        done
+    else
+        echo "[WARN] CONFLUENT_OPERATOR_SASL_IMPL=scram: SCRAM through configOverrides is documented by Confluent but outside Confluent Support" >&2
+        printf '         %s\n' \
+            "https://docs.confluent.io/operator/current/co-authenticate-overview.html" \
+            "https://docs.confluent.io/operator/current/co-configure-misc.html#co-config-overrides" \
+            "https://docs.confluent.io/operator/current/co-authenticate-kafka.html" \
+            "https://docs.confluent.io/platform/current/security/authentication/sasl/scram/overview.html" >&2
+    fi
+
+    if [[ -z "$(_file_value CONFLUENT_LICENSE_KEY)" ]]; then
+        echo "[WARN] No CONFLUENT_LICENSE_KEY - Confluent Platform runs on the 30-day trial license." >&2
+    fi
+fi
+
 apply_size "${SIZE}"
 
 # Flags beat the preset.
@@ -627,6 +966,57 @@ ${END_MARKER}
 EOF
 )"
 
+# ------------------------------------------------------------------------------
+# Operator mode: the second managed block (KRaft controllers and the storage of
+# the operator-only stateful components). It follows --size like the sizing
+# block; the presets live once in src/helpers/confluent_operator_config.py.
+# ------------------------------------------------------------------------------
+OP_BEGIN_MARKER="# >>> confluent operator (managed by 0_confluent_prepare_template_config.sh) >>>"
+OP_END_MARKER="# <<< confluent operator (managed by 0_confluent_prepare_template_config.sh) <<<"
+OP_BLOCK=""
+typeset -a KRAFT_NAMES
+typeset -A KRAFT
+if [[ "${DEPLOY_MODE}" == operator ]]; then
+    if ! _kraft_lines="$(_vr_python "${REPO_ROOT}/src/helpers/confluent_operator_config.py" kraft-preset "${SIZE}")" \
+            || [[ -z "${_kraft_lines}" ]]; then
+        echo "[ERROR] Could not read the KRaft preset for size '${SIZE}' from src/helpers/confluent_operator_config.py." >&2
+        exit 1
+    fi
+    for _line in "${(@f)_kraft_lines}"; do
+        [[ "${_line}" =~ '^([A-Z0-9_]+)="([^"]*)"$' ]] || continue
+        KRAFT_NAMES+=("${match[1]}")
+        KRAFT[${match[1]}]="${match[2]}"
+    done
+    for _k in "${(@k)KRAFT_FLAG}"; do
+        (( ${KRAFT_NAMES[(Ie)${_k}]} )) || KRAFT_NAMES+=("${_k}")
+        KRAFT[${_k}]="${KRAFT_FLAG[$_k]}"
+    done
+    if [[ "${KRAFT[CONFLUENT_KRAFT_REPLICAS]:-}" == 1 ]]; then
+        echo "[WARN] A single KRaft controller has no redundancy - suitable for demos only." >&2
+    fi
+
+    OP_BLOCK="${OP_BEGIN_MARKER}"$'\n'"# Size: ${SIZE} - written $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    OP_BLOCK+=$'\n'"# Re-run the script to change these; edits inside this block are overwritten."
+    OP_BLOCK+=$'\n'"# Read only when CONFLUENT_DEPLOY_MODE=operator."
+    OP_BLOCK+=$'\n'
+    OP_BLOCK+=$'\n'"# ---- KRaft controllers and operator-mode storage ------------------------------"
+    OP_BLOCK+=$'\n'"# CFK runs the KRaft quorum as its own KRaftController pods (odd count)."
+    for _k in "${KRAFT_NAMES[@]}"; do
+        OP_BLOCK+=$'\n'"export ${_k}=\"${KRAFT[$_k]}\""
+    done
+    OP_BLOCK+=$'\n'"${OP_END_MARKER}"
+
+    if $DRY_RUN; then
+        echo ""
+        echo "[INFO] --dry-run: ${VARS_FILE##*/} would receive the operator block:"
+        echo ""
+        echo "${OP_BLOCK}"
+    fi
+elif [[ "${DEPLOY_MODE_SWITCH_FROM}" == operator ]] && $DRY_RUN \
+        && grep -qF "${OP_BEGIN_MARKER}" "${VARS_FILE}" 2>/dev/null; then
+    echo "[INFO] --dry-run: would remove the operator managed block from ${VARS_FILE##*/}."
+fi
+
 if $DRY_RUN; then
     echo ""
     echo "[INFO] --dry-run: ${VARS_FILE##*/} would receive:"
@@ -737,6 +1127,40 @@ PY
 
 rm -f "${BLOCK_FILE}"
 
+# Operator mode: splice the operator block (replace in place, else append after
+# the sizing block). A switch to scripts mode removes it; the operator settings
+# section stays (nothing reads it in scripts mode).
+if [[ -n "${OP_BLOCK}" || "${DEPLOY_MODE_SWITCH_FROM}" == operator ]]; then
+    OP_BLOCK_FILE="$(mktemp)"
+    printf '%s\n' "${OP_BLOCK}" > "${OP_BLOCK_FILE}"
+    _op_result="$(python3 - "${VARS_FILE}" "${OP_BLOCK_FILE}" "${OP_BEGIN_MARKER}" "${OP_END_MARKER}" <<'PY'
+import re, sys
+
+vars_path, block_path, begin, end = sys.argv[1:5]
+text = open(vars_path).read()
+block = open(block_path).read().rstrip("\n")
+pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.DOTALL)
+if not block:
+    # Remove the block together with the blank line in front of it.
+    new = re.sub(r"\n*" + pattern.pattern + r"\n?", "\n", text, count=1, flags=re.DOTALL)
+    if new != text:
+        open(vars_path, "w").write(new.rstrip("\n") + "\n")
+        print("removed")
+    else:
+        print("absent")
+elif pattern.search(text):
+    # A lambda, so backslashes in the block are never read as group references.
+    open(vars_path, "w").write(pattern.sub(lambda _: block, text, count=1))
+    print("replaced")
+else:
+    open(vars_path, "w").write(text.rstrip("\n") + "\n\n" + block + "\n")
+    print("appended")
+PY
+)"
+    rm -f "${OP_BLOCK_FILE}"
+    [[ "${_op_result}" == removed ]] && echo "[INFO] Removed the operator managed block (scripts mode)."
+fi
+
 # ------------------------------------------------------------------------------
 # Verify the rewritten file is still valid shell before leaving it in place.
 # ------------------------------------------------------------------------------
@@ -757,6 +1181,14 @@ printf '  %-34s %s\n' \
     "broker cpu/mem req"   "${B_CPU_REQ} / ${B_MEM_REQ}" \
     "broker cpu/mem limit" "${B_CPU_LIM} / ${B_MEM_LIM}" \
     "cluster id"           "${CLUSTER_ID} (${CLUSTER_ID_ORIGIN})"
+if [[ -n "${OP_BLOCK}" ]]; then
+    printf '  %-34s %s\n' \
+        "deploy mode"            "operator (CFK through OLM)" \
+        "KRaft controllers"      "${KRAFT[CONFLUENT_KRAFT_REPLICAS]:-?}" \
+        "KRaft storage"          "${KRAFT[CONFLUENT_KRAFT_STORAGE_SIZE]:-?}" \
+        "KRaft cpu/mem req"      "${KRAFT[CONFLUENT_KRAFT_CPU_REQUEST]:-?} / ${KRAFT[CONFLUENT_KRAFT_MEM_REQUEST]:-?}" \
+        "KRaft cpu/mem limit"    "${KRAFT[CONFLUENT_KRAFT_CPU_LIMIT]:-?} / ${KRAFT[CONFLUENT_KRAFT_MEM_LIMIT]:-?}"
+fi
 echo ""
 echo "[INFO] Next: scripts/install_confluent_platform/1.0_confluent_prep.sh"
 mcm_generator_register "${VARS_FILE}"

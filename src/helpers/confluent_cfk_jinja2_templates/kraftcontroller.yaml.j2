@@ -1,0 +1,17 @@
+{#- KRaftController (set platform, order 10). No controller-listener auth (I19a parity; MDS case P5/V21). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: KRaftController
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  replicas: {{ c.replicas }}
+{{ mac.image(c) }}
+  dataVolumeCapacity: {{ c.storage | q }}
+  storageClass:
+    name: {{ m.storage_class | q }}
+  clusterID: {{ m.cluster_id | q }}
+{{ mac.pod_template(c) }}
+{{ mac.common_tail(c, m) }}
+{% if c.dependencies %}
+  dependencies: {{ c.dependencies | j }}
+{% endif %}

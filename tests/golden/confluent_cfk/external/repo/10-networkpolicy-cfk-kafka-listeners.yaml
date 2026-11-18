@@ -1,0 +1,42 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cfk-kafka-listeners
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  podSelector:
+    matchLabels:
+      app: kafka
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 9071
+  - from:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 9072
+    - protocol: TCP
+      port: 8090
+    - protocol: TCP
+      port: 7203
+    - protocol: TCP
+      port: 7777
+    - protocol: TCP
+      port: 7778
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: ingress
+    - namespaceSelector:
+        matchLabels:
+          policy-group.network.openshift.io/host-network: ''
+    ports:
+    - protocol: TCP
+      port: 9092

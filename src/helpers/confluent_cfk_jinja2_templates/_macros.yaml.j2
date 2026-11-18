@@ -1,0 +1,40 @@
+{#- Shared pieces of the CFK templates. confluent_cfk_render.py computes every value; scalars go through |q
+    (a JSON string) and structures through |j (JSON is valid YAML). The renderer parses the output and dumps it
+    again (keys in template order), so the indentation here only has to be valid YAML. -#}
+{% macro metadata(name, namespace, labels) %}
+metadata:
+  name: {{ name | q }}
+  namespace: {{ namespace | q }}
+  labels: {{ labels | j }}
+{%- endmacro %}
+
+{% macro image(c) %}
+  image:
+    application: {{ c.image.application | q }}
+    init: {{ c.image.init | q }}
+{% if c.image.get("pullSecretRef") %}
+    pullSecretRef: {{ c.image.pullSecretRef | j }}
+{% endif %}
+{%- endmacro %}
+
+{% macro pod_template(c) %}
+  podTemplate:
+{# K8S-EXTENSION(K7): on OpenShift CFK's default fsGroup/runAsUser 1001 is refused by restricted-v2 (V1), so the
+   empty context lets the namespace range apply. Kubernetes mode keeps CFK's default (omit podSecurityContext). #}
+    podSecurityContext: {}
+{% if c.resources %}
+    resources: {{ c.resources | j }}
+{% endif %}
+{%- endmacro %}
+
+{% macro common_tail(c, m) %}
+{# injectLabels reaches Services, PVCs and Routes, not pods (V12). #}
+  injectLabels: {{ m.inject_labels | j }}
+{% if m.license_present %}
+  license:
+    secretRef: {{ m.license_secret | q }}
+{% endif %}
+{% if c.tls %}
+  tls: {{ c.tls | j }}
+{% endif %}
+{%- endmacro %}

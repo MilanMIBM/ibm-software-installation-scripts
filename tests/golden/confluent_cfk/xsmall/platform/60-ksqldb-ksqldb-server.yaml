@@ -1,0 +1,44 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: KsqlDB
+metadata:
+  name: ksqldb-server
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  replicas: 1
+  image:
+    application: docker.io/confluentinc/cp-ksqldb-server:8.4.0
+    init: docker.io/confluentinc/confluent-init-container:3.4.0
+  dataVolumeCapacity: 10Gi
+  storageClass:
+    name: ocs-storagecluster-ceph-rbd
+  podTemplate:
+    podSecurityContext: {}
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: '1'
+        memory: 2Gi
+  injectLabels:
+    app.kubernetes.io/part-of: confluent
+  license:
+    secretRef: confluent-license
+  dependencies:
+    kafka:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    schemaRegistry:
+      url: http://schema-registry.confluent.svc.cluster.local:8081
+    connect:
+      url: http://connect.confluent.svc.cluster.local:8083
+  configOverrides:
+    server:
+    - ksql.cache.max.bytes.buffering=0

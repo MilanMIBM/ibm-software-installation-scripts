@@ -1,0 +1,111 @@
+{
+  "set": "platform",
+  "namespace": "confluent",
+  "files": [
+    {
+      "order": 10,
+      "stage": 1,
+      "path": "platform/10-kraftcontroller-kraftcontroller.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "KRaftController",
+      "name": "kraftcontroller",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 20,
+      "stage": 1,
+      "path": "platform/20-kafka-kafka.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "Kafka",
+      "name": "kafka",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 30,
+      "stage": 2,
+      "path": "platform/30-kafkarestclass-default.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "KafkaRestClass",
+      "name": "default",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 40,
+      "stage": 3,
+      "path": "platform/40-schemaregistry-schema-registry.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "SchemaRegistry",
+      "name": "schema-registry",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 50,
+      "stage": 3,
+      "path": "platform/50-connect-connect.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "Connect",
+      "name": "connect",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 60,
+      "stage": 3,
+      "path": "platform/60-ksqldb-ksqldb-server.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "KsqlDB",
+      "name": "ksqldb-server",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 70,
+      "stage": 3,
+      "path": "platform/70-kafkarestproxy-rest-proxy.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "KafkaRestProxy",
+      "name": "rest-proxy",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 80,
+      "stage": 4,
+      "path": "platform/80-controlcenter-control-center.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "ControlCenter",
+      "name": "control-center",
+      "namespace": "confluent",
+      "wait": "phase",
+      "apply": true
+    },
+    {
+      "order": 90,
+      "stage": 5,
+      "path": "platform/90-confluentrolebinding-mds-super-systemadmin.yaml",
+      "apiVersion": "platform.confluent.io/v1beta1",
+      "kind": "ConfluentRolebinding",
+      "name": "mds-super-systemadmin",
+      "namespace": "confluent",
+      "wait": "state",
+      "apply": true
+    }
+  ],
+  "disabled": [],
+  "info": [
+    "MDS/RBAC in operator mode is phase 5 (unverified: V5, V21)",
+    "Connect CPU raised to the operator-mode minimum (1 request / 2 limit)"
+  ],
+  "warnings": []
+}

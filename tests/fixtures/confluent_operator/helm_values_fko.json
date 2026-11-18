@@ -1,0 +1,7 @@
+{
+  "confluent-flink/cp-flink-kubernetes-operator": {
+    "watchNamespaces": [
+      "confluent-flink"
+    ]
+  }
+}

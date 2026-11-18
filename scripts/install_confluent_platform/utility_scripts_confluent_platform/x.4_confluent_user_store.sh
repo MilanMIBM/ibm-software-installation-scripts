@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
 source "${_CP4D_REPO_ROOT}/src/helpers/version_resolver.sh"
-
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 # ==============================================================================
 # Confluent Platform - identity provider for MDS
 # ------------------------------------------------------------------------------
@@ -64,6 +64,7 @@ while (( $# > 0 )); do
 done
 
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 SA="confluent"
@@ -102,6 +103,13 @@ for _u in ${=_user_list}; do
     [[ -z "${_u}" ]] && continue
     (( ${_users[(Ie)${_u}]} )) || _users+=("${_u}")
 done
+if cf_is_operator_mode; then
+    # Operator mode (phase 5, unverified V5/V21): each CFK component authenticates to MDS with its own principal
+    # (co-rbac: kafka, sr, connect, ksql, krp, c3), so the user store gets those accounts too.
+    for _u in ${=CONFLUENT_MDS_CFK_PRINCIPALS:-kafka sr connect ksql krp c3}; do
+        (( ${_users[(Ie)${_u}]} )) || _users+=("${_u}")
+    done
+fi
 
 # ------------------------------------------------------------------------------
 # Delete

@@ -1,0 +1,13 @@
+{#- Connector (set connector, O17 management cr). Credentials stay out of the CR: secret_refs become
+    ${file:/mnt/secrets/<secret>/<key>:<property>} references resolved by Connect's FileConfigProvider (V31).
+    restartPolicy is left to the CFK default. -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: Connector
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  class: {{ c["class"] | q }}
+  taskMax: {{ c.tasks_max }}
+  configs: {{ c.configs | j }}
+  connectClusterRef:
+    name: "connect"

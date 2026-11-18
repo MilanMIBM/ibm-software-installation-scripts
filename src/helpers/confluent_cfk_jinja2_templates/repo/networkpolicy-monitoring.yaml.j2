@@ -1,0 +1,14 @@
+{#- NetworkPolicy cfk-monitoring-internal (set repo, order 11; gate CONFLUENT_MONITORING_NETWORK_POLICY, C3 on).
+    The embedded Prometheus 9090 / Alertmanager 9093 from Confluent pods only; the UI port 9021 from the front
+    proxy when there is one, else from the router (15.13 item 5). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  podSelector:
+    matchLabels:
+      app: "control-center"
+  policyTypes:
+    - "Ingress"
+  ingress: {{ c.ingress | j }}

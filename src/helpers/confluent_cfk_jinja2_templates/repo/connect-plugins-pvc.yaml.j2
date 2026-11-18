@@ -1,0 +1,13 @@
+{#- PVC for local Connect plugins (set connect-plugins, order 10; plan 15.7). RWX on STG_CLASS_FILE when set,
+    else RWO on the block class (Connect replicas = 1). Filled by x.3's tar stream through the loader pod. -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: v1
+kind: PersistentVolumeClaim
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  accessModes:
+    - {{ c.access_mode | q }}
+  storageClassName: {{ c.storage_class | q }}
+  resources:
+    requests:
+      storage: {{ c.size | q }}

@@ -94,6 +94,7 @@ for _s in "${PREP}" "${INSTALL}"; do
 done
 
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 : "${CONFLUENT_AUTH_SECRET:=confluent-auth}"
@@ -108,8 +109,15 @@ fi
 # Work out the current state so the summary can report an accurate transition.
 # ------------------------------------------------------------------------------
 _current_user="$(oc get secret "${CONFLUENT_AUTH_SECRET}" -n "${NS}" -o jsonpath='{.data.username}' 2>/dev/null | base64 --decode || true)"
+if cf_is_operator_mode; then
+    # Operator mode: Control Center has no auth of its own; the front proxy Deployment carries it (O13).
+    _c3_method=""
+    [[ "$(oc get deployment "${CFO_FRONT_PROXY}" -n "${NS}" -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null || true)" == *auth-gateway* ]] \
+        && _c3_method="BASIC"
+else
 _c3_method="$(oc get deployment control-center -n "${NS}" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CONTROL_CENTER_REST_AUTHENTICATION_METHOD")].value}' 2>/dev/null || true)"
+fi
 
 if [[ "${_c3_method}" == "BASIC" ]]; then
     _current_state="enabled (user '${_current_user}')"
@@ -133,9 +141,15 @@ fi
 
 # Which of the three actually exist, so the plan reflects reality.
 _targets=()
+if cf_is_operator_mode; then
+    # Only the front proxy changes; the ControlCenter CR (with Prometheus/Alertmanager inside) is not re-applied.
+    [[ -n "$(oc get controlcenters.platform.confluent.io "${CF_C3_CR}" -n "${NS}" -o name 2>/dev/null || true)" ]] \
+        && _targets+=("${CFO_FRONT_PROXY}")
+else
 for _d in control-center prometheus alertmanager; do
     oc get deployment "${_d}" -n "${NS}" &>/dev/null && _targets+=("${_d}")
 done
+fi
 
 echo "=============================================================================="
 echo " Confluent web UI authentication - project '${NS}'"
@@ -222,6 +236,17 @@ echo "--------------------------------------------------------------------------
 
 if (( ${#_targets[@]} == 0 )) && [[ "${CONFLUENT_INSTALL_CONTROL_CENTER}" != "true" ]]; then
     echo "[INFO] Control Center is not enabled - nothing to redeploy."
+elif cf_is_operator_mode; then
+    # Operator mode: the C3 front proxy alone (secrets, Deployment, Service, Route), then the repo set again so
+    # the cfk-monitoring-internal NetworkPolicy matches the proxy state. Never 1.1 with components off (it would
+    # delete their CRs) and no rollout restart: the Deployment rolls when its spec changes, and nginx reads the
+    # htpasswd file per request, so a rotated password applies once the kubelet refreshes the secret volume.
+    if $DISABLE; then _fp_mode=none; else _fp_mode=basic; fi
+    _fp_rc=0
+    cfo_apply_front_proxy "${NS}" "${_fp_mode}" || _fp_rc=$?
+    (( _fp_rc == 0 )) || { echo "[ERROR] Applying the Control Center front proxy (${_fp_mode}) failed." >&2; exit 1; }
+    cfo_apply_manifest "${CFO_MANIFEST}" || _fp_rc=$?
+    (( _fp_rc == 0 )) || { echo "[ERROR] Re-applying the repo objects failed." >&2; exit 1; }
 else
     export CONFLUENT_INSTALL_SCHEMA_REGISTRY="false"
     export CONFLUENT_INSTALL_CONNECT="false"

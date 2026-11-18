@@ -5,8 +5,11 @@ import hashlib
 import json
 import sys
 
-
 FLINK_NAMESPACE_LABEL = "confluent.platform/flink-namespace"
+# Pod "app" label values of the Kafka-side workloads Flink reaches. Scripts mode: StatefulSet broker and
+# Deployment schema-registry. Operator mode (CFK) passes its own values with --apps (kafka, schema-registry; V12).
+DEFAULT_APPS = ("broker", "schema-registry")
+REGISTRY_APP = "schema-registry"
 
 
 def matches(selector, labels):
@@ -31,8 +34,12 @@ def matches(selector, labels):
     return True
 
 
-def render(resources, kafka_namespace, flink_namespace, use_registry=True):
-    apps = {"broker", "schema-registry"} if use_registry else {"broker"}
+def render(resources, kafka_namespace, flink_namespace, use_registry=True, apps=None):
+    """apps: the pod "app" label values to protect (default DEFAULT_APPS); use_registry=False drops
+    schema-registry from them."""
+    apps = set(DEFAULT_APPS if apps is None else apps)
+    if not use_registry:
+        apps.discard(REGISTRY_APP)
     pods = [
         item["metadata"].get("labels", {})
         for item in resources["items"]
@@ -86,9 +93,16 @@ def main():
     parser.add_argument("--kafka-namespace", required=True)
     parser.add_argument("--flink-namespace", required=True)
     parser.add_argument("--no-schema-registry", action="store_true")
+    parser.add_argument("--apps", default=None,
+                        help=f"comma-separated pod 'app' label values (default: {','.join(DEFAULT_APPS)})")
     args = parser.parse_args()
+    apps = None
+    if args.apps is not None:
+        apps = [a.strip() for a in args.apps.split(",") if a.strip()]
+        if not apps:
+            parser.error("--apps needs at least one app label value")
     result = render(json.load(sys.stdin), args.kafka_namespace, args.flink_namespace,
-                    use_registry=not args.no_schema_registry)
+                    use_registry=not args.no_schema_registry, apps=apps)
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
 

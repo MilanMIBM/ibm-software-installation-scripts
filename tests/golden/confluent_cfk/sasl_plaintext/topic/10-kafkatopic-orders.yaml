@@ -1,0 +1,16 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: KafkaTopic
+metadata:
+  name: orders
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  kafkaClusterRef:
+    name: kafka
+  partitionCount: 6
+  replicas: 3
+  configs:
+    cleanup.policy: compact

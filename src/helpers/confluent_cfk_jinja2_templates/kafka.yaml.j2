@@ -1,0 +1,58 @@
+{#- Kafka (set platform, order 20). listeners.external is always rendered when SASL is on (E1: CFK otherwise
+    opens 9092 as unauthenticated PLAINTEXT). configOverrides.server holds only what scripts mode sets
+    (plan 15.12 item 4) plus the SCRAM lines of impl scram (15.6, V25). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: Kafka
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  replicas: {{ c.replicas }}
+{{ mac.image(c) }}
+  dataVolumeCapacity: {{ c.storage | q }}
+  storageClass:
+    name: {{ m.storage_class | q }}
+{{ mac.pod_template(c) }}
+{{ mac.common_tail(c, m) }}
+{% if c.listeners %}
+  listeners:
+{% for name, listener in c.listeners.items() %}
+    {{ name }}:
+      authentication: {{ listener.authentication | j }}
+{% if listener.get("external_access") %}
+{# K8S-EXTENSION(K5): externalAccess type route (OpenShift). Kubernetes mode: loadBalancer / nodePort /
+   staticFor*Routing with its own host scheme. #}
+      externalAccess:
+        type: route
+        route:
+          domain: {{ listener.external_access.domain | q }}
+          bootstrapPrefix: {{ listener.external_access.bootstrapPrefix | q }}
+          brokerPrefix: {{ listener.external_access.brokerPrefix | q }}
+          labels: {{ listener.external_access.labels | j }}
+{% endif %}
+{% if listener.get("tls") %}
+      tls: {{ listener.tls | j }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if c.authorization %}
+  authorization: {{ c.authorization | j }}
+{% endif %}
+  dependencies:
+    kRaftController:
+      clusterRef:
+        name: {{ m.kraft_name | q }}
+{% if c.metrics_url %}
+    metricsClient:
+      url: {{ c.metrics_url | q }}
+{% endif %}
+{% if c.kafka_rest_dep %}
+    kafkaRest: {{ c.kafka_rest_dep | j }}
+{% endif %}
+{% if c.services %}
+  services: {{ c.services | j }}
+{% endif %}
+  configOverrides:
+    server:
+{% for line in c.server_overrides %}
+      - {{ line | q }}
+{% endfor %}

@@ -36,17 +36,26 @@ def _():
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
 
+    from src.helpers import confluent_operator_config
     from src.helpers.confluent_id_options_templates import (
         confluent_auth_mode_records,
         confluent_component_toggle_records,
+        confluent_connector_management_options,
+        confluent_deploy_mode_records,
         confluent_external_sasl_mechanism_options,
         confluent_internal_sasl_mechanism_options,
         confluent_mds_user_store_records,
+        confluent_operator_approval_options,
+        confluent_operator_sasl_impl_options,
+        confluent_operator_size_presets,
+        confluent_operator_tls_source_options,
+        confluent_operator_var_order,
         confluent_sasl_mechanism_options,
         confluent_sasl_protocol_records,
         confluent_size_presets,
         confluent_size_records,
         default_confluent_component_toggles,
+        default_confluent_deploy_mode,
         default_confluent_external_access,
         default_confluent_external_sasl_mechanisms,
         default_confluent_images,
@@ -54,6 +63,7 @@ def _():
         default_confluent_ldap,
         default_confluent_mds,
         default_confluent_oauth,
+        default_confluent_operator,
         default_confluent_ports,
         default_confluent_routes_and_waits,
         default_confluent_sasl,
@@ -66,27 +76,43 @@ def _():
         default_flink_images,
         default_flink_license,
         default_flink_naming,
+        default_flink_operator_olm,
         default_flink_project_and_storage,
         default_flink_state,
+        flink_cmf_resource_mode_options,
+        flink_operator_mode_overrides,
+        flink_operator_source_options,
         flink_size_presets,
         flink_state_backend_records,
+        operator_mode_overrides,
+        records_with_overrides,
+        without_scram,
     )
-    from src.helpers.marimo_sortablekv import sortable_kv
     from src.helpers.jinja2_template_rendering_helpers import (
         render_template_from_environment,
     )
+    from src.helpers.marimo_sortablekv import sortable_kv
 
     return (
         confluent_auth_mode_records,
         confluent_component_toggle_records,
+        confluent_connector_management_options,
+        confluent_deploy_mode_records,
         confluent_external_sasl_mechanism_options,
         confluent_internal_sasl_mechanism_options,
         confluent_mds_user_store_records,
+        confluent_operator_approval_options,
+        confluent_operator_config,
+        confluent_operator_sasl_impl_options,
+        confluent_operator_size_presets,
+        confluent_operator_tls_source_options,
+        confluent_operator_var_order,
         confluent_sasl_mechanism_options,
         confluent_sasl_protocol_records,
         confluent_size_presets,
         confluent_size_records,
         default_confluent_component_toggles,
+        default_confluent_deploy_mode,
         default_confluent_external_access,
         default_confluent_external_sasl_mechanisms,
         default_confluent_images,
@@ -94,6 +120,7 @@ def _():
         default_confluent_ldap,
         default_confluent_mds,
         default_confluent_oauth,
+        default_confluent_operator,
         default_confluent_ports,
         default_confluent_routes_and_waits,
         default_confluent_sasl,
@@ -106,12 +133,19 @@ def _():
         default_flink_images,
         default_flink_license,
         default_flink_naming,
+        default_flink_operator_olm,
         default_flink_project_and_storage,
         default_flink_state,
+        flink_cmf_resource_mode_options,
+        flink_operator_mode_overrides,
+        flink_operator_source_options,
         flink_size_presets,
         flink_state_backend_records,
+        operator_mode_overrides,
+        records_with_overrides,
         render_template_from_environment,
         sortable_kv,
+        without_scram,
     )
 
 
@@ -158,6 +192,15 @@ def _():
         "FLINK_S3_ACCESS_KEY",
         "FLINK_S3_SECRET_KEY",
         "FLINK_S3_PATH_STYLE_ACCESS",
+        # Operator mode (plan: .claude/plans/confluent-operator-install-mode/)
+        "CONFLUENT_DEPLOY_MODE",
+        "CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL",
+        "CONFLUENT_OPERATOR_TLS_SOURCE",
+        "CONFLUENT_OPERATOR_SASL_IMPL",
+        "CONFLUENT_CONNECTOR_MANAGEMENT",
+        "FLINK_OPERATOR_SOURCE",
+        "FLINK_CMF_RESOURCE_MODE",
+        "FLINK_OLM_INSTALL_PLAN_APPROVAL",
     }
     return (widget_controlled_keys,)
 
@@ -165,6 +208,7 @@ def _():
 @app.cell
 def _(
     confluent_auth_mode_records,
+    confluent_deploy_mode_records,
     confluent_external_sasl_mechanism_options,
     confluent_internal_sasl_mechanism_options,
     confluent_mds_user_store_records,
@@ -200,6 +244,11 @@ def _(
     mds_user_store_options = {
         r["user_store_name"]: r["user_store_id"]
         for r in confluent_mds_user_store_records
+    }
+
+    # Deploy mode - scripts (raw manifests) | operator (CFK + cp-fko through OLM)
+    deploy_mode_options = {
+        r["deploy_mode_name"]: r["deploy_mode_id"] for r in confluent_deploy_mode_records
     }
 
     # Flink options - Checkpoint storage
@@ -248,6 +297,7 @@ def _(
         auth_mode_options,
         component_block_storage_options,
         component_file_storage_options,
+        deploy_mode_options,
         external_sasl_mechanism_options,
         flink_state_backend_options,
         internal_sasl_mechanism_options,
@@ -301,6 +351,14 @@ def _():
         "auth_password": "**Web UI basic-auth password** *(basic mode only, empty = generated)*:",
         "flink_s3_access_key": "**S3 access key:**",
         "flink_s3_secret_key": "**S3 secret key:**",
+        "deploy_mode": "**Select the deploy mode:**",
+        "operator_approval": "**Operator InstallPlan approval (OLM):**",
+        "operator_tls_source": "**In-cluster TLS certificates (operator mode):**",
+        "operator_sasl_impl": "**SASL implementation (operator mode; scram = configOverrides, outside Confluent Support):**",
+        "connector_management": "**Connector management (operator mode):**",
+        "flink_operator_source": "**Flink operator source** *(follow = the deploy mode decides: olm with operator, helm with scripts)*:",
+        "flink_cmf_resource_mode": "**CMF resources** *(follow = cfk with OLM, cli with Helm)*:",
+        "flink_olm_approval": "**cp-fko InstallPlan approval (OLM):**",
     }
     return (widget_labels,)
 
@@ -424,12 +482,42 @@ def _(
 def _(
     auth_enabled_checkbox,
     component_toggle_table,
+    confluent_deploy_mode,
+    connector_management_select,
+    deploy_mode_select,
     external_kafka_enabled_checkbox,
     mds_enabled_checkbox,
+    operator_approval_select,
+    operator_sasl_impl_select,
+    operator_tls_source_select,
     sasl_enabled_checkbox,
+    widget_width,
 ):
+    # The operator selects appear only in operator mode
+    _operator_selects = (
+        [
+            mo.hstack(
+                [
+                    operator_approval_select.style({"width": widget_width}),
+                    operator_tls_source_select.style({"width": widget_width}),
+                ],
+                justify="space-around",
+            ),
+            mo.hstack(
+                [
+                    operator_sasl_impl_select.style({"width": widget_width}),
+                    connector_management_select.style({"width": widget_width}),
+                ],
+                justify="space-around",
+            ),
+        ]
+        if confluent_deploy_mode == "operator"
+        else []
+    )
     components_and_security_stack = mo.vstack(
         [
+            deploy_mode_select.style({"width": widget_width}),
+            *_operator_selects,
             component_toggle_table,
             auth_enabled_checkbox,
             sasl_enabled_checkbox,
@@ -445,10 +533,19 @@ def _(
 def _(
     cluster_credentials_stack,
     components_and_security_stack,
+    confluent_deploy_mode,
+    confluent_operator_sizing_records,
     confluent_sizing_records,
     confluent_storage_class_select,
     widget_width,
 ):
+    _kraft_item = (
+        {
+            "**KRaft controllers (operator mode)** *(prefilled from the selected size)*": confluent_operator_sizing_records
+        }
+        if confluent_deploy_mode == "operator"
+        else {}
+    )
     install_specs_accordion = mo.accordion(
         items={
             "**Cluster Credentials & Project**": cluster_credentials_stack,
@@ -460,6 +557,7 @@ def _(
                 ],
                 gap=1,
             ),
+            **_kraft_item,
         },
         multiple=True,
     )
@@ -470,11 +568,13 @@ def _(
 @app.cell
 def _(
     auth_password_input,
+    confluent_deploy_mode,
     confluent_external_access_records,
     confluent_images_records,
     confluent_ldap_records,
     confluent_mds_records,
     confluent_oauth_records,
+    confluent_operator_records,
     confluent_ports_records,
     confluent_routes_and_waits_records,
     confluent_sasl_records,
@@ -513,6 +613,11 @@ def _(
                 ]
             ),
             "*External Kafka Access* ***(optional)***": confluent_external_access_records,
+            **(
+                {"*Operator (OLM)* ***(optional)***": confluent_operator_records}
+                if confluent_deploy_mode == "operator"
+                else {}
+            ),
         },
         multiple=True,
     )
@@ -524,12 +629,17 @@ def _(
 def _(
     flink_cert_manager_records,
     flink_cmf_endpoint_records,
+    flink_cmf_resource_mode_select,
     flink_cmf_storage_class_select,
     flink_create_routes_checkbox,
     flink_helm_records,
     flink_images_records,
     flink_license_records,
     flink_naming_records,
+    flink_olm_approval_select,
+    flink_operator_olm_records,
+    flink_operator_source,
+    flink_operator_source_select,
     flink_s3_access_key_input,
     flink_s3_path_style_checkbox,
     flink_s3_secret_key_input,
@@ -539,6 +649,12 @@ def _(
     include_flink_checkbox,
     widget_width,
 ):
+    # cp-fko settings appear only when the resolved Flink operator source is not helm
+    _olm_items = (
+        [flink_olm_approval_select.style({"width": widget_width}), flink_operator_olm_records]
+        if flink_operator_source != "helm"
+        else []
+    )
     flink_accordion = mo.accordion(
         items={
             "**Confluent Platform for Apache Flink Addon**": mo.vstack(
@@ -564,6 +680,14 @@ def _(
                     flink_images_records,
                     flink_cert_manager_records,
                     flink_license_records,
+                    mo.hstack(
+                        [
+                            flink_operator_source_select.style({"width": widget_width}),
+                            flink_cmf_resource_mode_select.style({"width": widget_width}),
+                        ],
+                        justify="space-around",
+                    ),
+                    *_olm_items,
                 ],
                 gap=1,
             )
@@ -998,12 +1122,85 @@ def _(widget_labels):
 
 
 @app.cell
+def _(default_confluent_deploy_mode, deploy_mode_options, widget_labels):
+    deploy_mode_select = mo.ui.dropdown(
+        label=widget_labels.get("deploy_mode"),
+        options=deploy_mode_options,
+        value=next(
+            k for k, v in deploy_mode_options.items() if v == default_confluent_deploy_mode
+        ),
+        allow_select_none=False,
+        full_width=True,
+    )
+    return (deploy_mode_select,)
+
+
+@app.cell
+def _(
+    confluent_connector_management_options,
+    confluent_operator_approval_options,
+    confluent_operator_sasl_impl_options,
+    confluent_operator_tls_source_options,
+    flink_cmf_resource_mode_options,
+    flink_operator_source_options,
+    widget_labels,
+):
+    # Operator-mode selects; the first option is the default
+    def _select(label_key, options):
+        return mo.ui.dropdown(
+            label=widget_labels.get(label_key),
+            options=options,
+            value=options[0],
+            allow_select_none=False,
+            full_width=True,
+        )
+
+    operator_approval_select = _select("operator_approval", confluent_operator_approval_options)
+    operator_tls_source_select = _select("operator_tls_source", confluent_operator_tls_source_options)
+    operator_sasl_impl_select = _select("operator_sasl_impl", confluent_operator_sasl_impl_options)
+    connector_management_select = _select("connector_management", confluent_connector_management_options)
+    flink_operator_source_select = _select("flink_operator_source", flink_operator_source_options)
+    flink_cmf_resource_mode_select = _select("flink_cmf_resource_mode", flink_cmf_resource_mode_options)
+    flink_olm_approval_select = _select("flink_olm_approval", confluent_operator_approval_options)
+    return (
+        connector_management_select,
+        flink_cmf_resource_mode_select,
+        flink_olm_approval_select,
+        flink_operator_source_select,
+        operator_approval_select,
+        operator_sasl_impl_select,
+        operator_tls_source_select,
+    )
+
+
+@app.cell
+def _(
+    confluent_operator_config,
+    deploy_mode_select,
+    flink_cmf_resource_mode_select,
+    flink_operator_source_select,
+):
+    # The modes the template and the Flink widgets follow ("follow" = not written)
+    confluent_deploy_mode = deploy_mode_select.value
+    _source = flink_operator_source_select.value
+    flink_operator_source, _ = confluent_operator_config.resolve_flink_operator_source(
+        None if _source == "follow" else _source, confluent_deploy_mode
+    )
+    _cmf = flink_cmf_resource_mode_select.value
+    flink_cmf_resource_mode, _ = confluent_operator_config.resolve_flink_cmf_resource_mode(
+        None if _cmf == "follow" else _cmf, flink_operator_source
+    )
+    return confluent_deploy_mode, flink_cmf_resource_mode, flink_operator_source
+
+
+@app.cell
 def _():
     return
 
 
 @app.cell
 def _(
+    confluent_operator_size_presets,
     confluent_size_presets,
     default_confluent_storage,
     default_flink_project_and_storage,
@@ -1031,7 +1228,20 @@ def _(
         editable=True,
         movable=False,
     )
-    return confluent_sizing_records, flink_sizing_records
+    # Operator mode: KRaft controllers and the operator-only storage sizes
+    confluent_operator_sizing_records = sortable_kv(
+        label="KRaft controllers (odd count) and operator-mode storage:",
+        value=dict_to_records(confluent_operator_size_presets[size_select.value]),
+        addable=False,
+        removable=False,
+        editable=True,
+        movable=False,
+    )
+    return (
+        confluent_operator_sizing_records,
+        confluent_sizing_records,
+        flink_sizing_records,
+    )
 
 
 @app.cell
@@ -1041,6 +1251,7 @@ def _(
     default_confluent_ldap,
     default_confluent_mds,
     default_confluent_oauth,
+    default_confluent_operator,
     default_confluent_ports,
     default_confluent_routes_and_waits,
     default_confluent_sasl,
@@ -1088,12 +1299,17 @@ def _(
     confluent_external_access_records = _kv(
         "External Kafka access:", default_confluent_external_access
     )
+    confluent_operator_records = _kv(
+        "Operator (OLM): CFK package, channel, catalog, target namespaces, timeouts (operator mode):",
+        default_confluent_operator,
+    )
     return (
         confluent_external_access_records,
         confluent_images_records,
         confluent_ldap_records,
         confluent_mds_records,
         confluent_oauth_records,
+        confluent_operator_records,
         confluent_ports_records,
         confluent_routes_and_waits_records,
         confluent_sasl_records,
@@ -1109,10 +1325,16 @@ def _(
     default_flink_images,
     default_flink_license,
     default_flink_naming,
+    default_flink_operator_olm,
     default_flink_state,
+    flink_operator_mode_overrides,
+    flink_operator_source,
+    records_with_overrides,
     sortable_kv,
     widget_controlled_keys,
 ):
+    # Operator source (not helm): CMF 2.5.0 and its SQL image are the defaults shown
+    _overrides = flink_operator_mode_overrides if flink_operator_source != "helm" else {}
     def _kv(label, records):
         return sortable_kv(
             label=label,
@@ -1131,9 +1353,16 @@ def _(
         "CMF environment / compute pool / catalog names:", default_flink_naming
     )
     flink_cmf_endpoint_records = _kv("CMF endpoint:", default_flink_cmf_endpoint)
-    flink_helm_records = _kv("Helm charts:", default_flink_helm)
+    flink_helm_records = _kv(
+        "Helm charts:", records_with_overrides(default_flink_helm, _overrides)
+    )
     flink_images_records = _kv(
-        "Images (empty registry = chart default):", default_flink_images
+        "Images (empty registry = chart default):",
+        records_with_overrides(default_flink_images, _overrides),
+    )
+    flink_operator_olm_records = _kv(
+        "cp-fko through OLM (channel follows FLINK_CMF_CHART_VERSION):",
+        default_flink_operator_olm,
     )
     flink_cert_manager_records = _kv(
         "cert-manager (installed only if absent):", default_flink_cert_manager
@@ -1148,6 +1377,7 @@ def _(
         flink_images_records,
         flink_license_records,
         flink_naming_records,
+        flink_operator_olm_records,
         flink_state_records,
     )
 
@@ -1159,11 +1389,16 @@ def _(
     auth_password_input,
     component_toggle_table,
     confluent_c3_version_input,
+    confluent_deploy_mode,
     confluent_external_access_records,
     confluent_images_records,
     confluent_ldap_records,
     confluent_mds_records,
     confluent_oauth_records,
+    confluent_operator_records,
+    confluent_operator_size_presets,
+    confluent_operator_sizing_records,
+    confluent_operator_var_order,
     confluent_ports_records,
     confluent_routes_and_waits_records,
     confluent_sasl_records,
@@ -1172,6 +1407,7 @@ def _(
     confluent_storage_class_select,
     confluent_version_input,
     confluent_web_ui_auth_records,
+    connector_management_select,
     create_routes_checkbox,
     default_confluent_component_toggles,
     default_confluent_external_access,
@@ -1179,6 +1415,7 @@ def _(
     default_confluent_ldap,
     default_confluent_mds,
     default_confluent_oauth,
+    default_confluent_operator,
     default_confluent_ports,
     default_confluent_routes_and_waits,
     default_confluent_sasl,
@@ -1191,11 +1428,16 @@ def _(
     mds_enabled_checkbox,
     mds_user_store_select,
     monitoring_network_policy_checkbox,
+    operator_approval_select,
+    operator_mode_overrides,
+    operator_sasl_impl_select,
+    operator_tls_source_select,
     registry_password_input,
     sasl_enabled_checkbox,
     sasl_mechanism_select,
     sasl_protocol_select,
     size_select,
+    without_scram,
 ):
     # Merge widget-controlled values into the key/value groups the template renders
     _selected_components = {
@@ -1288,27 +1530,80 @@ def _(
         {"CONFLUENT_STORAGE_CLASS": confluent_storage_class_select.value},
     )
     print(confluent_component_toggles)
-    return
+
+    # Operator mode (plan O9): CFK components authenticate with PLAIN; with SASL impl
+    # plain the listeners accept PLAIN only, so SCRAM is dropped from both lists.
+    if confluent_deploy_mode == "operator":
+        confluent_sasl.update(
+            {k: v for k, v in operator_mode_overrides.items() if k in confluent_sasl}
+        )
+        if operator_sasl_impl_select.value == "plain":
+            confluent_sasl["CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS"] = without_scram(
+                confluent_sasl["CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS"]
+            )
+            confluent_external_access["CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS"] = (
+                without_scram(
+                    confluent_external_access["CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS"]
+                )
+            )
+        _operator_values = {
+            "CONFLUENT_OPERATOR_INSTALL_PLAN_APPROVAL": operator_approval_select.value,
+            "CONFLUENT_OPERATOR_TLS_SOURCE": operator_tls_source_select.value,
+            "CONFLUENT_OPERATOR_SASL_IMPL": operator_sasl_impl_select.value,
+            "CONFLUENT_CONNECTOR_MANAGEMENT": connector_management_select.value,
+            **ordered_values(default_confluent_operator, confluent_operator_records),
+        }
+        # Same order as 0_confluent_prepare_template_config.sh writes them
+        confluent_operator = {k: _operator_values[k] for k in confluent_operator_var_order}
+        confluent_operator_sizing = ordered_values(
+            dict_to_records(confluent_operator_size_presets[size_select.value]),
+            confluent_operator_sizing_records,
+        )
+    else:
+        confluent_operator = {}
+        confluent_operator_sizing = {}
+    return (
+        confluent_component_toggles,
+        confluent_external_access,
+        confluent_images,
+        confluent_ldap,
+        confluent_mds,
+        confluent_oauth,
+        confluent_operator,
+        confluent_operator_sizing,
+        confluent_ports,
+        confluent_routes_and_waits,
+        confluent_sasl,
+        confluent_sizing,
+        confluent_web_ui_auth,
+    )
 
 
 @app.cell
 def _(
+    confluent_operator_config,
     default_flink_cert_manager,
     default_flink_cmf_endpoint,
     default_flink_helm,
     default_flink_images,
     default_flink_license,
     default_flink_naming,
+    default_flink_operator_olm,
     default_flink_project_and_storage,
     default_flink_state,
     flink_cert_manager_records,
     flink_cmf_endpoint_records,
+    flink_cmf_resource_mode_select,
     flink_cmf_storage_class_select,
     flink_create_routes_checkbox,
     flink_helm_records,
     flink_images_records,
     flink_license_records,
     flink_naming_records,
+    flink_olm_approval_select,
+    flink_operator_olm_records,
+    flink_operator_source,
+    flink_operator_source_select,
     flink_s3_access_key_input,
     flink_s3_path_style_checkbox,
     flink_s3_secret_key_input,
@@ -1350,18 +1645,76 @@ def _(
         },
     )
     flink_license = ordered_values(default_flink_license, flink_license_records)
-    return (flink_state,)
+
+    # Flink operator settings: the explicit selects (follow = not written), plus the
+    # cp-fko block when the resolved source is not helm.
+    flink_operator_olm = {
+        _k: _select.value
+        for _k, _select in (
+            ("FLINK_OPERATOR_SOURCE", flink_operator_source_select),
+            ("FLINK_CMF_RESOURCE_MODE", flink_cmf_resource_mode_select),
+        )
+        if _select.value != "follow"
+    }
+    if flink_operator_source != "helm":
+        _olm = ordered_values(
+            default_flink_operator_olm,
+            flink_operator_olm_records,
+            {"FLINK_OLM_INSTALL_PLAN_APPROVAL": flink_olm_approval_select.value},
+        )
+        # CMF/FKO lock: an unedited channel/CSV follows the CMF chart version chosen above
+        _default_olm = {r["key"]: r["value"] for r in default_flink_operator_olm}
+        if (_olm["FLINK_OLM_CHANNEL"], _olm["FLINK_OLM_STARTING_CSV"]) == (
+            _default_olm["FLINK_OLM_CHANNEL"],
+            _default_olm["FLINK_OLM_STARTING_CSV"],
+        ):
+            try:
+                _fko = confluent_operator_config.fko_for_cmf(flink_helm["FLINK_CMF_CHART_VERSION"])
+                _olm["FLINK_OLM_CHANNEL"] = _fko["channel"]
+                _olm["FLINK_OLM_STARTING_CSV"] = _fko["csv"]
+            except KeyError:
+                pass  # the warnings cell reports the unknown CMF line
+        flink_operator_olm.update(_olm)
+    return (
+        flink_cert_manager,
+        flink_cmf_endpoint,
+        flink_helm,
+        flink_images,
+        flink_license,
+        flink_naming,
+        flink_operator_olm,
+        flink_sizing,
+        flink_state,
+    )
 
 
 @app.cell
 def _(
     cluster_id_input,
+    confluent_component_toggles,
+    confluent_deploy_mode,
+    confluent_external_access,
+    confluent_images,
+    confluent_mds,
+    confluent_operator,
+    confluent_operator_config,
+    confluent_operator_sizing,
+    confluent_sasl,
+    confluent_web_ui_auth,
     external_kafka_enabled_checkbox,
     external_sasl_mechanisms_select,
+    flink_helm,
+    flink_images,
+    flink_operator_olm,
+    flink_operator_source,
+    flink_sizing,
     flink_state,
     include_flink_checkbox,
     internal_sasl_mechanisms_select,
+    license_key_input,
     mds_enabled_checkbox,
+    operator_sasl_impl_select,
+    project_confluent_server_input,
     sasl_enabled_checkbox,
     sasl_mechanism_select,
     sasl_protocol_select,
@@ -1412,6 +1765,50 @@ def _(
         _warnings.append(
             "The s3 Flink checkpoint backend needs FLINK_S3_BUCKET set."
         )
+
+    # Operator mode: what the generator changes, then the operator-mode checks
+    # (confluent_operator_config.check, the same rules as cfo_check_config).
+    _flink_olm = include_flink_checkbox.value and flink_operator_source != "helm"
+    if confluent_deploy_mode == "operator":
+        _scram_picked = [
+            m
+            for m in [sasl_mechanism_select.value, *internal_sasl_mechanisms_select.value, *external_sasl_mechanisms_select.value]
+            if m.startswith("SCRAM-")
+        ]
+        if _scram_picked:
+            _warnings.append(
+                "Operator mode writes CONFLUENT_SASL_MECHANISM=PLAIN (CFK components use PLAIN)"
+                + (
+                    " and drops SCRAM from the listener lists (SASL implementation plain)."
+                    if operator_sasl_impl_select.value == "plain"
+                    else "; the listener lists keep SCRAM (SASL implementation scram)."
+                )
+            )
+    if confluent_deploy_mode == "operator" or _flink_olm:
+        _values = {
+            "CONFLUENT_DEPLOY_MODE": confluent_deploy_mode,
+            "PROJECT_CONFLUENT_SERVER": project_confluent_server_input.value,
+            **confluent_images,
+            **confluent_component_toggles,
+            **confluent_web_ui_auth,
+            **confluent_sasl,
+            **confluent_mds,
+            **confluent_external_access,
+            **confluent_operator,
+            **confluent_operator_sizing,
+        }
+        if include_flink_checkbox.value:
+            _values.update(
+                {**flink_sizing, **flink_helm, **flink_images, **flink_operator_olm}
+            )
+        # Only the names the checks know; secret values never go in (the license is a boolean)
+        _values = {
+            k: v for k, v in _values.items() if k in confluent_operator_config.ALLOWED_VARS
+        }
+        _result = confluent_operator_config.check(
+            _values, license_present=bool(license_key_input.value)
+        )
+        _warnings += [f"Error: {e}" for e in _result["errors"]] + _result["warnings"]
 
     security_warnings = (
         mo.callout(mo.md("\n".join(f"- {w}" for w in _warnings)), kind="warn")

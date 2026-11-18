@@ -1,0 +1,59 @@
+{#- Deployment control-center-auth with the nginx basic-auth gateway (set repo, order 21; CONFLUENT_AUTH_MODE=basic).
+    Same container as the scripts-mode sidecar (1.1_confluent_install.sh:2012-2035). Secret <auth>-gateway holds
+    nginx.conf (rendered as repo/control-center-auth-nginx.conf) and htpasswd (written by cfo_apply_front_proxy). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: apps/v1
+kind: Deployment
+{{ mac.metadata(c.name, m.ns, c.labels) }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ c.name | q }}
+  template:
+    metadata:
+      labels: {{ c.labels | j }}
+{% if c.checksum %}
+      annotations: {{ {c.checksum_annotation: c.checksum} | j }}
+{% endif %}
+    spec:
+      serviceAccountName: {{ c.service_account | q }}
+      containers:
+        - name: "auth-gateway"
+          image: {{ c.image | q }}
+          command: ["nginx", "-c", "/etc/nginx/conf/nginx.conf", "-g", "daemon off;"]
+          ports:
+            - containerPort: {{ c.port }}
+          volumeMounts:
+            - name: "gateway-conf"
+              mountPath: "/etc/nginx/conf"
+              readOnly: true
+            - name: "gateway-auth"
+              mountPath: "/etc/nginx/auth"
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: "/healthz"
+              port: {{ c.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+      volumes:
+        - name: "gateway-conf"
+          secret:
+            secretName: {{ (c.auth_secret ~ "-gateway") | q }}
+            items:
+              - key: "nginx.conf"
+                path: "nginx.conf"
+        - name: "gateway-auth"
+          secret:
+            secretName: {{ (c.auth_secret ~ "-gateway") | q }}
+            items:
+              - key: "htpasswd"
+                path: "htpasswd"

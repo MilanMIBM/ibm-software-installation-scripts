@@ -4,14 +4,15 @@ import contextlib
 import io
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
 import urllib.error
+from pathlib import Path
+from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import Mock, patch
 
 REPO = Path(__file__).resolve().parents[1]
@@ -71,9 +72,9 @@ class RoleTests(unittest.TestCase):
             "https://hub.example.test/login", 403, "Forbidden", {},
             io.BytesIO(b'{"password":"private-password"}'),
         )
-        with patch("urllib.request.urlopen", side_effect=failure):
-            with self.assertRaisesRegex(APIError, "HTTP 403") as caught:
-                request_json("https://hub.example.test/login", method="POST", body={"password": "private-password"})
+        with patch("urllib.request.urlopen", side_effect=failure), \
+                self.assertRaisesRegex(APIError, "HTTP 403") as caught:
+            request_json("https://hub.example.test/login", method="POST", body={"password": "private-password"})
         self.assertNotIn("private-password", str(caught.exception))
 
 
@@ -99,12 +100,14 @@ class ConfigGenerationTests(unittest.TestCase):
                 "src/helpers/" + name for name in [
                     "common_helpers.sh", "version_resolver.sh", "legacy_version_resolution.sh",
                     "version_catalog.py", "version_catalog.json", "legacy_version_resolution.py",
+                    # a fresh config is written in operator mode, whose KRaft presets live here
+                    "confluent_operator_config.py",
                 ]
             ]]:
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(REPO / relative, target)
-            result = subprocess.run(["zsh", str(root / generator)], text=True, capture_output=True)
+            result = subprocess.run(["zsh", str(root / generator)], text=True, capture_output=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             config_dir = root / "configs/confluent_platform_config"
             config = config_dir / "confluent_vars.sh"
@@ -113,11 +116,11 @@ class ConfigGenerationTests(unittest.TestCase):
                 "DO_ICEBERG_WATSONX_SETUP", "ICEBERG_WATSONX_CONFIG_FILE",
             ]}
             env["CONFLUENT_CONFIG_DIR"] = str(config_dir)
-            defaults = subprocess.run(["zsh", "-c", command, "test", str(config)], env=env, text=True, capture_output=True)
+            defaults = subprocess.run(["zsh", "-c", command, "test", str(config)], env=env, text=True, capture_output=True, check=False)
             self.assertEqual(defaults.returncode, 0, defaults.stderr)
             self.assertEqual(defaults.stdout.splitlines(), ["false", str(config_dir / "iceberg_watsonx_setup.sh")])
             env.update({"DO_ICEBERG_WATSONX_SETUP": "true", "ICEBERG_WATSONX_CONFIG_FILE": str(root / "custom.sh")})
-            overrides = subprocess.run(["zsh", "-c", command, "test", str(config)], env=env, text=True, capture_output=True)
+            overrides = subprocess.run(["zsh", "-c", command, "test", str(config)], env=env, text=True, capture_output=True, check=False)
             self.assertEqual(overrides.returncode, 0, overrides.stderr)
             self.assertEqual(overrides.stdout.splitlines(), ["true", str(root / "custom.sh")])
 
@@ -133,6 +136,8 @@ class EntrypointTests(unittest.TestCase):
         helpers = self.root / "src/helpers"
         helpers.mkdir(parents=True)
         shutil.copy(REPO / "src/helpers/common_helpers.sh", helpers)
+        # The full installer and x.6 read the deploy mode through confluent_helpers.sh; these tests run scripts mode.
+        shutil.copy(REPO / "src/helpers/confluent_helpers.sh", helpers)
         # ir_dispatch (common_helpers.sh) reads the run mode through this helper.
         shutil.copy(REPO / "src/helpers/install_runner_mode.sh", helpers)
         # In local mode it then checks the same-type lock (C10), which loads these.
@@ -156,10 +161,11 @@ class EntrypointTests(unittest.TestCase):
             "DO_CONFLUENT_PREP": "false", "DO_CONFLUENT_INSTALL": "false",
             "DO_CONFLUENT_STATUS": "false", "DO_CONFLUENT_INSTANCE_DETAILS": "false",
             "DO_FLINK_ADDON": "false", "DO_ICEBERG_WATSONX_SETUP": "false",
+            "CONFLUENT_DEPLOY_MODE": "scripts",
         }
 
     def full_install(self):
-        return subprocess.run(["zsh", str(self.platform / "full_installprocess-confluent_platform.sh")], env=self.env, text=True, capture_output=True)
+        return subprocess.run(["zsh", str(self.platform / "full_installprocess-confluent_platform.sh")], env=self.env, text=True, capture_output=True, check=False)
 
     def test_full_install_skips_integration_by_default(self):
         result = self.full_install()
@@ -193,7 +199,7 @@ class EntrypointTests(unittest.TestCase):
         (binaries / "oc").write_text('#!/bin/sh\nexit 0\n')
         (binaries / "oc").chmod(0o755)
         self.env.update({"PATH": str(binaries) + os.pathsep + self.env["PATH"], "OC_LOGIN": "", "CPD_URL": "https://hub.example.test", "CPD_USERNAME": "admin", "CPD_PASSWORD": "password"})
-        result = subprocess.run(["zsh", str(self.utility), "--config", str(self.config), "--service-id", "svc-selected", "--dry-run"], env=self.env, capture_output=True, text=True)
+        result = subprocess.run(["zsh", str(self.utility), "--config", str(self.config), "--service-id", "svc-selected", "--dry-run"], env=self.env, capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         trace = self.trace.read_text()
         self.assertIn("selected-connector", trace)
@@ -337,16 +343,16 @@ class SetupTests(unittest.TestCase):
 
     def test_supplied_bad_password_is_not_rotated(self):
         self.settings.env["ICEBERG_SERVICE_PASSWORD"] = "wrong-password"
-        with patch.object(integration, "password_works", return_value=False):
-            with self.assertRaisesRegex(RuntimeError, "cannot sign in"):
-                integration.setup(self.settings)
+        with patch.object(integration, "password_works", return_value=False), \
+                self.assertRaisesRegex(RuntimeError, "cannot sign in"):
+            integration.setup(self.settings)
         self.identity.assert_not_called()
         self.hub.ensure_role.assert_not_called()
 
     def test_unreachable_sid_login_does_not_trigger_repair(self):
-        with patch.object(integration, "password_works", side_effect=APIError("POST", "https://hub.example.test", 503)):
-            with self.assertRaises(APIError):
-                integration.setup(self.settings)
+        with patch.object(integration, "password_works", side_effect=APIError("POST", "https://hub.example.test", 503)), \
+                self.assertRaises(APIError):
+            integration.setup(self.settings)
         self.identity.assert_not_called()
 
     def test_missing_inputs_fail_before_contacting_services(self):
@@ -388,6 +394,89 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(self.settings.env["KUBECONFIG"], "/original/context")
         self.assertFalse(seen["path"].exists())
         self.assertNotIn("private-kubeconfig", self.output.getvalue())
+
+
+class OperatorModeTests(unittest.TestCase):
+    """Operator mode (contract 5.5): pod/connect-0 as the REST target, and CONFLUENT_CONNECTOR_MANAGEMENT=cr."""
+
+    SECRETS: ClassVar[dict[str, str]] = {
+        "iceberg.catalog.rest.auth.basic.password": "pw:with=special#chars",
+        "iceberg.catalog.s3.access-key-id": "private-access-key",
+        "iceberg.catalog.s3.secret-access-key": "private-secret-key",
+    }
+
+    def settings(self, root, **env):
+        return SimpleNamespace(namespace="streaming", port="8083", name="iceberg-sink", root=root,
+                               env={"PROJECT_CONFLUENT_SERVER": "streaming", "CFO_OWNER_ID": "local.streaming", **env})
+
+    def argv(self, connect):
+        with patch.object(integration.subprocess, "run", return_value=Mock(returncode=0, stdout="[]\n200")) as command:
+            connect.request("GET", "/connector-plugins")
+        return command.call_args.args[0]
+
+    def test_default_connect_target_keeps_todays_argv(self):
+        args = self.argv(integration.Connect(SimpleNamespace(namespace="streaming", port="8083")))
+        self.assertEqual(args[:8], ["oc", "exec", "-i", "deployment/connect", "-n", "streaming", "--", "curl"])
+
+    def test_operator_target_and_container(self):
+        connect = integration.Connect(SimpleNamespace(namespace="streaming", port="8083"),
+                                      target="pod/connect-0", container="connect")
+        args = self.argv(connect)
+        self.assertEqual(args[:10], ["oc", "exec", "-i", "pod/connect-0", "-n", "streaming", "-c", "connect", "--", "curl"])
+
+    def test_main_passes_target_container_and_management(self):
+        seen = {}
+
+        def fake_setup(settings, **kwargs):
+            seen.update(kwargs)
+
+        argv = ["x", "--repo-root", str(REPO), "--connect-target", "pod/connect-0", "--connect-container", "connect",
+                "--management", "cr", "--dry-run"]
+        with patch.object(sys, "argv", argv), patch.object(integration, "Settings", return_value=SimpleNamespace(namespace="streaming", port="8083")), \
+                patch.object(integration, "setup", side_effect=fake_setup):
+            self.assertEqual(integration.main(), 0)
+        self.assertEqual(seen["management"], "cr")
+        self.assertEqual((seen["connect"].target, seen["connect"].container), ("pod/connect-0", "connect"))
+        self.assertTrue(seen["dry_run"])
+
+    def test_state_file_gets_the_secret_once_with_mode_600(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "cfg/confluent_connect_state.json"
+            self.assertTrue(integration.connect_state_add_secret(state, "iceberg-watsonx-credentials"))
+            self.assertFalse(integration.connect_state_add_secret(state, "iceberg-watsonx-credentials"))
+            data = json.loads(state.read_text())
+            self.assertEqual(data["mounted_secrets"], ["iceberg-watsonx-credentials"])
+            self.assertEqual(data["schema_version"], 1)
+            self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+
+    def test_secret_values_reach_oc_through_stdin_only(self):
+        cr = integration.ConnectorCR(self.settings(REPO))
+        with patch.object(integration.subprocess, "run", return_value=Mock(returncode=0, stdout="", stderr="")) as command:
+            cr.apply_secret({"topics": "t", **self.SECRETS})
+        args, kwargs = command.call_args.args[0], command.call_args.kwargs
+        self.assertEqual(args, ["oc", "apply", "-f", "-"])
+        manifest = json.loads(kwargs["input"])
+        text = manifest["stringData"][integration.CR_SECRET_KEY]
+        self.assertIn("iceberg.catalog.rest.auth.basic.password=pw\\:with\\=special\\#chars", text)
+        self.assertNotIn("topics", text)
+        self.assertEqual(manifest["metadata"]["labels"]["confluent.ibm-scripts/installed-by"], "local.streaming")
+
+    @unittest.skipUnless((REPO / ".venv/bin/python").exists(), "needs the repo venv (jinja2, PyYAML)")
+    def test_connector_cr_references_the_mounted_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "state.json"
+            integration.connect_state_add_secret(state, integration.CR_SECRET)
+            cr = integration.ConnectorCR(self.settings(REPO, CONFLUENT_CONNECT_STATE_FILE=str(state)))
+            config = {"name": "iceberg-sink", "connector.class": integration.CONNECTOR_CLASS, "tasks.max": "2",
+                      "topics": "orders", **self.SECRETS}
+            text = cr.render(config)
+        self.assertIn("kind: Connector", text)
+        self.assertIn("taskMax: 2", text)
+        self.assertIn("topics: orders", text)
+        for prop in self.SECRETS:
+            self.assertIn(f"{prop}: ${{file:/mnt/secrets/{integration.CR_SECRET}/{integration.CR_SECRET_KEY}:{prop}}}", text)
+        for value in self.SECRETS.values():
+            self.assertNotIn(value, text)
 
 
 if __name__ == "__main__":

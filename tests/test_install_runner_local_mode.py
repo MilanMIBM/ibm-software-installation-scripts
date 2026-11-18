@@ -91,7 +91,9 @@ CONFIGS = {
         "PROJECT_CONCERT_INSTALLER": "concert-installer", "PROJECT_CONCERT_DATASTORES": "concert-datastores",
         "CONCERT_IMAGE_SOURCE": "entitled"}),
     "confluent_platform_config/confluent_vars.sh": (False, {
-        "PROJECT_CONFLUENT_SERVER": "confluent", "PROJECT_CONFLUENT_FLINK": "flink"}),
+        "PROJECT_CONFLUENT_SERVER": "confluent", "PROJECT_CONFLUENT_FLINK": "flink",
+        # Scripts mode explicitly: the golden predates the operator mode (contract D3).
+        "CONFLUENT_DEPLOY_MODE": "scripts"}),
     "datastax_mc_config/datastax_mc_vars.sh": (False, {
         "MC_VERSION": "1.0.0", "MC_RELEASE_NAME": "mission-control", "MC_NAMESPACE": "mission-control",
         "MC_PLANE": "control", "MC_SCC_MODE": "restricted-v2"}),

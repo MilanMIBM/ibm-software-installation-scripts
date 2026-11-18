@@ -5,6 +5,10 @@
 #   files       the upstream cert-manager manifest the Flink add-on applies
 #   connectors  Kafka Connect ZIPs resolved through the Confluent Hub API (as
 #               x.3_confluent_add_connector.sh does) from MIRROR_CONFLUENT_CONNECTORS_FILE
+#   operators   operator mode: the CFK (cfk-operator) and cp-fko (flink-operator-olm)
+#               OLM packages for the shared operators track; with images, cfk-operator
+#               adds the CFK init container and (MIRROR_CONFLUENT_OPERATOR_DIGEST) the
+#               docker.io confluent-operator image
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
@@ -38,6 +42,50 @@ if has images; then
     comp keycloak   && preg_emit_image "${CONFLUENT_KEYCLOAK_IMAGE:-$(vr_catalog confluent/keycloak_image)}" keycloak
     comp flink-runtime && preg_emit_image "${FLINK_APPLICATION_IMAGE:-$(vr_catalog flink/application_image)}" flink-runtime
     comp flink-sql     && preg_emit_image "${FLINK_SQL_IMAGE:-$(vr_catalog flink/sql_image)}" flink-sql
+fi
+
+# Operator mode (docs/confluent-operator-mode.md). A catalog value with a literal
+# fallback, so a broken catalog never empties a channel or a tag.
+_cat() { vr_catalog "$1" 2>/dev/null || print -r -- "$2"; }
+# cp-fko channel FLINK_CMF_CHART_VERSION needs (the CMF/FKO lock the Flink scripts enforce).
+_fko_channel() {
+    local out
+    if out="$(preg_python -I "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_config.py" fko-for-cmf "${FLINK_CMF_CHART_VERSION:-}" 2>/dev/null)" \
+            && [[ -n "${out}" ]]; then
+        print -r -- "${out%% *}"
+        return 0
+    fi
+    out="$(_cat confluent/operator/fko_channel stable-v1.16)"
+    preg_warn "flink-operator-olm: FLINK_CMF_CHART_VERSION='${FLINK_CMF_CHART_VERSION:-}' has no cp-fko pairing in the version catalog - mirroring channel ${out} (set FLINK_OLM_CHANNEL to choose)" >&2
+    print -r -- "${out}"
+}
+
+# OLM packages: the shared operators track mirrors the catalog index, the bundles and
+# their relatedImages; 3.4 renames the mirrored catalogs back, so the Subscriptions
+# keep source certified-operators.
+# K8S-EXTENSION(K8): a Kubernetes (no OLM) variant would emit the CFK / cp-fko Helm charts here instead.
+if has operators; then
+    comp cfk-operator && preg_emit_operator "${CONFLUENT_OPERATOR_CATALOG_SOURCE:-certified-operators}" \
+        confluent-for-kubernetes "${CONFLUENT_OPERATOR_CHANNEL:-$(_cat confluent/operator/cfk_channel 3.4)}" cfk-operator
+    comp flink-operator-olm && preg_emit_operator "${FLINK_OLM_CATALOG_SOURCE:-certified-operators}" \
+        cp-fko "${FLINK_OLM_CHANNEL:-$(_fko_channel)}" flink-operator-olm
+fi
+
+# CFK images outside the bundle: the init container every CR names (tags mode), and the
+# operator image itself, which the CSV runs from docker.io by digest (V17: whether
+# oc-mirror carries it through relatedImages is unverified). The digest cannot be
+# derived offline - see MIRROR_CONFLUENT_OPERATOR_DIGEST in the mirror config.
+if has images && comp cfk-operator; then
+    preg_emit_image "${CONFLUENT_OPERATOR_INIT_IMAGE:-${REG}/confluent-init-container:$(_cat confluent/operator/cfk_init_tag 3.4.0)}" cfk-operator
+    if [[ -n "${MIRROR_CONFLUENT_OPERATOR_DIGEST:-}" ]]; then
+        dg="${MIRROR_CONFLUENT_OPERATOR_DIGEST}"
+        [[ "${dg}" == sha256:* ]] || dg="sha256:${dg}"
+        [[ "${dg}" =~ '^sha256:[0-9a-f]{64}$' ]] \
+            || preg_die "MIRROR_CONFLUENT_OPERATOR_DIGEST='${MIRROR_CONFLUENT_OPERATOR_DIGEST}' is not a sha256 digest (64 hex characters)"
+        preg_emit_image "docker.io/confluentinc/confluent-operator@${dg}" cfk-operator
+    else
+        preg_info "cfk-operator: MIRROR_CONFLUENT_OPERATOR_DIGEST is empty - docker.io/confluentinc/confluent-operator is left to oc-mirror (bundle relatedImages, unverified). Read the digest from the CSV: oc get csv <cfk csv> -n <ns> -o jsonpath='{.spec.install.spec.deployments[0].spec.template.spec.containers[0].image}'" >&2
+    fi
 fi
 
 # Flink charts: the chart itself (charts) and every image it renders (images).

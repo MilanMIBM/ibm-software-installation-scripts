@@ -1,0 +1,121 @@
+{
+  "set": "repo",
+  "namespace": "confluent",
+  "files": [
+    {
+      "order": 10,
+      "stage": 1,
+      "path": "repo/10-networkpolicy-cfk-kafka-listeners.yaml",
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "name": "cfk-kafka-listeners",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 11,
+      "stage": 1,
+      "path": "repo/11-networkpolicy-cfk-monitoring-internal.yaml",
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "name": "cfk-monitoring-internal",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 21,
+      "stage": 1,
+      "path": "repo/21-deployment-control-center-auth.yaml",
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "name": "control-center-auth",
+      "namespace": "confluent",
+      "wait": "rollout",
+      "apply": true
+    },
+    {
+      "order": 22,
+      "stage": 1,
+      "path": "repo/22-service-control-center-auth.yaml",
+      "apiVersion": "v1",
+      "kind": "Service",
+      "name": "control-center-auth",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 30,
+      "stage": 1,
+      "path": "repo/30-route-connect.yaml",
+      "apiVersion": "route.openshift.io/v1",
+      "kind": "Route",
+      "name": "connect",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 31,
+      "stage": 1,
+      "path": "repo/31-route-control-center.yaml",
+      "apiVersion": "route.openshift.io/v1",
+      "kind": "Route",
+      "name": "control-center",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 32,
+      "stage": 1,
+      "path": "repo/32-route-ksqldb-server.yaml",
+      "apiVersion": "route.openshift.io/v1",
+      "kind": "Route",
+      "name": "ksqldb-server",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 33,
+      "stage": 1,
+      "path": "repo/33-route-mds.yaml",
+      "apiVersion": "route.openshift.io/v1",
+      "kind": "Route",
+      "name": "mds",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 34,
+      "stage": 1,
+      "path": "repo/34-route-rest-proxy.yaml",
+      "apiVersion": "route.openshift.io/v1",
+      "kind": "Route",
+      "name": "rest-proxy",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    },
+    {
+      "order": 35,
+      "stage": 1,
+      "path": "repo/35-route-schema-registry.yaml",
+      "apiVersion": "route.openshift.io/v1",
+      "kind": "Route",
+      "name": "schema-registry",
+      "namespace": "confluent",
+      "wait": "none",
+      "apply": true
+    }
+  ],
+  "disabled": [],
+  "info": [
+    "MDS/RBAC in operator mode is phase 5 (unverified: V5, V21)"
+  ],
+  "warnings": []
+}

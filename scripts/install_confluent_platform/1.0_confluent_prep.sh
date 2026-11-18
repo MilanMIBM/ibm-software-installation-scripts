@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 : "${ENV_TARGET:=confluent}"
 # --- Universal env load: walk up to repo root (env_bootstrap.sh), source it once ---
 _b="${SCRIPT_DIR}"; while [[ "${_b}" != "/" && ! -f "${_b}/env_bootstrap.sh" ]]; do _b="$(dirname "${_b}")"; done; source "${_b}/env_bootstrap.sh"; unset _b
+source "${_CP4D_REPO_ROOT}/src/helpers/confluent_helpers.sh"
 
 # ==============================================================================
 # Confluent Platform - preparation
@@ -45,6 +46,7 @@ while (( $# > 0 )); do
 done
 
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 SA="confluent"
@@ -91,7 +93,17 @@ echo "[INFO] Configuration validated. Installing Confluent Platform ${CONFLUENT_
 # ------------------------------------------------------------------------------
 # Project
 # ------------------------------------------------------------------------------
+if cf_is_operator_mode; then
+    # Operator mode: the operators step (1.0o) made the namespace with our labels
+    # (part-of, installed-by) through `oc apply`; a label-less apply here would
+    # drop them, and x.0 trusts them. Same helper and labels as 1.0o: create with
+    # labels when absent, leave an existing namespace as-is.
+    (( ${+functions[_cfo_owner]} )) || source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    _cfo_owner
+    cp4d_ensure_namespace "${NS}" "${CFO_LABEL_PART_OF}" "${CFO_LABEL_OWNER_KEY}=${REPLY}"
+else
 oc create namespace "${NS}" --dry-run=client -o yaml | oc apply -f -
+fi
 oc project "${NS}" >/dev/null
 
 # ------------------------------------------------------------------------------
@@ -117,8 +129,25 @@ fi
 # SCC - the confluentinc/cp-* images run as a fixed non-root uid (appuser),
 # which the default restricted-v2 SCC forbids.
 # ------------------------------------------------------------------------------
+if cf_is_operator_mode; then
+    # Operator mode (plan 15.13 item 1): CFK pods run with podSecurityContext {}
+    # under restricted-v2 and need no SCC grant. The repo-managed identity store
+    # (bundled OpenLDAP for MDS user store LDAP, bundled Keycloak for OAUTH without
+    # an external IdP) still runs bitnami/keycloak images that need a fixed uid -
+    # under restricted-v2 OpenLDAP crash-loops writing slapd.ldif (seen in a live
+    # install test) - so SA ${SA}, which those Deployments use, keeps anyuid then.
+    if [[ "${CONFLUENT_MDS_ENABLED:-false}" == true ]] && {
+           [[ "${CONFLUENT_MDS_USER_STORE:-LDAP}" == LDAP ]] ||
+           [[ "${CONFLUENT_MDS_USER_STORE:-}" == OAUTH && -z "${CONFLUENT_MDS_OAUTH_JWKS_URL:-}" ]]; }; then
+        oc adm policy add-scc-to-user anyuid -z "${SA}" -n "${NS}"
+        echo "[INFO] Operator mode: granted anyuid to serviceaccount/${SA} for the bundled identity store only (CFK pods run under restricted-v2)."
+    else
+        echo "[INFO] Operator mode: no SCC grant (CFK pods run under restricted-v2)."
+    fi
+else
 oc adm policy add-scc-to-user anyuid -z "${SA}" -n "${NS}"
 echo "[INFO] Granted anyuid SCC to serviceaccount/${SA} in ${NS}."
+fi
 
 # ------------------------------------------------------------------------------
 # Basic-auth credentials for the web UIs
@@ -299,7 +328,11 @@ fi
 # Defaulted rather than assumed present: set -u is active, and a config file
 # generated before this key existed would otherwise abort the run.
 : "${CONFLUENT_INSTALL_CONTROL_CENTER:=true}"
-if [[ "${CONFLUENT_INSTALL_CONTROL_CENTER}" == "true" \
+if cf_is_operator_mode; then
+    # Operator mode: the CFK pods carry other labels (plan 15.13 item 5); the
+    # install step renders NetworkPolicy 'cfk-monitoring-internal' instead.
+    echo "[INFO] Operator mode: no 'monitoring-internal' NetworkPolicy here (the install step applies 'cfk-monitoring-internal')."
+elif [[ "${CONFLUENT_INSTALL_CONTROL_CENTER}" == "true" \
    && "${CONFLUENT_MONITORING_NETWORK_POLICY}" == "true" ]]; then
     oc apply -f - >/dev/null <<EOF
 apiVersion: networking.k8s.io/v1

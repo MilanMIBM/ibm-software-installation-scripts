@@ -1,0 +1,12 @@
+{#- ConfluentRolebinding mds-super-systemadmin (set platform, order 90, MDS only; matrix X4, phase 5). -#}
+{% import "_macros.yaml.j2" as mac %}
+apiVersion: platform.confluent.io/v1beta1
+kind: ConfluentRolebinding
+{{ mac.metadata(c.name, m.ns, m.labels) }}
+spec:
+  principal:
+    type: "user"
+    name: {{ c.principal | q }}
+  role: "SystemAdmin"
+  kafkaRestClassRef:
+    name: "default"

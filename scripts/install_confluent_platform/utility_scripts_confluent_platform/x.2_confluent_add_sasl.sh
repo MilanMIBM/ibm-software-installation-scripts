@@ -114,6 +114,7 @@ STATUS="${SCRIPT_DIR}/../1.2_confluent_status.sh"
 [[ -f "${INSTALL}" ]] || { echo "[ERROR] Not found: ${INSTALL}" >&2; exit 1; }
 
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 : "${CONFLUENT_SASL_ADMIN_USER:=confluent-admin}"
@@ -122,6 +123,25 @@ NS="${PROJECT_CONFLUENT_SERVER}"
 : "${CONFLUENT_BROKER_INTERNAL_PORT:=29092}"
 [[ -n "${CLIENTS_OVERRIDE}" ]] && CONFLUENT_SASL_CLIENTS="${CLIENTS_OVERRIDE}"
 for _k in "${(@k)_SET}"; do typeset -gx "${_k}=${_SET[$_k]}"; done
+if cf_is_operator_mode; then
+    # CFK components authenticate with native PLAIN only (contract D10); SCRAM on the listeners needs the
+    # configOverrides implementation (plan 15.6). Unset values take the operator-mode defaults.
+    : "${CONFLUENT_SASL_MECHANISM:=PLAIN}"
+    if [[ "${CONFLUENT_SASL_MECHANISM:u}" != PLAIN ]]; then
+        echo "[ERROR] Operator mode uses SASL/PLAIN for the platform (CFK components support PLAIN only);" >&2
+        echo "[ERROR] --mechanism / CONFLUENT_SASL_MECHANISM='${CONFLUENT_SASL_MECHANISM}' is not possible. Use --mechanism PLAIN." >&2
+        exit 1
+    fi
+    if [[ "$(cfo_sasl_impl)" == plain ]]; then
+        : "${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS:=PLAIN}"
+        : "${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS:=PLAIN}"
+        if [[ "${CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS:u},${CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS:u}" == *SCRAM* ]]; then
+            echo "[ERROR] SCRAM needs CONFLUENT_OPERATOR_SASL_IMPL=scram (configOverrides; outside Confluent Support) or use PLAIN" >&2
+            exit 1
+        fi
+    fi
+    export CONFLUENT_SASL_MECHANISM CONFLUENT_INTERNAL_KAFKA_SASL_MECHANISMS CONFLUENT_EXTERNAL_KAFKA_SASL_MECHANISMS
+fi
 source "${SCRIPT_DIR}/../confluent_kafka_security.sh"
 if ! $DISABLE; then
     kafka_security_validate || exit 1
@@ -146,6 +166,14 @@ persist_var() {
 
 oc get namespace "${NS}" &>/dev/null || { echo "[ERROR] Project '${NS}' does not exist." >&2; exit 1; }
 
+if cf_is_operator_mode; then
+    # State from the Kafka CR's listeners (cf_live_security), not from a broker StatefulSet.
+    read -r _live_proto _live_mech _live_rest <<< "$(cf_live_security "${NS}")"
+    case "${_live_proto}" in
+        SASL_*) _state="SASL enabled (${_live_proto} / ${_live_mech})" ;;
+        *)      _state="PLAINTEXT - Kafka is open to anyone who can reach it" ;;
+    esac
+else
 _current="$(oc get sts broker -n "${NS}" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KAFKA_LISTENER_SECURITY_PROTOCOL_MAP")].value}' 2>/dev/null || true)"
 case "${_current}" in
@@ -153,8 +181,22 @@ case "${_current}" in
             _state="SASL enabled (${_live_proto} / ${_live_mech})" ;;
     *)      _state="PLAINTEXT - Kafka is open to anyone who can reach it" ;;
 esac
+fi
 
 _client_list="${CONFLUENT_SASL_CLIENTS//,/ }"
+
+if $ROTATE && cf_is_operator_mode; then
+    # Operator mode: CFK rolls the brokers one at a time, so a new admin (inter-broker) password would leave
+    # the cluster split between old and new passwords mid-roll. --rotate rotates the client users only.
+    if [[ -z "${_client_list//[[:space:]]/}" ]]; then
+        echo "[ERROR] Operator mode: --rotate rotates client passwords only, and no client users are configured" >&2
+        echo "[ERROR] (CONFLUENT_SASL_CLIENTS / --clients is empty). Nothing to rotate." >&2
+        exit 1
+    fi
+    echo "[INFO] Operator mode: --rotate regenerates the client passwords only (${_client_list})."
+    echo "[WARN] The admin / inter-broker password ('${CONFLUENT_SASL_ADMIN_USER}') is NOT rotated: the rolling restart"
+    echo "[WARN] would run brokers with mixed inter-broker passwords. Rotating it needs a planned full restart (not automated)."
+fi
 
 echo "=============================================================================="
 echo " Kafka client authentication (SASL) - project '${NS}'"
@@ -216,7 +258,9 @@ else
     for _u in "${CONFLUENT_SASL_ADMIN_USER}" ${=_client_list}; do
         _existing="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" \
             -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode 2>/dev/null || true)"
-        if [[ -n "${_existing}" ]] && ! $ROTATE; then
+        if [[ -n "${_existing}" ]] && { ! $ROTATE \
+            || { cf_is_operator_mode && [[ "${_u}" == "${CONFLUENT_SASL_ADMIN_USER}" ]]; }; }; then
+            # (operator mode: --rotate never touches the admin / inter-broker password, see above)
             _pw[$_u]="${_existing}"
         else
             _pw[$_u]="$(gen_pw)"
@@ -234,7 +278,11 @@ else
     # cluster will not form. Written over whatever the brokers currently speak
     # (PLAINTEXT on a first enable, the live SASL listener when adding clients).
     # Nothing to do when no listener uses SCRAM: PLAIN reads the secret itself.
-    if [[ -n "$(kafka_scram_mechanisms_in_use)" ]]; then
+    if cf_is_operator_mode; then
+        # Operator mode: the listeners keep PLAIN for the platform, so nothing breaks before the roll; the
+        # SCRAM users (impl scram) are registered after 1.1 has re-derived the CFK secrets (step 2).
+        :
+    elif [[ -n "$(kafka_scram_mechanisms_in_use)" ]]; then
         echo "[INFO] Registering SCRAM credentials in Kafka..."
         _pairs=()
         for _u in "${(@k)_pw}"; do _pairs+=("${_u}=${_pw[$_u]}"); done
@@ -259,6 +307,22 @@ echo "--------------------------------------------------------------------------
 
 "${INSTALL}"
 
+if cf_is_operator_mode && ! $DISABLE && [[ "$(cfo_sasl_impl)" == scram ]]; then
+    # CONFLUENT_OPERATOR_SASL_IMPL=scram: SCRAM credentials live in Kafka; register them over the internal
+    # listener with the (new) admin password now that the brokers run with the re-derived PLAIN secrets.
+    if (( ! ${+functions[kafka_register_scram_users_cfk]} )); then
+        echo "[ERROR] kafka_register_scram_users_cfk is missing from confluent_kafka_security.sh." >&2
+        exit 1
+    fi
+    echo "[INFO] Registering SCRAM credentials in Kafka (CONFLUENT_OPERATOR_SASL_IMPL=scram)..."
+    _pairs=()
+    for _u in "${(@k)_pw}"; do _pairs+=("${_u}=${_pw[$_u]}"); done
+    if ! kafka_register_scram_users_cfk "${NS}" "${_pw[${CONFLUENT_SASL_ADMIN_USER}]}" "${_pairs[@]}"; then
+        echo "[ERROR] Registering the SCRAM users failed; PLAIN clients are unaffected." >&2
+        exit 1
+    fi
+fi
+
 # ------------------------------------------------------------------------------
 # Step 3 - client connection details
 # ------------------------------------------------------------------------------
@@ -269,6 +333,54 @@ echo "--------------------------------------------------------------------------
 
 if $DISABLE; then
     echo "[WARN] Kafka now accepts unauthenticated connections."
+elif cf_is_operator_mode; then
+    # Operator mode: the same file, with the CFK bootstrap (Kafka CR status) and the CA of the active TLS source.
+    OUT="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_sasl_clients.properties"
+    mkdir -p "$(dirname "${OUT}")"
+    _bootstrap="$(cf_bootstrap_internal "${NS}")"
+    _truststore=""
+    if [[ "${CONFLUENT_SASL_PROTOCOL}" == "SASL_SSL" ]]; then
+        _ca_out="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_kafka_internal_ca.crt"
+        cf_ca_pem "${NS}" internal > "${_ca_out}"
+        _truststore="${_ca_out}"
+    fi
+    {
+        echo "# Written by $(basename $0) on $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo "# Kafka client properties for the SASL-enabled cluster in '${NS}' (operator mode)."
+        echo "# One block per client - copy the one you need into your client config."
+        echo "# In-cluster listener: ${CONFLUENT_SASL_PROTOCOL}, accepting $(kafka_internal_mechanisms)."
+        echo "# Each block uses ${CONFLUENT_SASL_MECHANISM}. To use another accepted mechanism,"
+        echo "# replace BOTH sasl.* lines of the block with one of the pairs listed under it."
+        echo ""
+        for _u in ${=_client_list}; do
+            _p="$(oc get secret "${CONFLUENT_SASL_SECRET}" -n "${NS}" -o jsonpath="{.data.${_u}}" 2>/dev/null | base64 --decode || true)"
+            [[ -z "${_p}" ]] && continue
+            echo "# ---- ${_u} ----"
+            echo "# bootstrap.servers=${_bootstrap}"
+            kafka_client_properties "${CONFLUENT_SASL_PROTOCOL}" "${CONFLUENT_SASL_MECHANISM}" \
+                "${_u}" "${_p}" "${_truststore:+/path/to/confluent_kafka_internal_ca.crt}" | sed 's/^/# /'
+            kafka_client_alternatives "${_u}" "${_p}" "$(kafka_internal_mechanisms)" "${CONFLUENT_SASL_MECHANISM}"
+            echo ""
+        done
+    } > "${OUT}"
+    chmod 600 "${OUT}"
+    echo "[INFO] Client properties written to ${OUT##*/} (mode 600)."
+    echo ""
+    echo "  bootstrap.servers=${_bootstrap}"
+    echo "  security.protocol=${CONFLUENT_SASL_PROTOCOL}"
+    echo "  sasl.mechanism=${CONFLUENT_SASL_MECHANISM}   (the listeners accept: $(kafka_internal_mechanisms))"
+    [[ -n "${_truststore}" ]] && echo "  ssl.truststore.type=PEM  (CA: ${_truststore#${REPO_ROOT}/})"
+    echo ""
+    echo "  Read a client's password with:"
+    echo "    oc get secret ${CONFLUENT_SASL_SECRET} -n ${NS} -o jsonpath='{.data.<client>}' | base64 --decode"
+    echo ""
+    # The details file (1.3) carries the client security settings the other tools read.
+    _details="${SCRIPT_DIR}/../1.3_confluent_get_instance_details.sh"
+    if [[ -f "${_details}" ]]; then
+        echo "[INFO] Refreshing confluent_instance_details.sh (1.3_confluent_get_instance_details.sh)..."
+        zsh "${_details}" >/dev/null 2>&1 || echo "[WARN] Could not refresh the details file; run 1.3 by hand."
+    fi
+    echo "  Add a client later:  $(basename $0) --clients existing,new"
 else
     OUT="${CONFIGS_ROOT:-${REPO_ROOT}/configs}/confluent_platform_config/confluent_sasl_clients.properties"
     mkdir -p "$(dirname "${OUT}")"

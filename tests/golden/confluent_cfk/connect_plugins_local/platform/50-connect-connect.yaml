@@ -1,0 +1,81 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Connect
+metadata:
+  name: connect
+  namespace: confluent
+  labels:
+    app.kubernetes.io/part-of: confluent
+    confluent.ibm-scripts/installed-by: local.confluent
+    confluent.ibm-scripts/deploy-mode: operator
+spec:
+  replicas: 1
+  image:
+    application: docker.io/cnfldemos/cp-server-connect-datagen:0.6.7-8.0.0
+    init: docker.io/confluentinc/confluent-init-container:3.4.0
+  podTemplate:
+    podSecurityContext: {}
+    resources:
+      requests:
+        cpu: '1'
+        memory: 2Gi
+      limits:
+        cpu: '2'
+        memory: 4Gi
+  injectLabels:
+    app.kubernetes.io/part-of: confluent
+  license:
+    secretRef: confluent-license
+  groupID: compose-connect-group
+  internalTopicReplicationFactor: 3
+  keyConverterType: org.apache.kafka.connect.storage.StringConverter
+  valueConverterType: io.confluent.connect.avro.AvroConverter
+  build:
+    type: onDemand
+    onDemand:
+      plugins:
+        confluentHub:
+        - owner: confluentinc
+          name: kafka-connect-datagen
+          version: latest
+        url:
+        - name: kafka-connect-jdbc
+          archivePath: https://example.com/plugins/kafka-connect-jdbc-10.8.0.zip
+          checksum: '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
+  mountedVolumes:
+    volumes:
+    - name: local-plugins
+      persistentVolumeClaim:
+        claimName: connect-plugins
+    volumeMounts:
+    - name: local-plugins
+      mountPath: /mnt/local-plugins
+  dependencies:
+    kafka:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    producer:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    consumer:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    admin:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+      authentication:
+        type: plain
+        jaasConfig:
+          secretRef: confluent-sasl-cfk-client
+    schemaRegistry:
+      url: http://schema-registry.confluent.svc.cluster.local:8081
+  configOverrides:
+    server:
+    - plugin.path=/usr/share/java,/usr/share/confluent-hub-components,/mnt/plugins,/mnt/local-plugins

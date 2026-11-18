@@ -64,6 +64,73 @@ while (( $# > 0 )); do
     esac
 done
 
+# ==============================================================================
+# CMF resources as CFK custom resources (FLINK_CMF_RESOURCE_MODE=cfk, H25): the
+# JAR sample is a FlinkApplication CR in FLINK_CFK_NAMESPACE, rendered by
+# confluent_cfk_render.py (cpu as a string, flinkVersion capped at the CRD enum),
+# applied and waited on through .status.jobStatus.state; --delete deletes the CR.
+# No confluent CLI needed. --sql stays on the CLI (there is no CRD for it).
+# ==============================================================================
+if [[ "${MODE}" == "application" && "$(cf_flink_cmf_resource_mode)" == cfk ]]; then
+    source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+    export DRY_RUN
+    eval "${OC_LOGIN}"
+    cf_operator_guard flink || exit $?
+    export CFO_OWNER_ID="${CFO_OWNER_ID:-$(cfo_owner_id)}"
+    NS="${PROJECT_CONFLUENT_FLINK}"
+    CFK_NS="${FLINK_CFK_NAMESPACE:-${NS}}"
+    _res=flinkapplications.platform.confluent.io
+    _cfo_int "${CONFLUENT_OPERATOR_COMPONENT_TIMEOUT:-}" 600; _t="${REPLY}"
+    if [[ "${DELETE}" == "true" ]]; then
+        if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "[INFO] --dry-run: would delete FlinkApplication/${JOB_NAME} in ${CFK_NS}. Nothing was deleted."
+            exit 0
+        fi
+        echo "[INFO] Deleting FlinkApplication/${JOB_NAME} in ${CFK_NS}..."
+        oc delete "${_res}" "${JOB_NAME}" -n "${CFK_NS}" --wait=false --ignore-not-found
+        _cfo_wait_gone "${CFK_NS}" "${_res}" "${JOB_NAME}" "${_t}" 1 1 "FlinkApplication/${JOB_NAME}" \
+            || { echo "[ERROR] FlinkApplication/${JOB_NAME} not gone after ${_t}s." >&2; exit 1; }
+        echo "[INFO] Deleted."
+        exit 0
+    fi
+    _args="$(cfo_python -c 'import json,sys
+print(json.dumps({"name": sys.argv[1], "parallelism": 1, "upgrade_mode": "stateless", "state": "running",
+                  "jar_uri": "local:///opt/flink/examples/streaming/StateMachineExample.jar"}))' "${JOB_NAME}")"
+    cfo_render flink-app "${CF_FLINK_RENDER_ROOT}/cfk" "${_args}" || exit 1
+    _app_file="${CFO_MANIFEST:h:h}/$(_cfo_olm_py manifest-files --manifest "${CFO_MANIFEST}" | cut -f1 | head -1)"
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        echo "[INFO] --dry-run: would apply this FlinkApplication in ${CFK_NS} (${_app_file})."
+        cat "${_app_file}"
+        if [[ -n "$(oc get namespace "${CFK_NS}" -o name --ignore-not-found 2>/dev/null || true)" ]]; then
+            cfo_apply_manifest "${CFO_MANIFEST}" || echo "[WARN] The server dry-run refused the FlinkApplication (see above)." >&2
+        fi
+        exit 0
+    fi
+    if [[ -z "$(oc get flinkenvironments.platform.confluent.io "${FLINK_ENVIRONMENT}" -n "${CFK_NS}" -o name --ignore-not-found 2>/dev/null || true)" ]]; then
+        echo "[ERROR] FlinkEnvironment/${FLINK_ENVIRONMENT} is not in ${CFK_NS}. Run 1.1_flink_install.sh first." >&2
+        exit 1
+    fi
+    echo "[INFO] Applying FlinkApplication/${JOB_NAME} in ${CFK_NS}..."
+    cfo_apply_manifest "${CFO_MANIFEST}" || exit 1
+    echo "[INFO] Waiting for the job to start..."
+    if cfo_wait_status_field "${CFK_NS}" "FlinkApplication/${JOB_NAME}" '{.status.jobStatus.state}' RUNNING 300; then
+        echo "[INFO] Job is RUNNING."
+    else
+        echo "[WARN] Inspect it with:"
+        echo "[WARN]   oc get ${_res} ${JOB_NAME} -n ${CFK_NS} -o yaml"
+        echo "[WARN]   oc get flinkdeployment ${JOB_NAME} -n ${NS} -o yaml"
+        echo "[WARN]   oc logs -n ${NS} -l app=${JOB_NAME} --tail=100"
+    fi
+    echo "[INFO] Stop it:  ./x.3_flink_sample_job.sh --delete"
+    if [[ "${FOLLOW_LOGS}" == "true" ]]; then
+        echo ""
+        echo "[INFO] Following job logs (Ctrl-C to stop)..."
+        oc logs -n "${NS}" -l "app=${JOB_NAME}" --tail=50 -f 2>/dev/null || \
+            echo "[WARN] No pods matched app=${JOB_NAME} - the job may not have started yet."
+    fi
+    exit 0
+fi
+
 if ! command -v confluent &>/dev/null; then
     echo "[ERROR] The confluent CLI is required for this script." >&2
     exit 1

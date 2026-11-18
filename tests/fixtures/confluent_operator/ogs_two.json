@@ -1,0 +1,30 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "operators.coreos.com/v1",
+      "kind": "OperatorGroup",
+      "metadata": {
+        "name": "global-operators",
+        "namespace": "openshift-operators"
+      },
+      "spec": {},
+      "status": {}
+    },
+    {
+      "apiVersion": "operators.coreos.com/v1",
+      "kind": "OperatorGroup",
+      "metadata": {
+        "name": "confluent-og",
+        "namespace": "confluent"
+      },
+      "spec": {
+        "targetNamespaces": [
+          "confluent"
+        ]
+      },
+      "status": {}
+    }
+  ]
+}

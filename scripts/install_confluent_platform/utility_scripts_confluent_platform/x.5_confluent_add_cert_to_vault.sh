@@ -125,6 +125,7 @@ CPD_URL="${CPD_URL%/}"
 # Find the certificates on the Confluent cluster
 # ------------------------------------------------------------------------------
 eval "${OC_LOGIN}"
+cf_operator_guard platform || exit $?
 
 NS="${PROJECT_CONFLUENT_SERVER}"
 : "${CONFLUENT_EXTERNAL_TLS_SECRET:=confluent-kafka-tls}"
@@ -146,7 +147,17 @@ for _c in "${CANDIDATES[@]}"; do
     IFS='|' read -r _kind _k8s _name _what <<< "${_c}"
     [[ -n "${ONLY}" && "${ONLY}" != "${_kind}" ]] && continue
 
-    _pem="$(oc get secret "${_k8s}" -n "${NS}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 --decode 2>/dev/null || true)"
+    if cf_is_operator_mode; then
+        # Operator mode (CONFLUENT_DEPLOY_MODE=operator): cf_ca_pem reads the CA of the TLS
+        # source. CONFLUENT_OPERATOR_TLS_SOURCE=cfk: the in-cluster CA is the one CFK signs
+        # with, tls.crt of ca-pair-sslcerts; repo (default) and the external CA: ca.crt of
+        # the secrets above, as in scripts mode.
+        (( $+functions[cf_ca_pem] )) || source "${_CP4D_REPO_ROOT}/src/helpers/confluent_operator_helpers.sh"
+        [[ "${_kind}" == internal && "$(cfo_tls_source)" == cfk ]] && _k8s="${CFO_CA_PAIR_SECRET}"
+        _pem="$(cf_ca_pem "${NS}" "${_kind}")"
+    else
+        _pem="$(oc get secret "${_k8s}" -n "${NS}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 --decode 2>/dev/null || true)"
+    fi
     if [[ "${_pem}" != *"-----BEGIN CERTIFICATE-----"* ]]; then
         echo "[INFO] No ${_kind} CA on the cluster (secret '${_k8s}' in '${NS}') - skipping."
         continue
